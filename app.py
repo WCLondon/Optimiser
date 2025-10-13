@@ -22,6 +22,7 @@
 import json
 import re
 import time
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
@@ -36,6 +37,9 @@ try:
 except Exception:
     folium_static = None
 import folium
+
+# Database for submissions tracking
+from database import SubmissionsDB
 
 # ================= Config / constants =================
 ADMIN_FEE_GBP = 500.0
@@ -245,6 +249,7 @@ def get_watercourse_habitats(catalog_df: pd.DataFrame) -> List[str]:
 # ================= Login =================
 DEFAULT_USER = "WC0323"
 DEFAULT_PASS = "Wimborne"
+ADMIN_DB_PASS = "WCAdmin2024"  # Password for database/admin tab access
 
 def require_login():
     if st.session_state.auth_ok:
@@ -276,6 +281,189 @@ def require_login():
     st.stop()
 
 require_login()
+
+# ================= Database Initialization =================
+# Initialize database (will create tables if they don't exist)
+try:
+    db = SubmissionsDB()
+except Exception as e:
+    st.error(f"Failed to initialize database: {e}")
+    db = None
+
+# ================= Tab Navigation =================
+# Add admin_authenticated flag to session state
+if "admin_authenticated" not in st.session_state:
+    st.session_state.admin_authenticated = False
+
+# Create tabs
+tab1, tab2 = st.tabs(["🧭 Optimiser", "🔐 Admin Dashboard"])
+
+# ================= Tab 1: Main Optimiser =================
+with tab1:
+    # All existing optimiser code will go here
+    pass  # Will be filled with existing code
+
+# ================= Tab 2: Admin Dashboard =================
+with tab2:
+    if not st.session_state.admin_authenticated:
+        st.markdown("### 🔐 Admin Access Required")
+        st.info("Enter the admin password to access the submissions database.")
+        
+        with st.form("admin_auth_form"):
+            admin_pass = st.text_input("Admin Password", type="password")
+            admin_submit = st.form_submit_button("Access Admin Dashboard")
+        
+        if admin_submit:
+            admin_valid_pass = st.secrets.get("admin", {}).get("password", ADMIN_DB_PASS)
+            if admin_pass == admin_valid_pass:
+                st.session_state.admin_authenticated = True
+                st.success("✅ Access granted!")
+                st.rerun()
+            else:
+                st.error("❌ Invalid admin password")
+                st.stop()
+        st.stop()
+    
+    # Admin is authenticated - show dashboard
+    st.markdown("### 📊 Submissions Database")
+    
+    if db is None:
+        st.error("Database is not available.")
+        st.stop()
+    
+    # Logout button
+    if st.button("🔓 Lock Admin Dashboard", key="admin_logout"):
+        st.session_state.admin_authenticated = False
+        st.rerun()
+    
+    # Get summary stats
+    try:
+        stats = db.get_summary_stats()
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Submissions", stats["total_submissions"])
+        with col2:
+            st.metric("Total Revenue", f"£{stats['total_revenue']:,.0f}")
+        with col3:
+            st.metric("Top LPA", stats["top_lpas"][0][0] if stats["top_lpas"] else "N/A")
+    except Exception as e:
+        st.warning(f"Could not load summary stats: {e}")
+    
+    st.markdown("---")
+    
+    # Filters
+    st.markdown("#### 🔍 Filter Submissions")
+    with st.expander("Filter Options", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            filter_start_date = st.date_input("Start Date", value=None, key="filter_start_date")
+            filter_client = st.text_input("Client Name (contains)", key="filter_client")
+            filter_ref = st.text_input("Reference Number (contains)", key="filter_ref")
+        with col2:
+            filter_end_date = st.date_input("End Date", value=None, key="filter_end_date")
+            filter_lpa = st.text_input("LPA (contains)", key="filter_lpa")
+            filter_nca = st.text_input("NCA (contains)", key="filter_nca")
+        
+        apply_filters = st.button("Apply Filters", key="apply_filters_btn")
+    
+    # Load submissions
+    try:
+        if apply_filters or any([filter_start_date, filter_end_date, filter_client, filter_lpa, filter_nca, filter_ref]):
+            # Apply filters
+            df = db.filter_submissions(
+                start_date=filter_start_date.isoformat() if filter_start_date else None,
+                end_date=filter_end_date.isoformat() if filter_end_date else None,
+                client_name=filter_client if filter_client else None,
+                lpa=filter_lpa if filter_lpa else None,
+                nca=filter_nca if filter_nca else None,
+                reference_number=filter_ref if filter_ref else None
+            )
+        else:
+            # Show all submissions (limited to last 100)
+            df = db.get_all_submissions(limit=100)
+        
+        st.markdown(f"#### 📋 Submissions ({len(df)} records)")
+        
+        if df.empty:
+            st.info("No submissions found.")
+        else:
+            # Select columns to display
+            display_cols = [
+                "id", "submission_date", "client_name", "reference_number",
+                "site_location", "target_lpa", "target_nca",
+                "contract_size", "total_cost", "total_with_admin",
+                "num_banks_selected"
+            ]
+            display_cols = [c for c in display_cols if c in df.columns]
+            
+            # Format dates and numbers
+            df_display = df[display_cols].copy()
+            if "submission_date" in df_display.columns:
+                df_display["submission_date"] = pd.to_datetime(df_display["submission_date"]).dt.strftime("%Y-%m-%d %H:%M")
+            if "total_cost" in df_display.columns:
+                df_display["total_cost"] = df_display["total_cost"].apply(lambda x: f"£{x:,.0f}" if pd.notna(x) else "")
+            if "total_with_admin" in df_display.columns:
+                df_display["total_with_admin"] = df_display["total_with_admin"].apply(lambda x: f"£{x:,.0f}" if pd.notna(x) else "")
+            
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
+            
+            # Export to CSV
+            st.markdown("#### 📥 Export Data")
+            col1, col2 = st.columns(2)
+            with col1:
+                # Export displayed submissions
+                csv_bytes = db.export_to_csv(df)
+                st.download_button(
+                    "📥 Download Submissions CSV",
+                    data=csv_bytes,
+                    file_name=f"submissions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+            
+            # View details of a specific submission
+            st.markdown("#### 🔎 View Submission Details")
+            submission_ids = df["id"].tolist()
+            selected_id = st.selectbox("Select Submission ID", submission_ids, key="selected_submission_id")
+            
+            if selected_id and st.button("View Details", key="view_details_btn"):
+                submission = db.get_submission_by_id(selected_id)
+                allocations = db.get_allocations_for_submission(selected_id)
+                
+                if submission:
+                    st.markdown("##### Submission Details")
+                    
+                    # Basic info
+                    st.write(f"**Client:** {submission['client_name']}")
+                    st.write(f"**Reference:** {submission['reference_number']}")
+                    st.write(f"**Location:** {submission['site_location']}")
+                    st.write(f"**Date:** {submission['submission_date']}")
+                    st.write(f"**LPA:** {submission['target_lpa']}")
+                    st.write(f"**NCA:** {submission['target_nca']}")
+                    st.write(f"**Contract Size:** {submission['contract_size']}")
+                    st.write(f"**Total Cost:** £{submission['total_cost']:,.0f}")
+                    st.write(f"**Total with Admin:** £{submission['total_with_admin']:,.0f}")
+                    
+                    # Allocations
+                    if not allocations.empty:
+                        st.markdown("##### Allocation Details")
+                        st.dataframe(allocations, use_container_width=True, hide_index=True)
+                        
+                        # Export allocations
+                        alloc_csv = allocations.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            "📥 Download Allocation Details CSV",
+                            data=alloc_csv,
+                            file_name=f"allocation_details_{selected_id}.csv",
+                            mime="text/csv"
+                        )
+    
+    except Exception as e:
+        st.error(f"Error loading submissions: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+
+# Now continue with the rest of the app in tab1
+with tab1:
 
 # ================= HTTP helpers =================
 def http_get(url, params=None, headers=None, timeout=25):
@@ -3186,6 +3374,40 @@ if (st.session_state.get("optimization_complete", False) and
             st.session_state.email_ref_number = form_ref_number
             st.session_state.email_location = form_location
             st.success("Email details updated!")
+            
+            # Save to database when email details are updated and we have valid data
+            if db and client_name and ref_number and location:
+                try:
+                    # Get the current username
+                    current_user = st.secrets.get("auth", {}).get("username", DEFAULT_USER)
+                    
+                    # Determine contract size from allocation data
+                    present_sizes = backend.get("Pricing", pd.DataFrame()).get("contract_size", pd.Series()).drop_duplicates().tolist() if backend else []
+                    total_units = session_demand_df["units_required"].sum() if not session_demand_df.empty else 0.0
+                    contract_size_val = select_contract_size(total_units, present_sizes) if present_sizes else "Unknown"
+                    
+                    submission_id = db.store_submission(
+                        client_name=form_client_name,
+                        reference_number=form_ref_number,
+                        site_location=form_location,
+                        target_lpa=st.session_state.get("target_lpa_name", ""),
+                        target_nca=st.session_state.get("target_nca_name", ""),
+                        target_lat=st.session_state.get("target_lat"),
+                        target_lon=st.session_state.get("target_lon"),
+                        lpa_neighbors=st.session_state.get("lpa_neighbors", []),
+                        nca_neighbors=st.session_state.get("nca_neighbors", []),
+                        demand_df=session_demand_df,
+                        allocation_df=session_alloc_df,
+                        contract_size=contract_size_val,
+                        total_cost=session_total_cost,
+                        admin_fee=ADMIN_FEE_GBP,
+                        manual_hedgerow_rows=st.session_state.get("manual_hedgerow_rows", []),
+                        manual_watercourse_rows=st.session_state.get("manual_watercourse_rows", []),
+                        username=current_user
+                    )
+                    st.success(f"✅ Submission saved to database! ID: {submission_id}")
+                except Exception as e:
+                    st.warning(f"⚠️ Could not save to database: {e}")
             # Don't call st.rerun() - let it naturally update
         
         # Use the session state values for generating the report
