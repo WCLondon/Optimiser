@@ -356,6 +356,109 @@ if st.session_state.app_mode == "Admin Dashboard":
     
     st.markdown("---")
     
+    # ================= Introducer Management =================
+    st.markdown("#### 👥 Introducer/Promoter Management")
+    
+    # Get all introducers
+    try:
+        introducers = db.get_all_introducers()
+        
+        # Add new introducer
+        with st.expander("➕ Add New Introducer", expanded=False):
+            with st.form("add_introducer_form"):
+                new_name = st.text_input("Introducer Name", key="new_introducer_name")
+                new_discount_type = st.selectbox("Discount Type", ["tier_up", "percentage"], key="new_discount_type")
+                new_discount_value = st.number_input("Discount Value", 
+                                                     min_value=0.0, 
+                                                     step=0.1,
+                                                     key="new_discount_value",
+                                                     help="For percentage: enter as decimal (e.g., 10.5 for 10.5%). For tier_up: value is ignored.")
+                add_submit = st.form_submit_button("Add Introducer")
+                
+                if add_submit:
+                    if not new_name or not new_name.strip():
+                        st.error("Please enter an introducer name.")
+                    else:
+                        try:
+                            db.add_introducer(new_name.strip(), new_discount_type, new_discount_value)
+                            st.success(f"✅ Added introducer: {new_name}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error adding introducer: {e}")
+        
+        # Display existing introducers
+        if introducers:
+            st.markdown("##### Current Introducers")
+            for intro in introducers:
+                col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 1, 1])
+                with col1:
+                    st.write(f"**{intro['name']}**")
+                with col2:
+                    st.write(f"Type: {intro['discount_type']}")
+                with col3:
+                    if intro['discount_type'] == 'percentage':
+                        st.write(f"Value: {intro['discount_value']}%")
+                    else:
+                        st.write("Tier Up")
+                with col4:
+                    # Edit button - use unique key with introducer id
+                    if st.button("✏️", key=f"edit_{intro['id']}", help="Edit"):
+                        st.session_state[f"editing_introducer_{intro['id']}"] = True
+                with col5:
+                    # Delete button
+                    if st.button("🗑️", key=f"delete_{intro['id']}", help="Delete"):
+                        try:
+                            db.delete_introducer(intro['id'])
+                            st.success(f"Deleted: {intro['name']}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error deleting: {e}")
+                
+                # Edit form (shown when edit button is clicked)
+                if st.session_state.get(f"editing_introducer_{intro['id']}", False):
+                    with st.form(f"edit_form_{intro['id']}"):
+                        edit_name = st.text_input("Name", value=intro['name'], key=f"edit_name_{intro['id']}")
+                        edit_discount_type = st.selectbox("Discount Type", 
+                                                         ["tier_up", "percentage"],
+                                                         index=0 if intro['discount_type'] == 'tier_up' else 1,
+                                                         key=f"edit_type_{intro['id']}")
+                        edit_discount_value = st.number_input("Discount Value",
+                                                             value=float(intro['discount_value']),
+                                                             min_value=0.0,
+                                                             step=0.1,
+                                                             key=f"edit_value_{intro['id']}")
+                        
+                        col_save, col_cancel = st.columns(2)
+                        with col_save:
+                            save_btn = st.form_submit_button("💾 Save")
+                        with col_cancel:
+                            cancel_btn = st.form_submit_button("❌ Cancel")
+                        
+                        if save_btn:
+                            if not edit_name or not edit_name.strip():
+                                st.error("Please enter a name.")
+                            else:
+                                try:
+                                    db.update_introducer(intro['id'], edit_name.strip(), edit_discount_type, edit_discount_value)
+                                    st.success(f"Updated: {edit_name}")
+                                    st.session_state[f"editing_introducer_{intro['id']}"] = False
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error updating: {e}")
+                        
+                        if cancel_btn:
+                            st.session_state[f"editing_introducer_{intro['id']}"] = False
+                            st.rerun()
+        else:
+            st.info("No introducers added yet. Add one using the form above.")
+    
+    except Exception as e:
+        st.error(f"Error loading introducers: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+    
+    st.markdown("---")
+    
     # Filters
     st.markdown("#### 🔍 Filter Submissions")
     with st.expander("Filter Options", expanded=False):
