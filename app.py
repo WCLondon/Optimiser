@@ -1514,6 +1514,43 @@ def select_size_for_demand(demand_df: pd.DataFrame, pricing_df: pd.DataFrame) ->
     total = float(demand_df["units_required"].sum())
     return select_contract_size(total, present)
 
+# ================= Promoter/Introducer Discount Helpers =================
+def apply_tier_up_discount(tier: str) -> str:
+    """
+    Apply tier_up discount: move tier one level up in pricing hierarchy.
+    local -> adjacent -> far
+    """
+    tier_lower = tier.lower()
+    if tier_lower == "local":
+        return "adjacent"
+    elif tier_lower == "adjacent":
+        return "far"
+    else:
+        return tier  # far stays far
+
+def apply_percentage_discount(unit_price: float, discount_percentage: float) -> float:
+    """
+    Apply percentage discount to unit price.
+    discount_percentage is in percent (e.g., 10.0 for 10%)
+    """
+    return unit_price * (1.0 - discount_percentage / 100.0)
+
+def get_active_promoter_discount():
+    """
+    Get active promoter discount settings from session state.
+    Returns (discount_type, discount_value) or (None, None) if no promoter selected.
+    """
+    if not st.session_state.get("use_promoter", False):
+        return None, None
+    
+    discount_type = st.session_state.get("promoter_discount_type")
+    discount_value = st.session_state.get("promoter_discount_value")
+    
+    if discount_type and discount_value is not None:
+        return discount_type, discount_value
+    
+    return None, None
+
 def prepare_options(demand_df: pd.DataFrame,
                     chosen_size: str,
                     target_lpa: str, target_nca: str,
@@ -1546,6 +1583,9 @@ def prepare_options(demand_df: pd.DataFrame,
     stock_full = stock_full[~stock_full["habitat_name"].map(is_hedgerow)].copy()
 
     pricing_cs = Pricing[Pricing["contract_size"] == chosen_size].copy()
+    
+    # Get active promoter discount settings
+    promoter_discount_type, promoter_discount_value = get_active_promoter_discount()
 
     pc_join = pricing_cs.merge(
         Catalog[["habitat_name","broader_type","distinctiveness_name"]],
@@ -1688,11 +1728,17 @@ def prepare_options(demand_df: pd.DataFrame,
                 target_lpa, target_nca,
                 lpa_neigh, nca_neigh, lpa_neigh_norm, nca_neigh_norm
             )
+            
+            # Apply tier_up discount if active
+            pricing_tier = tier
+            if promoter_discount_type == "tier_up":
+                pricing_tier = apply_tier_up_discount(tier)
+            
             bank_key = sstr(srow.get("BANK_KEY") or srow.get("bank_name") or srow.get("bank_id"))
             price_info = find_price_for_supply(
                 bank_key=bank_key,
                 supply_habitat=srow["habitat_name"],
-                tier=tier,
+                tier=pricing_tier,  # Use pricing_tier which may be tier_up adjusted
                 demand_broader=d_broader,
                 demand_dist=d_dist,
             )
@@ -1700,6 +1746,11 @@ def prepare_options(demand_df: pd.DataFrame,
                 continue
 
             unit_price, price_source, price_hab_used = price_info
+            
+            # Apply percentage discount if active
+            if promoter_discount_type == "percentage" and promoter_discount_value:
+                unit_price = apply_percentage_discount(unit_price, promoter_discount_value)
+            
             cap = float(srow.get("quantity_available", 0) or 0.0)
             if cap <= 0:
                 continue
@@ -1711,9 +1762,9 @@ def prepare_options(demand_df: pd.DataFrame,
                 "bank_name": sstr(srow.get("bank_name")),
                 "bank_id": sstr(srow.get("bank_id")),
                 "supply_habitat": srow["habitat_name"],
-                "tier": tier,
+                "tier": tier,  # Keep original tier for reporting
                 "proximity": tier,
-                "unit_price": float(unit_price),
+                "unit_price": float(unit_price),  # Use discounted price
                 "stock_use": {sstr(srow["stock_id"]): 1.0},
                 "price_source": price_source,
                 "price_habitat": price_hab_used,
@@ -1747,6 +1798,11 @@ def prepare_options(demand_df: pd.DataFrame,
                     
                     # For each tier (adjacent and far), find the best "Other" component
                     for target_tier in ["adjacent", "far"]:
+                        # Apply tier_up discount if active
+                        pricing_tier = target_tier
+                        if promoter_discount_type == "tier_up":
+                            pricing_tier = apply_tier_up_discount(target_tier)
+                        
                         # Find "Other" candidates at this tier with valid prices
                         tier_other_candidates = []
                         for _, other_row in other_candidates.iterrows():
@@ -1757,8 +1813,8 @@ def prepare_options(demand_df: pd.DataFrame,
                             if tier_test != target_tier:
                                 continue
                             
-                            # Check if we can price this "Other" component
-                            pi_other = find_price_for_supply(bk, other_row["habitat_name"], target_tier, d_broader, d_dist)
+                            # Check if we can price this "Other" component using pricing_tier
+                            pi_other = find_price_for_supply(bk, other_row["habitat_name"], pricing_tier, d_broader, d_dist)
                             if not pi_other:
                                 continue
                             
@@ -1776,8 +1832,8 @@ def prepare_options(demand_df: pd.DataFrame,
                         tier_other_candidates.sort(key=lambda x: (x["price"], -x["cap"]))
                         best_other = tier_other_candidates[0]
                         
-                        # Get Orchard price at this tier
-                        pi_o = find_price_for_supply(bk, ORCHARD_NAME, target_tier, d_broader, d_dist)
+                        # Get Orchard price at this tier using pricing_tier
+                        pi_o = find_price_for_supply(bk, ORCHARD_NAME, pricing_tier, d_broader, d_dist)
                         if not pi_o:
                             continue
                         
@@ -1804,6 +1860,10 @@ def prepare_options(demand_df: pd.DataFrame,
                             stock_use_orchard = 1.0 / srm  # = 0.5
                             stock_use_other = 1.0 / srm    # = 0.5
                         
+                        # Apply percentage discount if active (to blended price)
+                        if promoter_discount_type == "percentage" and promoter_discount_value:
+                            blended_price = apply_percentage_discount(blended_price, promoter_discount_value)
+                        
                         options.append({
                             "type": "paired",
                             "demand_idx": di,
@@ -1812,9 +1872,9 @@ def prepare_options(demand_df: pd.DataFrame,
                             "bank_name": sstr(o.get("bank_name")),
                             "bank_id": sstr(o.get("bank_id")),
                             "supply_habitat": f"{ORCHARD_NAME} + {sstr(other_row['habitat_name'])}",
-                            "tier": target_tier,
+                            "tier": target_tier,  # Keep original tier for reporting
                             "proximity": target_tier,
-                            "unit_price": blended_price,
+                            "unit_price": blended_price,  # Use discounted price
                             "stock_use": {sstr(o["stock_id"]): stock_use_orchard, sstr(other_row["stock_id"]): stock_use_other},
                             "price_source": "group-proxy",
                             "price_habitat": f"{pi_o[2]} + {pi_other[2]}",
@@ -1878,6 +1938,9 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
     )
     pricing_enriched = pricing_enriched[pricing_enriched["habitat_name"].map(is_hedgerow)].copy()
     
+    # Get active promoter discount settings
+    promoter_discount_type, promoter_discount_value = get_active_promoter_discount()
+    
     options = []
     stock_caps = {}
     stock_bankkey = {}
@@ -1931,10 +1994,15 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
                 lpa_neigh, nca_neigh, lpa_neigh_norm, nca_neigh_norm
             )
             
-            # Find price
+            # Apply tier_up discount if active
+            pricing_tier = tier
+            if promoter_discount_type == "tier_up":
+                pricing_tier = apply_tier_up_discount(tier)
+            
+            # Find price using pricing_tier
             pr_match = pricing_enriched[
                 (pricing_enriched["BANK_KEY"] == bank_key) &
-                (pricing_enriched["tier"] == tier) &
+                (pricing_enriched["tier"] == pricing_tier) &
                 (pricing_enriched["habitat_name"] == supply_hab)
             ]
             
@@ -1942,13 +2010,17 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
                 # Try to find any price for this bank/tier as fallback
                 pr_match = pricing_enriched[
                     (pricing_enriched["BANK_KEY"] == bank_key) &
-                    (pricing_enriched["tier"] == tier)
+                    (pricing_enriched["tier"] == pricing_tier)
                 ]
                 if pr_match.empty:
                     continue
                 price = float(pr_match.iloc[0]["price"])
             else:
                 price = float(pr_match.iloc[0]["price"])
+            
+            # Apply percentage discount if active
+            if promoter_discount_type == "percentage" and promoter_discount_value:
+                price = apply_percentage_discount(price, promoter_discount_value)
             
             options.append({
                 "demand_idx": demand_idx,
@@ -1958,8 +2030,8 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
                 "bank_name": sstr(supply_row["bank_name"]),
                 "BANK_KEY": bank_key,
                 "stock_id": stock_id,
-                "tier": tier,
-                "unit_price": price,
+                "tier": tier,  # Keep original tier for reporting
+                "unit_price": price,  # Use discounted price
                 "cost_per_unit": price,
                 "stock_use": {stock_id: 1.0},
                 "type": "normal",          # <-- add this
@@ -2016,6 +2088,9 @@ def prepare_watercourse_options(demand_df: pd.DataFrame,
         .merge(Catalog[["habitat_name","broader_type","distinctiveness_name","UmbrellaType"]],
                on="habitat_name", how="left")
     )
+
+    # Get active promoter discount settings
+    promoter_discount_type, promoter_discount_value = get_active_promoter_discount()
 
     options: List[dict] = []
     stock_caps: Dict[str, float] = {}
@@ -2078,22 +2153,31 @@ def prepare_watercourse_options(demand_df: pd.DataFrame,
                 lpa_neigh, nca_neigh, lpa_neigh_norm, nca_neigh_norm
             )
 
+            # Apply tier_up discount if active
+            pricing_tier = tier
+            if promoter_discount_type == "tier_up":
+                pricing_tier = apply_tier_up_discount(tier)
+
             # Find exact price, else fallback to any watercourse price in same bank/tier
             pr_match = pricing_enriched[
                 (pricing_enriched["BANK_KEY"] == bank_key) &
-                (pricing_enriched["tier"] == tier) &
+                (pricing_enriched["tier"] == pricing_tier) &
                 (pricing_enriched["habitat_name"] == supply_hab)
             ]
             if pr_match.empty:
                 pr_match = pricing_enriched[
                     (pricing_enriched["BANK_KEY"] == bank_key) &
-                    (pricing_enriched["tier"] == tier)
+                    (pricing_enriched["tier"] == pricing_tier)
                 ]
                 if pr_match.empty:
                     continue
                 price = float(pr_match.iloc[0]["price"])
             else:
                 price = float(pr_match.iloc[0]["price"])
+
+            # Apply percentage discount if active
+            if promoter_discount_type == "percentage" and promoter_discount_value:
+                price = apply_percentage_discount(price, promoter_discount_value)
 
             options.append({
                 "demand_idx": demand_idx,
@@ -2103,8 +2187,8 @@ def prepare_watercourse_options(demand_df: pd.DataFrame,
                 "bank_name": sstr(supply_row["bank_name"]),
                 "BANK_KEY": bank_key,
                 "stock_id": stock_id,
-                "tier": tier,
-                "unit_price": price,
+                "tier": tier,  # Keep original tier for reporting
+                "unit_price": price,  # Use discounted price
                 "cost_per_unit": price,
                 "stock_use": {stock_id: 1.0},
                 "type": "normal",
