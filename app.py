@@ -100,7 +100,11 @@ def init_session_state():
         "email_location": "INSERT LOCATION",
         "postcode_input": "",
         "address_input": "",
-        "needs_map_refresh": False
+        "needs_map_refresh": False,
+        "use_promoter": False,
+        "selected_promoter": None,
+        "promoter_discount_type": None,
+        "promoter_discount_value": None
     }
     
     for key, value in defaults.items():
@@ -1013,6 +1017,60 @@ if st.session_state["target_lpa_name"] or st.session_state["target_nca_name"]:
         f"LPA: **{st.session_state['target_lpa_name'] or '—'}** | "
         f"NCA: **{st.session_state['target_nca_name'] or '—'}**"
     )
+
+# ================= Promoter/Introducer Selection =================
+st.markdown("---")
+with st.container():
+    st.subheader("2) Promoter/Introducer (Optional)")
+    
+    # Get introducers from database
+    try:
+        introducers_list = db.get_all_introducers() if db else []
+        introducer_names = [intro['name'] for intro in introducers_list]
+    except Exception as e:
+        st.error(f"Error loading introducers: {e}")
+        introducers_list = []
+        introducer_names = []
+    
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        use_promoter = st.checkbox("Use Promoter/Introducer", 
+                                    value=st.session_state.get("use_promoter", False),
+                                    key="use_promoter_checkbox")
+        st.session_state["use_promoter"] = use_promoter
+    
+    with col2:
+        if use_promoter:
+            if not introducer_names:
+                st.warning("⚠️ No introducers configured. Please add introducers in the Admin Dashboard.")
+                st.session_state["selected_promoter"] = None
+                st.session_state["promoter_discount_type"] = None
+                st.session_state["promoter_discount_value"] = None
+            else:
+                selected = st.selectbox("Select Introducer",
+                                       introducer_names,
+                                       key="promoter_dropdown",
+                                       help="Select an approved introducer to apply their discount")
+                
+                # Store selected promoter details in session state
+                if selected:
+                    selected_intro = next((intro for intro in introducers_list if intro['name'] == selected), None)
+                    if selected_intro:
+                        st.session_state["selected_promoter"] = selected_intro['name']
+                        st.session_state["promoter_discount_type"] = selected_intro['discount_type']
+                        st.session_state["promoter_discount_value"] = selected_intro['discount_value']
+                        
+                        # Show discount info
+                        if selected_intro['discount_type'] == 'tier_up':
+                            st.info(f"💡 **Tier Up Discount**: Pricing calculated as one tier higher (e.g., local → adjacent, adjacent → far)")
+                        else:
+                            st.info(f"💡 **Percentage Discount**: {selected_intro['discount_value']}% discount on all items except £500 admin fee")
+        else:
+            st.session_state["selected_promoter"] = None
+            st.session_state["promoter_discount_type"] = None
+            st.session_state["promoter_discount_value"] = None
+
+st.markdown("---")
 
 # ================= Map functions (CORRECTED STYLING) =================
 # ================= Map functions (CORRECTED STYLING) =================
