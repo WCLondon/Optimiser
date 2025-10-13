@@ -84,8 +84,8 @@ Main workflow → After "Locate target site", before demand entry
 
 ☑ Use Promoter/Introducer  |  [Jane Doe ▼]
 
-💡 Tier Up Discount: Pricing calculated as one tier higher 
-   (e.g., local → adjacent, adjacent → far)
+💡 Tier Up Discount: Pricing uses one contract size tier higher 
+   (e.g., fractional → small, small → medium, medium → large)
 
 ───────────────────────────────────────────────────────────────
 ```
@@ -171,14 +171,17 @@ Discount Type: Percentage (10.5%)
 **Tier Up Discount:**
 ```
 Original Flow:
-  Location → Calculate Tier → Find Price
-  (Target)    (e.g., "local")  (£1,000/unit)
+  Demand → Calculate Contract Size → Find Price
+  (5 units)  (e.g., "small")         (£4,000/unit)
 
 With Tier Up:
-  Location → Calculate Tier → Apply Tier Up → Find Price
-  (Target)    (e.g., "local")   ("adjacent")   (£800/unit)
-                                                ↓
-                                            20% savings
+  Demand → Calculate Contract Size → Apply Tier Up → Find Price
+  (5 units)  (e.g., "small")         ("medium")      (£3,000/unit)
+                                                       ↓
+                                                   25% savings
+                                                   
+Note: Actual contract size stays "small" for the quote record.
+      Only pricing uses "medium" rates.
 ```
 
 **Percentage Discount:**

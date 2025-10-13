@@ -163,16 +163,21 @@ Add functionality to support promoter/introducer discounts for quotes in the BNG
 
 ### Tier Up Discount
 **How it works:**
-- Pricing uses one tier higher (local→adjacent→far)
-- Actual tier unchanged for reporting
-- Reduces cost by 20-30% typically
+- Pricing uses one CONTRACT SIZE tier higher (fractional→small→medium→large)
+- Actual contract size unchanged for the quote record
+- Reduces cost by 20-30% typically (larger contracts = cheaper per unit)
 
 **Example:**
 ```
-Bank is "local" to target site
-Standard pricing: £1,000/unit (local tier)
-With tier_up: £800/unit (adjacent tier pricing)
-Savings: £200/unit (20%)
+Actual contract size: "small" (5 units)
+Standard pricing: £4,000/unit (small contract rate)
+With tier_up: Uses "medium" pricing = £3,000/unit
+Savings: £1,000/unit (25%)
+
+Total savings on 5 units:
+Without discount: 5 × £4,000 = £20,000
+With tier_up:     5 × £3,000 = £15,000
+Saved: £5,000 (25% discount)
 ```
 
 ### Percentage Discount

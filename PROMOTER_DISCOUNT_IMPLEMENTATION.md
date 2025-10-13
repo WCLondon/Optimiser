@@ -88,12 +88,18 @@ Updated `store_submission()` call:
 ## Discount Types Explained
 
 ### Tier Up Discount
-- Pricing is calculated as if the bank is one tier closer
-- local → pricing uses adjacent tier
-- adjacent → pricing uses far tier
-- far → stays at far tier (no change)
-- The actual tier remains unchanged for reporting
-- This effectively reduces the cost by using a lower price point
+- Pricing is calculated using one CONTRACT SIZE tier higher
+- fractional → uses small pricing
+- small → uses medium pricing
+- medium → uses large pricing
+- large → stays at large (no higher size)
+- The actual contract size recorded in the quote remains unchanged
+- This gives better (lower) pricing because larger contracts have cheaper per-unit rates
+
+**Example:**
+- Actual contract size: small
+- With tier_up discount: Uses medium contract pricing
+- Result: Lower unit prices, typically 20-30% savings
 
 ### Percentage Discount
 - A percentage discount is applied to all line items

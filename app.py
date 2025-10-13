@@ -1070,7 +1070,7 @@ with st.container():
                         
                         # Show discount info
                         if selected_intro['discount_type'] == 'tier_up':
-                            st.info(f"💡 **Tier Up Discount**: Pricing calculated as one tier higher (e.g., local → adjacent, adjacent → far)")
+                            st.info(f"💡 **Tier Up Discount**: Pricing uses one contract size tier higher (e.g., fractional → small, small → medium, medium → large) for better rates")
                         else:
                             st.info(f"💡 **Percentage Discount**: {selected_intro['discount_value']}% discount on all items except £500 admin fee")
         else:
@@ -3374,7 +3374,7 @@ Our key advantages:
 <strong>Your Quote - £{total_with_admin:,.0f} + VAT</strong>
 <br><br>
 {f"<strong>Discount Applied:</strong> Introducer/Promoter: {promoter_name}" if promoter_name else ""}
-{f"<br>Discount Type: {'Tier Up (pricing calculated at one tier higher)' if promoter_discount_type == 'tier_up' else f'{promoter_discount_value}% percentage discount on all items (excluding £500 admin fee)'}" if promoter_name else ""}
+{f"<br>Discount Type: {'Tier Up (pricing uses one contract size tier higher for better rates)' if promoter_discount_type == 'tier_up' else f'{promoter_discount_value}% percentage discount on all items (excluding £500 admin fee)'}" if promoter_name else ""}
 {"<br><br>" if promoter_name else ""}
 See a detailed breakdown of the pricing below. I've attached a PDF outlining the BNG offset and condition discharge process. If you have any questions, please let us know—we're here to help.
 <br><br>
