@@ -290,21 +290,26 @@ except Exception as e:
     st.error(f"Failed to initialize database: {e}")
     db = None
 
-# ================= Tab Navigation =================
+# ================= Mode Selection (Sidebar) =================
 # Add admin_authenticated flag to session state
 if "admin_authenticated" not in st.session_state:
     st.session_state.admin_authenticated = False
+if "app_mode" not in st.session_state:
+    st.session_state.app_mode = "Optimiser"
 
-# Create tabs
-tab1, tab2 = st.tabs(["🧭 Optimiser", "🔐 Admin Dashboard"])
+# Mode selector in sidebar
+with st.sidebar:
+    st.markdown("---")
+    app_mode = st.radio(
+        "Mode",
+        ["Optimiser", "Admin Dashboard"],
+        key="mode_selector",
+        index=0 if st.session_state.app_mode == "Optimiser" else 1
+    )
+    st.session_state.app_mode = app_mode
 
-# ================= Tab 1: Main Optimiser =================
-with tab1:
-    # All existing optimiser code will go here
-    pass  # Will be filled with existing code
-
-# ================= Tab 2: Admin Dashboard =================
-with tab2:
+# ================= Admin Dashboard Mode =================
+if st.session_state.app_mode == "Admin Dashboard":
     if not st.session_state.admin_authenticated:
         st.markdown("### 🔐 Admin Access Required")
         st.info("Enter the admin password to access the submissions database.")
@@ -461,9 +466,12 @@ with tab2:
         st.error(f"Error loading submissions: {e}")
         import traceback
         st.code(traceback.format_exc())
+    
+    # Stop here - don't render the rest of the app
+    st.stop()
 
-# Now continue with the rest of the app in tab1
-with tab1:
+# ================= Main Optimiser Mode (Default) =================
+# All the existing optimiser code continues below
 
 # ================= HTTP helpers =================
 def http_get(url, params=None, headers=None, timeout=25):
