@@ -504,7 +504,7 @@ if st.session_state.app_mode == "Admin Dashboard":
                 "id", "submission_date", "client_name", "reference_number",
                 "site_location", "target_lpa", "target_nca",
                 "contract_size", "total_cost", "total_with_admin",
-                "num_banks_selected"
+                "num_banks_selected", "promoter_name"
             ]
             display_cols = [c for c in display_cols if c in df.columns]
             
@@ -554,6 +554,14 @@ if st.session_state.app_mode == "Admin Dashboard":
                     st.write(f"**Contract Size:** {submission['contract_size']}")
                     st.write(f"**Total Cost:** £{submission['total_cost']:,.0f}")
                     st.write(f"**Total with Admin:** £{submission['total_with_admin']:,.0f}")
+                    
+                    # Promoter info (if available)
+                    if submission.get('promoter_name'):
+                        st.write(f"**Promoter/Introducer:** {submission['promoter_name']}")
+                        if submission.get('promoter_discount_type') == 'tier_up':
+                            st.write(f"**Discount Type:** Tier Up")
+                        elif submission.get('promoter_discount_type') == 'percentage':
+                            st.write(f"**Discount Type:** Percentage ({submission.get('promoter_discount_value', 0)}%)")
                     
                     # Allocations
                     if not allocations.empty:
@@ -2886,7 +2894,10 @@ if run:
 def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.DataFrame, total_cost: float, admin_fee: float, 
                                        client_name: str, ref_number: str, location: str,
                                        manual_hedgerow_rows: List[dict] = None,
-                                       manual_watercourse_rows: List[dict] = None) -> Tuple[pd.DataFrame, str]:
+                                       manual_watercourse_rows: List[dict] = None,
+                                       promoter_name: str = None,
+                                       promoter_discount_type: str = None,
+                                       promoter_discount_value: float = None) -> Tuple[pd.DataFrame, str]:
     """Generate the client-facing report table and email body matching exact template with improved styling"""
     
     if manual_hedgerow_rows is None:
@@ -3346,6 +3357,9 @@ Our key advantages:
 <br><br>
 <strong>Your Quote - £{total_with_admin:,.0f} + VAT</strong>
 <br><br>
+{f"<strong>Discount Applied:</strong> Introducer/Promoter: {promoter_name}" if promoter_name else ""}
+{f"<br>Discount Type: {'Tier Up (pricing calculated at one tier higher)' if promoter_discount_type == 'tier_up' else f'{promoter_discount_value}% percentage discount on all items (excluding £500 admin fee)'}" if promoter_name else ""}
+{"<br><br>" if promoter_name else ""}
 See a detailed breakdown of the pricing below. I've attached a PDF outlining the BNG offset and condition discharge process. If you have any questions, please let us know—we're here to help.
 <br><br>
 
@@ -3639,7 +3653,10 @@ if (st.session_state.get("optimization_complete", False) and
             session_alloc_df, session_demand_df, session_total_cost, ADMIN_FEE_GBP,
             client_name, ref_number, location,
             st.session_state.manual_hedgerow_rows,
-            st.session_state.manual_watercourse_rows
+            st.session_state.manual_watercourse_rows,
+            st.session_state.get("selected_promoter"),
+            st.session_state.get("promoter_discount_type"),
+            st.session_state.get("promoter_discount_value")
         )
         
         # Display the table
@@ -3770,7 +3787,10 @@ Wild Capital Team"""
                         admin_fee=ADMIN_FEE_GBP,
                         manual_hedgerow_rows=st.session_state.get("manual_hedgerow_rows", []),
                         manual_watercourse_rows=st.session_state.get("manual_watercourse_rows", []),
-                        username=current_user
+                        username=current_user,
+                        promoter_name=st.session_state.get("selected_promoter"),
+                        promoter_discount_type=st.session_state.get("promoter_discount_type"),
+                        promoter_discount_value=st.session_state.get("promoter_discount_value")
                     )
                     st.success(f"✅ Quote saved to database! Submission ID: {submission_id}")
                     st.info(f"📊 Client: {client_name} | Reference: {ref_number} | Total: £{session_total_cost + ADMIN_FEE_GBP:,.0f}")
