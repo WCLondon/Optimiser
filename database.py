@@ -69,7 +69,12 @@ class SubmissionsDB:
                     allocation_results TEXT,
                     
                     -- User info
-                    username TEXT
+                    username TEXT,
+                    
+                    -- Promoter/Introducer info
+                    promoter_name TEXT,
+                    promoter_discount_type TEXT,
+                    promoter_discount_value REAL
                 )
         """)
         
@@ -91,6 +96,18 @@ class SubmissionsDB:
                     cost REAL,
                     
                     FOREIGN KEY (submission_id) REFERENCES submissions(id)
+                )
+        """)
+        
+        # Introducers/Promoters table
+        cursor.execute("""
+                CREATE TABLE IF NOT EXISTS introducers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    discount_type TEXT NOT NULL CHECK(discount_type IN ('tier_up', 'percentage')),
+                    discount_value REAL NOT NULL,
+                    created_date TEXT NOT NULL,
+                    updated_date TEXT NOT NULL
                 )
         """)
         
@@ -119,7 +136,10 @@ class SubmissionsDB:
                         admin_fee: float,
                         manual_hedgerow_rows: List[Dict],
                         manual_watercourse_rows: List[Dict],
-                        username: str = "") -> int:
+                        username: str = "",
+                        promoter_name: Optional[str] = None,
+                        promoter_discount_type: Optional[str] = None,
+                        promoter_discount_value: Optional[float] = None) -> int:
         """
         Store a complete submission to the database.
         Returns the submission_id for reference.
@@ -153,8 +173,9 @@ class SubmissionsDB:
                 contract_size, total_cost, admin_fee, total_with_admin,
                 num_banks_selected, banks_used,
                 manual_hedgerow_entries, manual_watercourse_entries,
-                allocation_results, username
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                allocation_results, username,
+                promoter_name, promoter_discount_type, promoter_discount_value
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             submission_date, client_name, reference_number, site_location,
             target_lpa, target_nca, target_lat, target_lon,
@@ -162,7 +183,8 @@ class SubmissionsDB:
             contract_size, total_cost, admin_fee, total_with_admin,
             num_banks, banks_used_json,
             manual_hedgerow_json, manual_watercourse_json,
-            allocation_results_json, username
+            allocation_results_json, username,
+            promoter_name, promoter_discount_type, promoter_discount_value
         ))
         
         submission_id = cursor.lastrowid
@@ -310,3 +332,68 @@ class SubmissionsDB:
             "top_lpas": top_lpas,
             "top_clients": top_clients
         }
+    
+    # ================= Introducers/Promoters CRUD =================
+    
+    def add_introducer(self, name: str, discount_type: str, discount_value: float) -> int:
+        """Add a new introducer/promoter."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        now = datetime.now().isoformat()
+        
+        cursor.execute("""
+            INSERT INTO introducers (name, discount_type, discount_value, created_date, updated_date)
+            VALUES (?, ?, ?, ?, ?)
+        """, (name, discount_type, discount_value, now, now))
+        
+        conn.commit()
+        return cursor.lastrowid
+    
+    def get_all_introducers(self) -> List[Dict[str, Any]]:
+        """Get all introducers."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT * FROM introducers ORDER BY name")
+        rows = cursor.fetchall()
+        
+        columns = [desc[0] for desc in cursor.description]
+        return [dict(zip(columns, row)) for row in rows]
+    
+    def get_introducer_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get an introducer by name."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT * FROM introducers WHERE name = ?", (name,))
+        row = cursor.fetchone()
+        
+        if row:
+            columns = [desc[0] for desc in cursor.description]
+            return dict(zip(columns, row))
+        return None
+    
+    def update_introducer(self, introducer_id: int, name: str, discount_type: str, discount_value: float):
+        """Update an existing introducer."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        now = datetime.now().isoformat()
+        
+        cursor.execute("""
+            UPDATE introducers 
+            SET name = ?, discount_type = ?, discount_value = ?, updated_date = ?
+            WHERE id = ?
+        """, (name, discount_type, discount_value, now, introducer_id))
+        
+        conn.commit()
+    
+    def delete_introducer(self, introducer_id: int):
+        """Delete an introducer."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("DELETE FROM introducers WHERE id = ?", (introducer_id,))
+        
+        conn.commit()
