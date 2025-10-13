@@ -100,7 +100,11 @@ def init_session_state():
         "email_location": "INSERT LOCATION",
         "postcode_input": "",
         "address_input": "",
-        "needs_map_refresh": False
+        "needs_map_refresh": False,
+        "use_promoter": False,
+        "selected_promoter": None,
+        "promoter_discount_type": None,
+        "promoter_discount_value": None
     }
     
     for key, value in defaults.items():
@@ -356,6 +360,109 @@ if st.session_state.app_mode == "Admin Dashboard":
     
     st.markdown("---")
     
+    # ================= Introducer Management =================
+    st.markdown("#### 👥 Introducer/Promoter Management")
+    
+    # Get all introducers
+    try:
+        introducers = db.get_all_introducers()
+        
+        # Add new introducer
+        with st.expander("➕ Add New Introducer", expanded=False):
+            with st.form("add_introducer_form"):
+                new_name = st.text_input("Introducer Name", key="new_introducer_name")
+                new_discount_type = st.selectbox("Discount Type", ["tier_up", "percentage"], key="new_discount_type")
+                new_discount_value = st.number_input("Discount Value", 
+                                                     min_value=0.0, 
+                                                     step=0.1,
+                                                     key="new_discount_value",
+                                                     help="For percentage: enter as decimal (e.g., 10.5 for 10.5%). For tier_up: value is ignored.")
+                add_submit = st.form_submit_button("Add Introducer")
+                
+                if add_submit:
+                    if not new_name or not new_name.strip():
+                        st.error("Please enter an introducer name.")
+                    else:
+                        try:
+                            db.add_introducer(new_name.strip(), new_discount_type, new_discount_value)
+                            st.success(f"✅ Added introducer: {new_name}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error adding introducer: {e}")
+        
+        # Display existing introducers
+        if introducers:
+            st.markdown("##### Current Introducers")
+            for intro in introducers:
+                col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 1, 1])
+                with col1:
+                    st.write(f"**{intro['name']}**")
+                with col2:
+                    st.write(f"Type: {intro['discount_type']}")
+                with col3:
+                    if intro['discount_type'] == 'percentage':
+                        st.write(f"Value: {intro['discount_value']}%")
+                    else:
+                        st.write("Tier Up")
+                with col4:
+                    # Edit button - use unique key with introducer id
+                    if st.button("✏️", key=f"edit_{intro['id']}", help="Edit"):
+                        st.session_state[f"editing_introducer_{intro['id']}"] = True
+                with col5:
+                    # Delete button
+                    if st.button("🗑️", key=f"delete_{intro['id']}", help="Delete"):
+                        try:
+                            db.delete_introducer(intro['id'])
+                            st.success(f"Deleted: {intro['name']}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error deleting: {e}")
+                
+                # Edit form (shown when edit button is clicked)
+                if st.session_state.get(f"editing_introducer_{intro['id']}", False):
+                    with st.form(f"edit_form_{intro['id']}"):
+                        edit_name = st.text_input("Name", value=intro['name'], key=f"edit_name_{intro['id']}")
+                        edit_discount_type = st.selectbox("Discount Type", 
+                                                         ["tier_up", "percentage"],
+                                                         index=0 if intro['discount_type'] == 'tier_up' else 1,
+                                                         key=f"edit_type_{intro['id']}")
+                        edit_discount_value = st.number_input("Discount Value",
+                                                             value=float(intro['discount_value']),
+                                                             min_value=0.0,
+                                                             step=0.1,
+                                                             key=f"edit_value_{intro['id']}")
+                        
+                        col_save, col_cancel = st.columns(2)
+                        with col_save:
+                            save_btn = st.form_submit_button("💾 Save")
+                        with col_cancel:
+                            cancel_btn = st.form_submit_button("❌ Cancel")
+                        
+                        if save_btn:
+                            if not edit_name or not edit_name.strip():
+                                st.error("Please enter a name.")
+                            else:
+                                try:
+                                    db.update_introducer(intro['id'], edit_name.strip(), edit_discount_type, edit_discount_value)
+                                    st.success(f"Updated: {edit_name}")
+                                    st.session_state[f"editing_introducer_{intro['id']}"] = False
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error updating: {e}")
+                        
+                        if cancel_btn:
+                            st.session_state[f"editing_introducer_{intro['id']}"] = False
+                            st.rerun()
+        else:
+            st.info("No introducers added yet. Add one using the form above.")
+    
+    except Exception as e:
+        st.error(f"Error loading introducers: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+    
+    st.markdown("---")
+    
     # Filters
     st.markdown("#### 🔍 Filter Submissions")
     with st.expander("Filter Options", expanded=False):
@@ -397,7 +504,7 @@ if st.session_state.app_mode == "Admin Dashboard":
                 "id", "submission_date", "client_name", "reference_number",
                 "site_location", "target_lpa", "target_nca",
                 "contract_size", "total_cost", "total_with_admin",
-                "num_banks_selected"
+                "num_banks_selected", "promoter_name"
             ]
             display_cols = [c for c in display_cols if c in df.columns]
             
@@ -447,6 +554,14 @@ if st.session_state.app_mode == "Admin Dashboard":
                     st.write(f"**Contract Size:** {submission['contract_size']}")
                     st.write(f"**Total Cost:** £{submission['total_cost']:,.0f}")
                     st.write(f"**Total with Admin:** £{submission['total_with_admin']:,.0f}")
+                    
+                    # Promoter info (if available)
+                    if submission.get('promoter_name'):
+                        st.write(f"**Promoter/Introducer:** {submission['promoter_name']}")
+                        if submission.get('promoter_discount_type') == 'tier_up':
+                            st.write(f"**Discount Type:** Tier Up")
+                        elif submission.get('promoter_discount_type') == 'percentage':
+                            st.write(f"**Discount Type:** Percentage ({submission.get('promoter_discount_value', 0)}%)")
                     
                     # Allocations
                     if not allocations.empty:
@@ -911,6 +1026,60 @@ if st.session_state["target_lpa_name"] or st.session_state["target_nca_name"]:
         f"NCA: **{st.session_state['target_nca_name'] or '—'}**"
     )
 
+# ================= Promoter/Introducer Selection =================
+st.markdown("---")
+with st.container():
+    st.subheader("2) Promoter/Introducer (Optional)")
+    
+    # Get introducers from database
+    try:
+        introducers_list = db.get_all_introducers() if db else []
+        introducer_names = [intro['name'] for intro in introducers_list]
+    except Exception as e:
+        st.error(f"Error loading introducers: {e}")
+        introducers_list = []
+        introducer_names = []
+    
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        use_promoter = st.checkbox("Use Promoter/Introducer", 
+                                    value=st.session_state.get("use_promoter", False),
+                                    key="use_promoter_checkbox")
+        st.session_state["use_promoter"] = use_promoter
+    
+    with col2:
+        if use_promoter:
+            if not introducer_names:
+                st.warning("⚠️ No introducers configured. Please add introducers in the Admin Dashboard.")
+                st.session_state["selected_promoter"] = None
+                st.session_state["promoter_discount_type"] = None
+                st.session_state["promoter_discount_value"] = None
+            else:
+                selected = st.selectbox("Select Introducer",
+                                       introducer_names,
+                                       key="promoter_dropdown",
+                                       help="Select an approved introducer to apply their discount")
+                
+                # Store selected promoter details in session state
+                if selected:
+                    selected_intro = next((intro for intro in introducers_list if intro['name'] == selected), None)
+                    if selected_intro:
+                        st.session_state["selected_promoter"] = selected_intro['name']
+                        st.session_state["promoter_discount_type"] = selected_intro['discount_type']
+                        st.session_state["promoter_discount_value"] = selected_intro['discount_value']
+                        
+                        # Show discount info
+                        if selected_intro['discount_type'] == 'tier_up':
+                            st.info(f"💡 **Tier Up Discount**: Pricing uses one contract size tier higher (e.g., fractional → small, small → medium, medium → large) for better rates")
+                        else:
+                            st.info(f"💡 **Percentage Discount**: {selected_intro['discount_value']}% discount on all items except £500 admin fee")
+        else:
+            st.session_state["selected_promoter"] = None
+            st.session_state["promoter_discount_type"] = None
+            st.session_state["promoter_discount_value"] = None
+
+st.markdown("---")
+
 # ================= Map functions (CORRECTED STYLING) =================
 # ================= Map functions (CORRECTED STYLING) =================
 def build_base_map():
@@ -1353,6 +1522,60 @@ def select_size_for_demand(demand_df: pd.DataFrame, pricing_df: pd.DataFrame) ->
     total = float(demand_df["units_required"].sum())
     return select_contract_size(total, present)
 
+# ================= Promoter/Introducer Discount Helpers =================
+def apply_tier_up_discount(contract_size: str, available_sizes: List[str]) -> str:
+    """
+    Apply tier_up discount: move contract size one level up.
+    fractional -> small -> medium -> large
+    
+    This gives better (lower) pricing by using a larger contract size's rates.
+    The actual contract size remains unchanged for the quote.
+    """
+    size_lower = contract_size.lower()
+    available_lower = [s.lower() for s in available_sizes]
+    
+    # Define the hierarchy from smallest to largest
+    size_hierarchy = ["fractional", "small", "medium", "large"]
+    
+    # Find current position
+    try:
+        current_index = size_hierarchy.index(size_lower)
+    except ValueError:
+        # If size not in hierarchy, return as-is
+        return contract_size
+    
+    # Move up one level (to next larger size)
+    for next_index in range(current_index + 1, len(size_hierarchy)):
+        next_size = size_hierarchy[next_index]
+        if next_size in available_lower:
+            return next_size
+    
+    # If no larger size available, return current size
+    return contract_size
+
+def apply_percentage_discount(unit_price: float, discount_percentage: float) -> float:
+    """
+    Apply percentage discount to unit price.
+    discount_percentage is in percent (e.g., 10.0 for 10%)
+    """
+    return unit_price * (1.0 - discount_percentage / 100.0)
+
+def get_active_promoter_discount():
+    """
+    Get active promoter discount settings from session state.
+    Returns (discount_type, discount_value) or (None, None) if no promoter selected.
+    """
+    if not st.session_state.get("use_promoter", False):
+        return None, None
+    
+    discount_type = st.session_state.get("promoter_discount_type")
+    discount_value = st.session_state.get("promoter_discount_value")
+    
+    if discount_type and discount_value is not None:
+        return discount_type, discount_value
+    
+    return None, None
+
 def prepare_options(demand_df: pd.DataFrame,
                     chosen_size: str,
                     target_lpa: str, target_nca: str,
@@ -1384,7 +1607,16 @@ def prepare_options(demand_df: pd.DataFrame,
     ).merge(Catalog, on="habitat_name", how="left")
     stock_full = stock_full[~stock_full["habitat_name"].map(is_hedgerow)].copy()
 
-    pricing_cs = Pricing[Pricing["contract_size"] == chosen_size].copy()
+    # Get active promoter discount settings
+    promoter_discount_type, promoter_discount_value = get_active_promoter_discount()
+    
+    # Apply tier_up discount to contract size if active
+    pricing_contract_size = chosen_size
+    if promoter_discount_type == "tier_up":
+        available_sizes = Pricing["contract_size"].drop_duplicates().tolist()
+        pricing_contract_size = apply_tier_up_discount(chosen_size, available_sizes)
+    
+    pricing_cs = Pricing[Pricing["contract_size"] == pricing_contract_size].copy()
 
     pc_join = pricing_cs.merge(
         Catalog[["habitat_name","broader_type","distinctiveness_name"]],
@@ -1527,11 +1759,12 @@ def prepare_options(demand_df: pd.DataFrame,
                 target_lpa, target_nca,
                 lpa_neigh, nca_neigh, lpa_neigh_norm, nca_neigh_norm
             )
+            
             bank_key = sstr(srow.get("BANK_KEY") or srow.get("bank_name") or srow.get("bank_id"))
             price_info = find_price_for_supply(
                 bank_key=bank_key,
                 supply_habitat=srow["habitat_name"],
-                tier=tier,
+                tier=tier,  # Use actual geographic tier (tier_up already applied to contract size)
                 demand_broader=d_broader,
                 demand_dist=d_dist,
             )
@@ -1539,6 +1772,11 @@ def prepare_options(demand_df: pd.DataFrame,
                 continue
 
             unit_price, price_source, price_hab_used = price_info
+            
+            # Apply percentage discount if active
+            if promoter_discount_type == "percentage" and promoter_discount_value:
+                unit_price = apply_percentage_discount(unit_price, promoter_discount_value)
+            
             cap = float(srow.get("quantity_available", 0) or 0.0)
             if cap <= 0:
                 continue
@@ -1550,9 +1788,9 @@ def prepare_options(demand_df: pd.DataFrame,
                 "bank_name": sstr(srow.get("bank_name")),
                 "bank_id": sstr(srow.get("bank_id")),
                 "supply_habitat": srow["habitat_name"],
-                "tier": tier,
+                "tier": tier,  # Keep original tier for reporting
                 "proximity": tier,
-                "unit_price": float(unit_price),
+                "unit_price": float(unit_price),  # Use discounted price
                 "stock_use": {sstr(srow["stock_id"]): 1.0},
                 "price_source": price_source,
                 "price_habitat": price_hab_used,
@@ -1596,7 +1834,7 @@ def prepare_options(demand_df: pd.DataFrame,
                             if tier_test != target_tier:
                                 continue
                             
-                            # Check if we can price this "Other" component
+                            # Check if we can price this "Other" component (tier_up already applied to contract size)
                             pi_other = find_price_for_supply(bk, other_row["habitat_name"], target_tier, d_broader, d_dist)
                             if not pi_other:
                                 continue
@@ -1615,7 +1853,7 @@ def prepare_options(demand_df: pd.DataFrame,
                         tier_other_candidates.sort(key=lambda x: (x["price"], -x["cap"]))
                         best_other = tier_other_candidates[0]
                         
-                        # Get Orchard price at this tier
+                        # Get Orchard price at this tier (tier_up already applied to contract size)
                         pi_o = find_price_for_supply(bk, ORCHARD_NAME, target_tier, d_broader, d_dist)
                         if not pi_o:
                             continue
@@ -1643,6 +1881,10 @@ def prepare_options(demand_df: pd.DataFrame,
                             stock_use_orchard = 1.0 / srm  # = 0.5
                             stock_use_other = 1.0 / srm    # = 0.5
                         
+                        # Apply percentage discount if active (to blended price)
+                        if promoter_discount_type == "percentage" and promoter_discount_value:
+                            blended_price = apply_percentage_discount(blended_price, promoter_discount_value)
+                        
                         options.append({
                             "type": "paired",
                             "demand_idx": di,
@@ -1651,9 +1893,9 @@ def prepare_options(demand_df: pd.DataFrame,
                             "bank_name": sstr(o.get("bank_name")),
                             "bank_id": sstr(o.get("bank_id")),
                             "supply_habitat": f"{ORCHARD_NAME} + {sstr(other_row['habitat_name'])}",
-                            "tier": target_tier,
+                            "tier": target_tier,  # Keep original tier for reporting
                             "proximity": target_tier,
-                            "unit_price": blended_price,
+                            "unit_price": blended_price,  # Use discounted price
                             "stock_use": {sstr(o["stock_id"]): stock_use_orchard, sstr(other_row["stock_id"]): stock_use_other},
                             "price_source": "group-proxy",
                             "price_habitat": f"{pi_o[2]} + {pi_other[2]}",
@@ -1710,7 +1952,16 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
     
     stock_full = stock_full[stock_full["habitat_name"].map(is_hedgerow)].copy()
     
-    pricing_cs = Pricing[Pricing["contract_size"] == chosen_size].copy()
+    # Get active promoter discount settings
+    promoter_discount_type, promoter_discount_value = get_active_promoter_discount()
+    
+    # Apply tier_up discount to contract size if active
+    pricing_contract_size = chosen_size
+    if promoter_discount_type == "tier_up":
+        available_sizes = Pricing["contract_size"].drop_duplicates().tolist()
+        pricing_contract_size = apply_tier_up_discount(chosen_size, available_sizes)
+    
+    pricing_cs = Pricing[Pricing["contract_size"] == pricing_contract_size].copy()
     pricing_enriched = pricing_cs.merge(
         Catalog[["habitat_name","broader_type","distinctiveness_name"]],
         on="habitat_name", how="left"
@@ -1770,7 +2021,7 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
                 lpa_neigh, nca_neigh, lpa_neigh_norm, nca_neigh_norm
             )
             
-            # Find price
+            # Find price (tier_up already applied to contract size)
             pr_match = pricing_enriched[
                 (pricing_enriched["BANK_KEY"] == bank_key) &
                 (pricing_enriched["tier"] == tier) &
@@ -1789,6 +2040,10 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
             else:
                 price = float(pr_match.iloc[0]["price"])
             
+            # Apply percentage discount if active
+            if promoter_discount_type == "percentage" and promoter_discount_value:
+                price = apply_percentage_discount(price, promoter_discount_value)
+            
             options.append({
                 "demand_idx": demand_idx,
                 "demand_habitat": dem_hab,
@@ -1797,8 +2052,8 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
                 "bank_name": sstr(supply_row["bank_name"]),
                 "BANK_KEY": bank_key,
                 "stock_id": stock_id,
-                "tier": tier,
-                "unit_price": price,
+                "tier": tier,  # Keep original tier for reporting
+                "unit_price": price,  # Use discounted price
                 "cost_per_unit": price,
                 "stock_use": {stock_id: 1.0},
                 "type": "normal",          # <-- add this
@@ -1850,8 +2105,17 @@ def prepare_watercourse_options(demand_df: pd.DataFrame,
                on="habitat_name", how="left")
     )
 
+    # Get active promoter discount settings
+    promoter_discount_type, promoter_discount_value = get_active_promoter_discount()
+    
+    # Apply tier_up discount to contract size if active
+    pricing_contract_size = chosen_size
+    if promoter_discount_type == "tier_up":
+        available_sizes = Pricing["contract_size"].drop_duplicates().tolist()
+        pricing_contract_size = apply_tier_up_discount(chosen_size, available_sizes)
+
     pricing_enriched = (
-        Pricing[(Pricing["contract_size"] == chosen_size) & (Pricing["habitat_name"].isin(wc_habs))]
+        Pricing[(Pricing["contract_size"] == pricing_contract_size) & (Pricing["habitat_name"].isin(wc_habs))]
         .merge(Catalog[["habitat_name","broader_type","distinctiveness_name","UmbrellaType"]],
                on="habitat_name", how="left")
     )
@@ -1918,6 +2182,7 @@ def prepare_watercourse_options(demand_df: pd.DataFrame,
             )
 
             # Find exact price, else fallback to any watercourse price in same bank/tier
+            # (tier_up already applied to contract size)
             pr_match = pricing_enriched[
                 (pricing_enriched["BANK_KEY"] == bank_key) &
                 (pricing_enriched["tier"] == tier) &
@@ -1934,6 +2199,10 @@ def prepare_watercourse_options(demand_df: pd.DataFrame,
             else:
                 price = float(pr_match.iloc[0]["price"])
 
+            # Apply percentage discount if active
+            if promoter_discount_type == "percentage" and promoter_discount_value:
+                price = apply_percentage_discount(price, promoter_discount_value)
+
             options.append({
                 "demand_idx": demand_idx,
                 "demand_habitat": dem_hab,
@@ -1942,8 +2211,8 @@ def prepare_watercourse_options(demand_df: pd.DataFrame,
                 "bank_name": sstr(supply_row["bank_name"]),
                 "BANK_KEY": bank_key,
                 "stock_id": stock_id,
-                "tier": tier,
-                "unit_price": price,
+                "tier": tier,  # Keep original tier for reporting
+                "unit_price": price,  # Use discounted price
                 "cost_per_unit": price,
                 "stock_use": {stock_id: 1.0},
                 "type": "normal",
@@ -2641,7 +2910,10 @@ if run:
 def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.DataFrame, total_cost: float, admin_fee: float, 
                                        client_name: str, ref_number: str, location: str,
                                        manual_hedgerow_rows: List[dict] = None,
-                                       manual_watercourse_rows: List[dict] = None) -> Tuple[pd.DataFrame, str]:
+                                       manual_watercourse_rows: List[dict] = None,
+                                       promoter_name: str = None,
+                                       promoter_discount_type: str = None,
+                                       promoter_discount_value: float = None) -> Tuple[pd.DataFrame, str]:
     """Generate the client-facing report table and email body matching exact template with improved styling"""
     
     if manual_hedgerow_rows is None:
@@ -3101,6 +3373,9 @@ Our key advantages:
 <br><br>
 <strong>Your Quote - £{total_with_admin:,.0f} + VAT</strong>
 <br><br>
+{f"<strong>Discount Applied:</strong> Introducer/Promoter: {promoter_name}" if promoter_name else ""}
+{f"<br>Discount Type: {'Tier Up (pricing uses one contract size tier higher for better rates)' if promoter_discount_type == 'tier_up' else f'{promoter_discount_value}% percentage discount on all items (excluding £500 admin fee)'}" if promoter_name else ""}
+{"<br><br>" if promoter_name else ""}
 See a detailed breakdown of the pricing below. I've attached a PDF outlining the BNG offset and condition discharge process. If you have any questions, please let us know—we're here to help.
 <br><br>
 
@@ -3394,7 +3669,10 @@ if (st.session_state.get("optimization_complete", False) and
             session_alloc_df, session_demand_df, session_total_cost, ADMIN_FEE_GBP,
             client_name, ref_number, location,
             st.session_state.manual_hedgerow_rows,
-            st.session_state.manual_watercourse_rows
+            st.session_state.manual_watercourse_rows,
+            st.session_state.get("selected_promoter"),
+            st.session_state.get("promoter_discount_type"),
+            st.session_state.get("promoter_discount_value")
         )
         
         # Display the table
@@ -3525,7 +3803,10 @@ Wild Capital Team"""
                         admin_fee=ADMIN_FEE_GBP,
                         manual_hedgerow_rows=st.session_state.get("manual_hedgerow_rows", []),
                         manual_watercourse_rows=st.session_state.get("manual_watercourse_rows", []),
-                        username=current_user
+                        username=current_user,
+                        promoter_name=st.session_state.get("selected_promoter"),
+                        promoter_discount_type=st.session_state.get("promoter_discount_type"),
+                        promoter_discount_value=st.session_state.get("promoter_discount_value")
                     )
                     st.success(f"✅ Quote saved to database! Submission ID: {submission_id}")
                     st.info(f"📊 Client: {client_name} | Reference: {ref_number} | Total: £{session_total_cost + ADMIN_FEE_GBP:,.0f}")
