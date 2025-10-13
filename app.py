@@ -1523,18 +1523,35 @@ def select_size_for_demand(demand_df: pd.DataFrame, pricing_df: pd.DataFrame) ->
     return select_contract_size(total, present)
 
 # ================= Promoter/Introducer Discount Helpers =================
-def apply_tier_up_discount(tier: str) -> str:
+def apply_tier_up_discount(contract_size: str, available_sizes: List[str]) -> str:
     """
-    Apply tier_up discount: move tier one level up in pricing hierarchy.
-    local -> adjacent -> far
+    Apply tier_up discount: move contract size one level up.
+    fractional -> small -> medium -> large
+    
+    This gives better (lower) pricing by using a larger contract size's rates.
+    The actual contract size remains unchanged for the quote.
     """
-    tier_lower = tier.lower()
-    if tier_lower == "local":
-        return "adjacent"
-    elif tier_lower == "adjacent":
-        return "far"
-    else:
-        return tier  # far stays far
+    size_lower = contract_size.lower()
+    available_lower = [s.lower() for s in available_sizes]
+    
+    # Define the hierarchy from smallest to largest
+    size_hierarchy = ["fractional", "small", "medium", "large"]
+    
+    # Find current position
+    try:
+        current_index = size_hierarchy.index(size_lower)
+    except ValueError:
+        # If size not in hierarchy, return as-is
+        return contract_size
+    
+    # Move up one level (to next larger size)
+    for next_index in range(current_index + 1, len(size_hierarchy)):
+        next_size = size_hierarchy[next_index]
+        if next_size in available_lower:
+            return next_size
+    
+    # If no larger size available, return current size
+    return contract_size
 
 def apply_percentage_discount(unit_price: float, discount_percentage: float) -> float:
     """
@@ -1590,10 +1607,16 @@ def prepare_options(demand_df: pd.DataFrame,
     ).merge(Catalog, on="habitat_name", how="left")
     stock_full = stock_full[~stock_full["habitat_name"].map(is_hedgerow)].copy()
 
-    pricing_cs = Pricing[Pricing["contract_size"] == chosen_size].copy()
-    
     # Get active promoter discount settings
     promoter_discount_type, promoter_discount_value = get_active_promoter_discount()
+    
+    # Apply tier_up discount to contract size if active
+    pricing_contract_size = chosen_size
+    if promoter_discount_type == "tier_up":
+        available_sizes = Pricing["contract_size"].drop_duplicates().tolist()
+        pricing_contract_size = apply_tier_up_discount(chosen_size, available_sizes)
+    
+    pricing_cs = Pricing[Pricing["contract_size"] == pricing_contract_size].copy()
 
     pc_join = pricing_cs.merge(
         Catalog[["habitat_name","broader_type","distinctiveness_name"]],
@@ -1737,16 +1760,11 @@ def prepare_options(demand_df: pd.DataFrame,
                 lpa_neigh, nca_neigh, lpa_neigh_norm, nca_neigh_norm
             )
             
-            # Apply tier_up discount if active
-            pricing_tier = tier
-            if promoter_discount_type == "tier_up":
-                pricing_tier = apply_tier_up_discount(tier)
-            
             bank_key = sstr(srow.get("BANK_KEY") or srow.get("bank_name") or srow.get("bank_id"))
             price_info = find_price_for_supply(
                 bank_key=bank_key,
                 supply_habitat=srow["habitat_name"],
-                tier=pricing_tier,  # Use pricing_tier which may be tier_up adjusted
+                tier=tier,  # Use actual geographic tier (tier_up already applied to contract size)
                 demand_broader=d_broader,
                 demand_dist=d_dist,
             )
@@ -1806,11 +1824,6 @@ def prepare_options(demand_df: pd.DataFrame,
                     
                     # For each tier (adjacent and far), find the best "Other" component
                     for target_tier in ["adjacent", "far"]:
-                        # Apply tier_up discount if active
-                        pricing_tier = target_tier
-                        if promoter_discount_type == "tier_up":
-                            pricing_tier = apply_tier_up_discount(target_tier)
-                        
                         # Find "Other" candidates at this tier with valid prices
                         tier_other_candidates = []
                         for _, other_row in other_candidates.iterrows():
@@ -1821,8 +1834,8 @@ def prepare_options(demand_df: pd.DataFrame,
                             if tier_test != target_tier:
                                 continue
                             
-                            # Check if we can price this "Other" component using pricing_tier
-                            pi_other = find_price_for_supply(bk, other_row["habitat_name"], pricing_tier, d_broader, d_dist)
+                            # Check if we can price this "Other" component (tier_up already applied to contract size)
+                            pi_other = find_price_for_supply(bk, other_row["habitat_name"], target_tier, d_broader, d_dist)
                             if not pi_other:
                                 continue
                             
@@ -1840,8 +1853,8 @@ def prepare_options(demand_df: pd.DataFrame,
                         tier_other_candidates.sort(key=lambda x: (x["price"], -x["cap"]))
                         best_other = tier_other_candidates[0]
                         
-                        # Get Orchard price at this tier using pricing_tier
-                        pi_o = find_price_for_supply(bk, ORCHARD_NAME, pricing_tier, d_broader, d_dist)
+                        # Get Orchard price at this tier (tier_up already applied to contract size)
+                        pi_o = find_price_for_supply(bk, ORCHARD_NAME, target_tier, d_broader, d_dist)
                         if not pi_o:
                             continue
                         
@@ -1939,15 +1952,21 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
     
     stock_full = stock_full[stock_full["habitat_name"].map(is_hedgerow)].copy()
     
-    pricing_cs = Pricing[Pricing["contract_size"] == chosen_size].copy()
+    # Get active promoter discount settings
+    promoter_discount_type, promoter_discount_value = get_active_promoter_discount()
+    
+    # Apply tier_up discount to contract size if active
+    pricing_contract_size = chosen_size
+    if promoter_discount_type == "tier_up":
+        available_sizes = Pricing["contract_size"].drop_duplicates().tolist()
+        pricing_contract_size = apply_tier_up_discount(chosen_size, available_sizes)
+    
+    pricing_cs = Pricing[Pricing["contract_size"] == pricing_contract_size].copy()
     pricing_enriched = pricing_cs.merge(
         Catalog[["habitat_name","broader_type","distinctiveness_name"]],
         on="habitat_name", how="left"
     )
     pricing_enriched = pricing_enriched[pricing_enriched["habitat_name"].map(is_hedgerow)].copy()
-    
-    # Get active promoter discount settings
-    promoter_discount_type, promoter_discount_value = get_active_promoter_discount()
     
     options = []
     stock_caps = {}
@@ -2002,15 +2021,10 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
                 lpa_neigh, nca_neigh, lpa_neigh_norm, nca_neigh_norm
             )
             
-            # Apply tier_up discount if active
-            pricing_tier = tier
-            if promoter_discount_type == "tier_up":
-                pricing_tier = apply_tier_up_discount(tier)
-            
-            # Find price using pricing_tier
+            # Find price (tier_up already applied to contract size)
             pr_match = pricing_enriched[
                 (pricing_enriched["BANK_KEY"] == bank_key) &
-                (pricing_enriched["tier"] == pricing_tier) &
+                (pricing_enriched["tier"] == tier) &
                 (pricing_enriched["habitat_name"] == supply_hab)
             ]
             
@@ -2018,7 +2032,7 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
                 # Try to find any price for this bank/tier as fallback
                 pr_match = pricing_enriched[
                     (pricing_enriched["BANK_KEY"] == bank_key) &
-                    (pricing_enriched["tier"] == pricing_tier)
+                    (pricing_enriched["tier"] == tier)
                 ]
                 if pr_match.empty:
                     continue
@@ -2091,14 +2105,20 @@ def prepare_watercourse_options(demand_df: pd.DataFrame,
                on="habitat_name", how="left")
     )
 
+    # Get active promoter discount settings
+    promoter_discount_type, promoter_discount_value = get_active_promoter_discount()
+    
+    # Apply tier_up discount to contract size if active
+    pricing_contract_size = chosen_size
+    if promoter_discount_type == "tier_up":
+        available_sizes = Pricing["contract_size"].drop_duplicates().tolist()
+        pricing_contract_size = apply_tier_up_discount(chosen_size, available_sizes)
+
     pricing_enriched = (
-        Pricing[(Pricing["contract_size"] == chosen_size) & (Pricing["habitat_name"].isin(wc_habs))]
+        Pricing[(Pricing["contract_size"] == pricing_contract_size) & (Pricing["habitat_name"].isin(wc_habs))]
         .merge(Catalog[["habitat_name","broader_type","distinctiveness_name","UmbrellaType"]],
                on="habitat_name", how="left")
     )
-
-    # Get active promoter discount settings
-    promoter_discount_type, promoter_discount_value = get_active_promoter_discount()
 
     options: List[dict] = []
     stock_caps: Dict[str, float] = {}
@@ -2161,21 +2181,17 @@ def prepare_watercourse_options(demand_df: pd.DataFrame,
                 lpa_neigh, nca_neigh, lpa_neigh_norm, nca_neigh_norm
             )
 
-            # Apply tier_up discount if active
-            pricing_tier = tier
-            if promoter_discount_type == "tier_up":
-                pricing_tier = apply_tier_up_discount(tier)
-
             # Find exact price, else fallback to any watercourse price in same bank/tier
+            # (tier_up already applied to contract size)
             pr_match = pricing_enriched[
                 (pricing_enriched["BANK_KEY"] == bank_key) &
-                (pricing_enriched["tier"] == pricing_tier) &
+                (pricing_enriched["tier"] == tier) &
                 (pricing_enriched["habitat_name"] == supply_hab)
             ]
             if pr_match.empty:
                 pr_match = pricing_enriched[
                     (pricing_enriched["BANK_KEY"] == bank_key) &
-                    (pricing_enriched["tier"] == pricing_tier)
+                    (pricing_enriched["tier"] == tier)
                 ]
                 if pr_match.empty:
                     continue
