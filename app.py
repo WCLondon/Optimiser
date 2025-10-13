@@ -2349,19 +2349,17 @@ if run:
                 srm = MULT.get(tier, 1.0)
 
                 if len(parts) == 2:
-                    # Calculate total stock_use to normalize
-                    total_stock_use = sum(float(part.get("stock_use", 0.5)) for part in parts)
+                    # For paired allocations, each component must independently satisfy
+                    # the full effective requirement. Do NOT split using stock_use.
+                    # units_total is the effective requirement; compute raw units per component.
+                    raw_units_per_component = units_total / srm
                     
                     for idx, part in enumerate(parts):
                         rr = r.to_dict()
                         rr["supply_habitat"] = sstr(part.get("habitat") or (name_parts[idx] if idx < len(name_parts) else f"Part {idx+1}"))
                         
-                        # Use stock_use ratio if available, otherwise default to 0.5
-                        stock_use_ratio = float(part.get("stock_use", 0.5))
-                        
-                        # Calculate units supplied: normalize by total stock_use, then divide by SRM
-                        # This gives the actual units delivered to customer for this component
-                        rr["units_supplied"] = units_total * stock_use_ratio / srm
+                        # Each component gets the full raw requirement
+                        rr["units_supplied"] = raw_units_per_component
                         rr["unit_price"] = float(part.get("unit_price", rr.get("unit_price", 0.0)))
                         rr["cost"] = rr["units_supplied"] * rr["unit_price"]
                         rows.append(rr)
