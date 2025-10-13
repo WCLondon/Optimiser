@@ -1430,16 +1430,22 @@ def prepare_options(demand_df: pd.DataFrame,
                         pi_other = best_other["price_info"]
                         
                         # Calculate blended price and stock_use based on tier
+                        # For paired allocations: each component delivers full effective requirement
+                        # Blended price = (price_o + price_other) / SRM
                         if target_tier == "adjacent":
-                            # Adjacent: 1.00 Orchard + 1/3 Other per 1.00 demand unit (75%/25% split)
-                            blended_price = (1.00 * price_o + (1/3) * price_other) / (4/3)
-                            stock_use_orchard = 1.00
-                            stock_use_other = 1/3
+                            # Adjacent: SRM = 4/3, each component delivers full effective
+                            srm = 4/3
+                            blended_price = (price_o + price_other) / srm
+                            # Stock consumption: each component uses (1/SRM) per effective unit
+                            stock_use_orchard = 1.0 / srm  # = 0.75
+                            stock_use_other = 1.0 / srm    # = 0.75
                         else:  # far
-                            # Far: 0.50 Orchard + 0.50 Other per 1.00 demand unit
-                            blended_price = 0.5 * price_o + 0.5 * price_other
-                            stock_use_orchard = 0.50
-                            stock_use_other = 0.50
+                            # Far: SRM = 2.0, each component delivers full effective
+                            srm = 2.0
+                            blended_price = (price_o + price_other) / srm
+                            # Stock consumption: each component uses (1/SRM) per effective unit
+                            stock_use_orchard = 1.0 / srm  # = 0.5
+                            stock_use_other = 1.0 / srm    # = 0.5
                         
                         options.append({
                             "type": "paired",
@@ -2349,19 +2355,17 @@ if run:
                 srm = MULT.get(tier, 1.0)
 
                 if len(parts) == 2:
-                    # Calculate total stock_use to normalize
-                    total_stock_use = sum(float(part.get("stock_use", 0.5)) for part in parts)
+                    # For paired allocations, each component must independently satisfy
+                    # the full effective requirement. Do NOT split using stock_use.
+                    # units_total is the effective requirement; compute raw units per component.
+                    raw_units_per_component = units_total / srm
                     
                     for idx, part in enumerate(parts):
                         rr = r.to_dict()
                         rr["supply_habitat"] = sstr(part.get("habitat") or (name_parts[idx] if idx < len(name_parts) else f"Part {idx+1}"))
                         
-                        # Use stock_use ratio if available, otherwise default to 0.5
-                        stock_use_ratio = float(part.get("stock_use", 0.5))
-                        
-                        # Calculate units supplied: normalize by total stock_use, then divide by SRM
-                        # This gives the actual units delivered to customer for this component
-                        rr["units_supplied"] = units_total * stock_use_ratio / srm
+                        # Each component gets the full raw requirement
+                        rr["units_supplied"] = raw_units_per_component
                         rr["unit_price"] = float(part.get("unit_price", rr.get("unit_price", 0.0)))
                         rr["cost"] = rr["units_supplied"] * rr["unit_price"]
                         rows.append(rr)
