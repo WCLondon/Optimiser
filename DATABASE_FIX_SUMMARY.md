@@ -29,7 +29,7 @@ Created a comprehensive data sanitization function in `database.py` that:
 ### 2. Updated `store_submission()` Method
 Modified the submission storage to:
 - Sanitize all array fields (lpa_neighbors, nca_neighbors, banks_used) to ensure they are lists of strings
-- **Added explicit PostgreSQL type casts** (::TEXT[]) in the SQL INSERT statement for array parameters
+- **Added explicit PostgreSQL type casts using CAST() function** in the SQL INSERT statement for array parameters
 - Sanitize all JSONB fields (demand_habitats, allocation_results, manual entries) to ensure proper JSON serialization
 - Convert all numeric fields to native Python types
 - Apply sanitization to allocation details rows
@@ -38,7 +38,7 @@ Modified the submission storage to:
 - Added explicit type conversions for coordinates (target_lat, target_lon)
 - Added type conversions for financial fields (total_cost, admin_fee, promoter_discount_value)
 - Ensured all bank keys are converted to strings
-- **Added PostgreSQL type casts** (::TEXT[]) for array fields in SQL to ensure proper type inference
+- **Added PostgreSQL type casts using CAST() function** for array fields in SQL to ensure proper type inference while maintaining SQLAlchemy compatibility
 
 ## Code Changes
 
@@ -62,10 +62,11 @@ import numpy as np
 4. **Updated INSERT parameters** (lines 297-322):
    - Use cleaned/sanitized variables
    - Ensure proper type conversion
-   - **Added explicit PostgreSQL type casts** (::TEXT[]) for array parameters:
-     - `:lpa_neighbors::TEXT[]`
-     - `:nca_neighbors::TEXT[]`
-     - `:banks_used::TEXT[]`
+   - **Added explicit PostgreSQL type casts using CAST() function** for array parameters:
+     - `CAST(:lpa_neighbors AS TEXT[])`
+     - `CAST(:nca_neighbors AS TEXT[])`
+     - `CAST(:banks_used AS TEXT[])`
+   - Note: CAST() syntax is used instead of :: operator for SQLAlchemy text() compatibility
 
 5. **Updated allocation_details insertion** (lines 326-353):
    - Create sanitized row_dict before insertion
