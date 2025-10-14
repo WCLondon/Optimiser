@@ -2954,6 +2954,52 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
     if manual_watercourse_rows is None:
         manual_watercourse_rows = []
     
+    # Helper function to get highest distinctiveness habitat from paired allocation
+    def get_highest_distinctiveness_habitat(supply_habitat_str):
+        """
+        For paired allocations (e.g., 'Traditional Orchard + Mixed Scrub'),
+        return the habitat with highest distinctiveness and its distinctiveness level.
+        For non-paired, return the habitat as-is with its distinctiveness.
+        
+        Returns: (habitat_name, distinctiveness_level)
+        """
+        distinctiveness_order = {
+            "Very High": 0, "V.High": 0,
+            "High": 1,
+            "Medium": 2,
+            "Low + 10% Net Gain": 3,
+            "Low": 4,
+            "10% Net Gain": 5,
+            "Very Low": 6, "V.Low": 6
+        }
+        
+        # Check if it's a paired allocation
+        if " + " not in supply_habitat_str:
+            # Not paired - return as is
+            cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == supply_habitat_str]
+            if not cat_match.empty:
+                distinctiveness = cat_match["distinctiveness_name"].iloc[0]
+                return supply_habitat_str, distinctiveness
+            return supply_habitat_str, "Medium"
+        
+        # Paired allocation - parse and find highest distinctiveness
+        habitat_parts = [h.strip() for h in supply_habitat_str.split("+")]
+        best_habitat = supply_habitat_str  # fallback
+        best_distinctiveness = "Medium"
+        best_order = 99
+        
+        for habitat_name in habitat_parts:
+            cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat_name]
+            if not cat_match.empty:
+                distinctiveness = cat_match["distinctiveness_name"].iloc[0]
+                order = distinctiveness_order.get(distinctiveness, 99)
+                if order < best_order:
+                    best_order = order
+                    best_habitat = habitat_name
+                    best_distinctiveness = distinctiveness
+        
+        return best_habitat, best_distinctiveness
+    
     # Separate by habitat types
     area_habitats = []
     hedgerow_habitats = []
@@ -2989,17 +3035,13 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                     demand_habitat_display = demand_habitat
             
             # Supply info
-            supply_habitat = alloc_row["supply_habitat"]
+            supply_habitat_raw = alloc_row["supply_habitat"]
             supply_units = alloc_row["units_supplied"]
             unit_price = alloc_row["unit_price"]
             offset_cost = alloc_row["cost"]
             
-            # Determine supply distinctiveness
-            supply_cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == supply_habitat]
-            if not supply_cat_match.empty:
-                supply_distinctiveness = supply_cat_match["distinctiveness_name"].iloc[0]
-            else:
-                supply_distinctiveness = "Medium"  # Default
+            # For paired allocations, get only the highest distinctiveness habitat
+            supply_habitat, supply_distinctiveness = get_highest_distinctiveness_habitat(supply_habitat_raw)
             
             row_data = {
                 "Distinctiveness": demand_distinctiveness,
