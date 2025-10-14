@@ -2994,12 +2994,59 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
             unit_price = alloc_row["unit_price"]
             offset_cost = alloc_row["cost"]
             
-            # Determine supply distinctiveness
-            supply_cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == supply_habitat]
-            if not supply_cat_match.empty:
-                supply_distinctiveness = supply_cat_match["distinctiveness_name"].iloc[0]
+            # For paired allocations, show only the highest distinctiveness habitat
+            allocation_type = sstr(alloc_row.get("allocation_type", "normal"))
+            if allocation_type == "paired" and "paired_parts" in alloc_row and alloc_row["paired_parts"]:
+                try:
+                    paired_parts = json.loads(sstr(alloc_row["paired_parts"]))
+                    if paired_parts and len(paired_parts) >= 2:
+                        # Get distinctiveness for each habitat in the pair
+                        habitat_distinctiveness = []
+                        for part in paired_parts:
+                            habitat = sstr(part.get("habitat", ""))
+                            cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat]
+                            if not cat_match.empty:
+                                dist_name = cat_match["distinctiveness_name"].iloc[0]
+                                dist_value = dist_levels_map.get(dist_name, dist_levels_map.get(dist_name.lower(), 0))
+                                habitat_distinctiveness.append({
+                                    "habitat": habitat,
+                                    "distinctiveness_name": dist_name,
+                                    "distinctiveness_value": dist_value
+                                })
+                        
+                        # Select the habitat with highest distinctiveness value
+                        if habitat_distinctiveness:
+                            highest_dist = max(habitat_distinctiveness, key=lambda x: x["distinctiveness_value"])
+                            supply_habitat = highest_dist["habitat"]
+                            supply_distinctiveness = highest_dist["distinctiveness_name"]
+                        else:
+                            # Fallback to default lookup
+                            supply_cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == supply_habitat]
+                            if not supply_cat_match.empty:
+                                supply_distinctiveness = supply_cat_match["distinctiveness_name"].iloc[0]
+                            else:
+                                supply_distinctiveness = "Medium"
+                    else:
+                        # Fallback to default lookup
+                        supply_cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == supply_habitat]
+                        if not supply_cat_match.empty:
+                            supply_distinctiveness = supply_cat_match["distinctiveness_name"].iloc[0]
+                        else:
+                            supply_distinctiveness = "Medium"
+                except Exception:
+                    # If paired_parts parsing fails, fallback to default lookup
+                    supply_cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == supply_habitat]
+                    if not supply_cat_match.empty:
+                        supply_distinctiveness = supply_cat_match["distinctiveness_name"].iloc[0]
+                    else:
+                        supply_distinctiveness = "Medium"
             else:
-                supply_distinctiveness = "Medium"  # Default
+                # Normal allocation - lookup distinctiveness
+                supply_cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == supply_habitat]
+                if not supply_cat_match.empty:
+                    supply_distinctiveness = supply_cat_match["distinctiveness_name"].iloc[0]
+                else:
+                    supply_distinctiveness = "Medium"  # Default
             
             row_data = {
                 "Distinctiveness": demand_distinctiveness,
