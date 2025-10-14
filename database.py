@@ -294,9 +294,9 @@ class SubmissionsDB:
                     ) VALUES (
                         :submission_date, :client_name, :reference_number, :site_location,
                         :target_lpa, :target_nca, :target_lat, :target_lon,
-                        :lpa_neighbors, :nca_neighbors, :demand_habitats,
+                        :lpa_neighbors::TEXT[], :nca_neighbors::TEXT[], :demand_habitats,
                         :contract_size, :total_cost, :admin_fee, :total_with_admin,
-                        :num_banks_selected, :banks_used,
+                        :num_banks_selected, :banks_used::TEXT[],
                         :manual_hedgerow_entries, :manual_watercourse_entries,
                         :allocation_results, :username,
                         :promoter_name, :promoter_discount_type, :promoter_discount_value
