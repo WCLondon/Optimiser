@@ -68,6 +68,62 @@ python -c "from database import SubmissionsDB; db = SubmissionsDB(); print('✓ 
 
 ## Option 2: Cloud PostgreSQL (Production)
 
+### Supabase (Recommended for Quick Setup)
+
+Supabase provides a free PostgreSQL database with a generous free tier.
+
+1. **Create Supabase Project:**
+   - Go to https://supabase.com
+   - Sign up or log in
+   - Click "New Project"
+   - Enter project details and password
+   - Wait for project to provision (~2 minutes)
+
+2. **Get Connection Details:**
+   - Go to **Settings** → **Database**
+   - Find the **Connection Info** section
+   - Note your **Host** (e.g., `db.xxxxxxxxxxxxx.supabase.co`)
+   - Default **Database**: `postgres`
+   - Default **User**: `postgres`
+   - **Port**: `5432`
+   - **Password**: The one you set during project creation
+
+3. **Build Connection String:**
+   ```
+   postgresql://postgres:YOUR_PASSWORD@db.xxxxxxxxxxxxx.supabase.co:5432/postgres
+   ```
+   
+   **Important:** If your password contains special characters like `#`, URL-encode them:
+   - `#` → `%23`
+   - `@` → `%40`
+   - `$` → `%24`
+   - `&` → `%26`
+   
+   Example with password `#EYeCqUUpHq8EVX`:
+   ```
+   postgresql://postgres:%23EYeCqUUpHq8EVX@db.xxxxxxxxxxxxx.supabase.co:5432/postgres
+   ```
+
+4. **Update secrets.toml:**
+   ```toml
+   [database]
+   url = "postgresql://postgres:%23EYeCqUUpHq8EVX@db.xxxxxxxxxxxxx.supabase.co:5432/postgres"
+   
+   [auth]
+   username = "WC0323"
+   password = "Wimborne"
+   
+   [admin]
+   password = "WCAdmin2024"
+   ```
+
+5. **Test Connection:**
+   ```bash
+   python -c "from database import SubmissionsDB; db = SubmissionsDB(); print('✓ Connected' if db.db_healthcheck() else '✗ Failed')"
+   ```
+
+**See [SUPABASE_SETUP.md](SUPABASE_SETUP.md) for detailed Supabase setup instructions.**
+
 ### AWS RDS
 
 1. **Create RDS Instance:**

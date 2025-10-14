@@ -104,9 +104,16 @@ python -c "from database import SubmissionsDB; db = SubmissionsDB(); print('✓ 
 
 1. **[POSTGRESQL_QUICKSTART.md](POSTGRESQL_QUICKSTART.md)** (316 lines)
    - Quick setup for local, cloud, and Docker
+   - **Supabase setup** (recommended for quick start)
    - Step-by-step instructions
    - Common issues and solutions
    - **Start here if you're new!**
+
+2. **[SUPABASE_SETUP.md](SUPABASE_SETUP.md)** (NEW)
+   - Detailed Supabase configuration guide
+   - Password URL-encoding instructions
+   - Connection troubleshooting
+   - **Start here if using Supabase!**
 
 2. **[POSTGRESQL_MIGRATION.md](POSTGRESQL_MIGRATION.md)** (334 lines)
    - Complete migration guide
