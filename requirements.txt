@@ -6,3 +6,6 @@ folium>=0.16
 openpyxl>=3.1
 xlsxwriter>=3.2
 pulp>=2.7   # optional; app falls back to greedy if not present
+sqlalchemy>=2.0
+psycopg[binary]>=3.1
+tenacity>=8.0

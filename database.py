@@ -1,41 +1,48 @@
 """
 Database module for BNG Optimiser submissions tracking.
-Uses SQLite for local storage of all form submissions and optimization results.
+Uses PostgreSQL via SQLAlchemy for persistent storage of all form submissions and optimization results.
 """
 
-import sqlite3
 import json
 from datetime import datetime
-from pathlib import Path
 from typing import Dict, List, Optional, Any
 import pandas as pd
+from sqlalchemy import text, Table, MetaData, Column, Integer, String, Float, DateTime, ForeignKey, Index, ARRAY, Text
+from sqlalchemy.dialects.postgresql import JSONB
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from db import DatabaseConnection
 
 
 class SubmissionsDB:
     """Handle all database operations for submissions tracking."""
     
     def __init__(self, db_path: str = "submissions.db"):
-        """Initialize database connection and create tables if needed."""
-        self.db_path = db_path
+        """
+        Initialize database connection and create tables if needed.
+        
+        Note: db_path parameter is kept for backward compatibility but is ignored.
+        Connection is managed through Streamlit secrets.
+        """
+        self.db_path = db_path  # Kept for backward compatibility
         self._conn = None
         self._init_database()
     
     def _get_connection(self):
-        """Get or create database connection."""
-        if self._conn is None:
-            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        return self._conn
+        """Get database connection from the engine."""
+        # Return the engine for compatibility, actual connections are managed by SQLAlchemy
+        return DatabaseConnection.get_engine()
     
     def _init_database(self):
-        """Create tables if they don't exist."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        """Create tables if they don't exist (idempotent schema initialization)."""
+        engine = self._get_connection()
         
-        # Main submissions table
-        cursor.execute("""
+        # Use raw SQL for schema creation to ensure idempotency
+        with engine.connect() as conn:
+            # Main submissions table
+            conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS submissions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    submission_date TEXT NOT NULL,
+                    id SERIAL PRIMARY KEY,
+                    submission_date TIMESTAMP NOT NULL,
                     
                     -- Client details
                     client_name TEXT,
@@ -45,28 +52,28 @@ class SubmissionsDB:
                     -- Location metadata
                     target_lpa TEXT,
                     target_nca TEXT,
-                    target_lat REAL,
-                    target_lon REAL,
-                    lpa_neighbors TEXT,
-                    nca_neighbors TEXT,
+                    target_lat FLOAT,
+                    target_lon FLOAT,
+                    lpa_neighbors TEXT[],
+                    nca_neighbors TEXT[],
                     
                     -- Form inputs (demand)
-                    demand_habitats TEXT,
+                    demand_habitats JSONB,
                     
                     -- Optimization metadata
                     contract_size TEXT,
-                    total_cost REAL,
-                    admin_fee REAL,
-                    total_with_admin REAL,
+                    total_cost FLOAT,
+                    admin_fee FLOAT,
+                    total_with_admin FLOAT,
                     num_banks_selected INTEGER,
-                    banks_used TEXT,
+                    banks_used TEXT[],
                     
                     -- Manual entries
-                    manual_hedgerow_entries TEXT,
-                    manual_watercourse_entries TEXT,
+                    manual_hedgerow_entries JSONB,
+                    manual_watercourse_entries JSONB,
                     
                     -- Full allocation results (JSON)
-                    allocation_results TEXT,
+                    allocation_results JSONB,
                     
                     -- User info
                     username TEXT,
@@ -74,14 +81,32 @@ class SubmissionsDB:
                     -- Promoter/Introducer info
                     promoter_name TEXT,
                     promoter_discount_type TEXT,
-                    promoter_discount_value REAL
+                    promoter_discount_value FLOAT
                 )
-        """)
-        
-        # Allocations detail table (normalized)
-        cursor.execute("""
+            """))
+            
+            # Create indexes for submissions table
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_submissions_date 
+                ON submissions(submission_date DESC)
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_submissions_client 
+                ON submissions(client_name)
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_submissions_lpa 
+                ON submissions(target_lpa)
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_submissions_nca 
+                ON submissions(target_nca)
+            """))
+            
+            # Allocations detail table (normalized)
+            conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS allocation_details (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     submission_id INTEGER NOT NULL,
                     
                     -- Allocation specifics
@@ -91,34 +116,52 @@ class SubmissionsDB:
                     supply_habitat TEXT,
                     allocation_type TEXT,
                     tier TEXT,
-                    units_supplied REAL,
-                    unit_price REAL,
-                    cost REAL,
+                    units_supplied FLOAT,
+                    unit_price FLOAT,
+                    cost FLOAT,
                     
-                    FOREIGN KEY (submission_id) REFERENCES submissions(id)
+                    FOREIGN KEY (submission_id) REFERENCES submissions(id) ON DELETE CASCADE
                 )
-        """)
-        
-        # Introducers/Promoters table
-        cursor.execute("""
+            """))
+            
+            # Create index for allocation_details
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_allocation_details_submission 
+                ON allocation_details(submission_id)
+            """))
+            
+            # Introducers/Promoters table
+            conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS introducers (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
                     discount_type TEXT NOT NULL CHECK(discount_type IN ('tier_up', 'percentage')),
-                    discount_value REAL NOT NULL,
-                    created_date TEXT NOT NULL,
-                    updated_date TEXT NOT NULL
+                    discount_value FLOAT NOT NULL,
+                    created_date TIMESTAMP NOT NULL,
+                    updated_date TIMESTAMP NOT NULL
                 )
-        """)
-        
-        conn.commit()
-        
+            """))
+            
+            # Create index for introducers
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_introducers_name 
+                ON introducers(name)
+            """))
+            
+            conn.commit()
+    
     def close(self):
         """Close the database connection."""
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        # Connection is managed by SQLAlchemy pool, no explicit close needed
+        # This method is kept for backward compatibility
+        pass
     
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((Exception,)),
+        reraise=True
+    )
     def store_submission(self, 
                         client_name: str,
                         reference_number: str,
@@ -143,76 +186,111 @@ class SubmissionsDB:
         """
         Store a complete submission to the database.
         Returns the submission_id for reference.
+        
+        Uses transactions and automatic retry on transient failures.
         """
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        engine = self._get_connection()
         
         # Prepare data
-        submission_date = datetime.now().isoformat()
+        submission_date = datetime.now()
         total_with_admin = total_cost + admin_fee
         
         # Banks used
         banks_used = allocation_df["BANK_KEY"].unique().tolist() if not allocation_df.empty else []
         num_banks = len(banks_used)
         
-        # Convert lists/dicts to JSON
-        lpa_neighbors_json = json.dumps(lpa_neighbors)
-        nca_neighbors_json = json.dumps(nca_neighbors)
-        demand_habitats_json = demand_df.to_json(orient='records') if not demand_df.empty else "[]"
-        banks_used_json = json.dumps(banks_used)
-        manual_hedgerow_json = json.dumps(manual_hedgerow_rows)
-        manual_watercourse_json = json.dumps(manual_watercourse_rows)
-        allocation_results_json = allocation_df.to_json(orient='records') if not allocation_df.empty else "[]"
+        # Convert DataFrames to JSON for JSONB storage
+        demand_habitats_json = json.loads(demand_df.to_json(orient='records')) if not demand_df.empty else []
+        allocation_results_json = json.loads(allocation_df.to_json(orient='records')) if not allocation_df.empty else []
         
-        # Insert main submission
-        cursor.execute("""
-            INSERT INTO submissions (
-                submission_date, client_name, reference_number, site_location,
-                target_lpa, target_nca, target_lat, target_lon,
-                lpa_neighbors, nca_neighbors, demand_habitats,
-                contract_size, total_cost, admin_fee, total_with_admin,
-                num_banks_selected, banks_used,
-                manual_hedgerow_entries, manual_watercourse_entries,
-                allocation_results, username,
-                promoter_name, promoter_discount_type, promoter_discount_value
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            submission_date, client_name, reference_number, site_location,
-            target_lpa, target_nca, target_lat, target_lon,
-            lpa_neighbors_json, nca_neighbors_json, demand_habitats_json,
-            contract_size, total_cost, admin_fee, total_with_admin,
-            num_banks, banks_used_json,
-            manual_hedgerow_json, manual_watercourse_json,
-            allocation_results_json, username,
-            promoter_name, promoter_discount_type, promoter_discount_value
-        ))
-        
-        submission_id = cursor.lastrowid
-        
-        # Insert allocation details
-        if not allocation_df.empty:
-            for _, row in allocation_df.iterrows():
-                cursor.execute("""
-                    INSERT INTO allocation_details (
-                        submission_id, bank_key, bank_name,
-                        demand_habitat, supply_habitat, allocation_type,
-                        tier, units_supplied, unit_price, cost
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                submission_id,
-                    row.get("BANK_KEY", ""),
-                    row.get("bank_name", ""),
-                    row.get("demand_habitat", ""),
-                    row.get("supply_habitat", ""),
-                    row.get("allocation_type", ""),
-                    row.get("proximity", ""),
-                    row.get("units_supplied", 0.0),
-                    row.get("unit_price", 0.0),
-                    row.get("cost", 0.0)
-                ))
-        
-        conn.commit()
-        return submission_id
+        with engine.connect() as conn:
+            # Start transaction
+            trans = conn.begin()
+            try:
+                # Insert main submission
+                result = conn.execute(text("""
+                    INSERT INTO submissions (
+                        submission_date, client_name, reference_number, site_location,
+                        target_lpa, target_nca, target_lat, target_lon,
+                        lpa_neighbors, nca_neighbors, demand_habitats,
+                        contract_size, total_cost, admin_fee, total_with_admin,
+                        num_banks_selected, banks_used,
+                        manual_hedgerow_entries, manual_watercourse_entries,
+                        allocation_results, username,
+                        promoter_name, promoter_discount_type, promoter_discount_value
+                    ) VALUES (
+                        :submission_date, :client_name, :reference_number, :site_location,
+                        :target_lpa, :target_nca, :target_lat, :target_lon,
+                        :lpa_neighbors, :nca_neighbors, :demand_habitats,
+                        :contract_size, :total_cost, :admin_fee, :total_with_admin,
+                        :num_banks_selected, :banks_used,
+                        :manual_hedgerow_entries, :manual_watercourse_entries,
+                        :allocation_results, :username,
+                        :promoter_name, :promoter_discount_type, :promoter_discount_value
+                    ) RETURNING id
+                """), {
+                    "submission_date": submission_date,
+                    "client_name": client_name,
+                    "reference_number": reference_number,
+                    "site_location": site_location,
+                    "target_lpa": target_lpa,
+                    "target_nca": target_nca,
+                    "target_lat": target_lat,
+                    "target_lon": target_lon,
+                    "lpa_neighbors": lpa_neighbors,  # PostgreSQL array
+                    "nca_neighbors": nca_neighbors,  # PostgreSQL array
+                    "demand_habitats": json.dumps(demand_habitats_json),  # JSONB
+                    "contract_size": contract_size,
+                    "total_cost": total_cost,
+                    "admin_fee": admin_fee,
+                    "total_with_admin": total_with_admin,
+                    "num_banks_selected": num_banks,
+                    "banks_used": banks_used,  # PostgreSQL array
+                    "manual_hedgerow_entries": json.dumps(manual_hedgerow_rows),  # JSONB
+                    "manual_watercourse_entries": json.dumps(manual_watercourse_rows),  # JSONB
+                    "allocation_results": json.dumps(allocation_results_json),  # JSONB
+                    "username": username,
+                    "promoter_name": promoter_name,
+                    "promoter_discount_type": promoter_discount_type,
+                    "promoter_discount_value": promoter_discount_value
+                })
+                
+                submission_id = result.fetchone()[0]
+                
+                # Insert allocation details
+                if not allocation_df.empty:
+                    for _, row in allocation_df.iterrows():
+                        conn.execute(text("""
+                            INSERT INTO allocation_details (
+                                submission_id, bank_key, bank_name,
+                                demand_habitat, supply_habitat, allocation_type,
+                                tier, units_supplied, unit_price, cost
+                            ) VALUES (
+                                :submission_id, :bank_key, :bank_name,
+                                :demand_habitat, :supply_habitat, :allocation_type,
+                                :tier, :units_supplied, :unit_price, :cost
+                            )
+                        """), {
+                            "submission_id": submission_id,
+                            "bank_key": row.get("BANK_KEY", ""),
+                            "bank_name": row.get("bank_name", ""),
+                            "demand_habitat": row.get("demand_habitat", ""),
+                            "supply_habitat": row.get("supply_habitat", ""),
+                            "allocation_type": row.get("allocation_type", ""),
+                            "tier": row.get("proximity", ""),
+                            "units_supplied": float(row.get("units_supplied", 0.0)),
+                            "unit_price": float(row.get("unit_price", 0.0)),
+                            "cost": float(row.get("cost", 0.0))
+                        })
+                
+                # Commit transaction
+                trans.commit()
+                return submission_id
+                
+            except Exception as e:
+                # Rollback on error
+                trans.rollback()
+                raise
     
     def get_all_submissions(self, limit: Optional[int] = None) -> pd.DataFrame:
         """Get all submissions as a DataFrame."""
@@ -220,30 +298,35 @@ class SubmissionsDB:
         if limit:
             query += f" LIMIT {limit}"
         
-        conn = self._get_connection()
-        df = pd.read_sql_query(query, conn)
+        engine = self._get_connection()
+        with engine.connect() as conn:
+            df = pd.read_sql_query(query, conn)
         return df
     
     def get_submission_by_id(self, submission_id: int) -> Optional[Dict[str, Any]]:
         """Get a specific submission by ID."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM submissions WHERE id = ?", (submission_id,))
-        row = cursor.fetchone()
-        
-        if row:
-            columns = [desc[0] for desc in cursor.description]
-            return dict(zip(columns, row))
-        return None
+        engine = self._get_connection()
+        with engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT * FROM submissions WHERE id = :id"),
+                {"id": submission_id}
+            )
+            row = result.fetchone()
+            
+            if row:
+                # Convert row to dictionary
+                return dict(row._mapping)
+            return None
     
     def get_allocations_for_submission(self, submission_id: int) -> pd.DataFrame:
         """Get allocation details for a specific submission."""
-        conn = self._get_connection()
-        df = pd.read_sql_query(
-            "SELECT * FROM allocation_details WHERE submission_id = ?",
-            conn,
-            params=(submission_id,)
-        )
+        engine = self._get_connection()
+        with engine.connect() as conn:
+            df = pd.read_sql_query(
+                "SELECT * FROM allocation_details WHERE submission_id = :submission_id",
+                conn,
+                params={"submission_id": submission_id}
+            )
         return df
     
     def filter_submissions(self,
@@ -255,36 +338,37 @@ class SubmissionsDB:
                           reference_number: Optional[str] = None) -> pd.DataFrame:
         """Filter submissions based on various criteria."""
         query = "SELECT * FROM submissions WHERE 1=1"
-        params = []
+        params = {}
         
         if start_date:
-            query += " AND submission_date >= ?"
-            params.append(start_date)
+            query += " AND submission_date >= :start_date"
+            params["start_date"] = start_date
         
         if end_date:
-            query += " AND submission_date <= ?"
-            params.append(end_date)
+            query += " AND submission_date <= :end_date"
+            params["end_date"] = end_date
         
         if client_name:
-            query += " AND client_name LIKE ?"
-            params.append(f"%{client_name}%")
+            query += " AND client_name ILIKE :client_name"
+            params["client_name"] = f"%{client_name}%"
         
         if lpa:
-            query += " AND target_lpa LIKE ?"
-            params.append(f"%{lpa}%")
+            query += " AND target_lpa ILIKE :lpa"
+            params["lpa"] = f"%{lpa}%"
         
         if nca:
-            query += " AND target_nca LIKE ?"
-            params.append(f"%{nca}%")
+            query += " AND target_nca ILIKE :nca"
+            params["nca"] = f"%{nca}%"
         
         if reference_number:
-            query += " AND reference_number LIKE ?"
-            params.append(f"%{reference_number}%")
+            query += " AND reference_number ILIKE :reference_number"
+            params["reference_number"] = f"%{reference_number}%"
         
         query += " ORDER BY submission_date DESC"
         
-        conn = self._get_connection()
-        df = pd.read_sql_query(query, conn, params=params)
+        engine = self._get_connection()
+        with engine.connect() as conn:
+            df = pd.read_sql_query(query, conn, params=params)
         return df
     
     def export_to_csv(self, df: pd.DataFrame, filename: str = "submissions_export.csv") -> bytes:
@@ -293,107 +377,165 @@ class SubmissionsDB:
     
     def get_summary_stats(self) -> Dict[str, Any]:
         """Get summary statistics about submissions."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        # Total submissions
-        cursor.execute("SELECT COUNT(*) FROM submissions")
-        total_submissions = cursor.fetchone()[0]
-        
-        # Total revenue
-        cursor.execute("SELECT SUM(total_with_admin) FROM submissions")
-        total_revenue = cursor.fetchone()[0] or 0.0
-        
-        # Most common LPAs
-        cursor.execute("""
-            SELECT target_lpa, COUNT(*) as count 
-            FROM submissions 
-            WHERE target_lpa IS NOT NULL AND target_lpa != ''
-            GROUP BY target_lpa 
-            ORDER BY count DESC 
-            LIMIT 5
-        """)
-        top_lpas = cursor.fetchall()
-        
-        # Most common clients
-        cursor.execute("""
-            SELECT client_name, COUNT(*) as count 
-            FROM submissions 
-            WHERE client_name IS NOT NULL AND client_name != ''
-            GROUP BY client_name 
-            ORDER BY count DESC 
-            LIMIT 5
-        """)
-        top_clients = cursor.fetchall()
-        
-        return {
-            "total_submissions": total_submissions,
-            "total_revenue": total_revenue,
-            "top_lpas": top_lpas,
-            "top_clients": top_clients
-        }
+        engine = self._get_connection()
+        with engine.connect() as conn:
+            # Total submissions
+            result = conn.execute(text("SELECT COUNT(*) FROM submissions"))
+            total_submissions = result.fetchone()[0]
+            
+            # Total revenue
+            result = conn.execute(text("SELECT SUM(total_with_admin) FROM submissions"))
+            total_revenue = result.fetchone()[0] or 0.0
+            
+            # Most common LPAs
+            result = conn.execute(text("""
+                SELECT target_lpa, COUNT(*) as count 
+                FROM submissions 
+                WHERE target_lpa IS NOT NULL AND target_lpa != ''
+                GROUP BY target_lpa 
+                ORDER BY count DESC 
+                LIMIT 5
+            """))
+            top_lpas = result.fetchall()
+            
+            # Most common clients
+            result = conn.execute(text("""
+                SELECT client_name, COUNT(*) as count 
+                FROM submissions 
+                WHERE client_name IS NOT NULL AND client_name != ''
+                GROUP BY client_name 
+                ORDER BY count DESC 
+                LIMIT 5
+            """))
+            top_clients = result.fetchall()
+            
+            return {
+                "total_submissions": total_submissions,
+                "total_revenue": total_revenue,
+                "top_lpas": top_lpas,
+                "top_clients": top_clients
+            }
     
     # ================= Introducers/Promoters CRUD =================
     
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((Exception,)),
+        reraise=True
+    )
     def add_introducer(self, name: str, discount_type: str, discount_value: float) -> int:
         """Add a new introducer/promoter."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        engine = self._get_connection()
         
-        now = datetime.now().isoformat()
+        now = datetime.now()
         
-        cursor.execute("""
-            INSERT INTO introducers (name, discount_type, discount_value, created_date, updated_date)
-            VALUES (?, ?, ?, ?, ?)
-        """, (name, discount_type, discount_value, now, now))
-        
-        conn.commit()
-        return cursor.lastrowid
+        with engine.connect() as conn:
+            trans = conn.begin()
+            try:
+                result = conn.execute(text("""
+                    INSERT INTO introducers (name, discount_type, discount_value, created_date, updated_date)
+                    VALUES (:name, :discount_type, :discount_value, :created_date, :updated_date)
+                    RETURNING id
+                """), {
+                    "name": name,
+                    "discount_type": discount_type,
+                    "discount_value": discount_value,
+                    "created_date": now,
+                    "updated_date": now
+                })
+                
+                introducer_id = result.fetchone()[0]
+                trans.commit()
+                return introducer_id
+            except Exception as e:
+                trans.rollback()
+                raise
     
     def get_all_introducers(self) -> List[Dict[str, Any]]:
         """Get all introducers."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT * FROM introducers ORDER BY name")
-        rows = cursor.fetchall()
-        
-        columns = [desc[0] for desc in cursor.description]
-        return [dict(zip(columns, row)) for row in rows]
+        engine = self._get_connection()
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT * FROM introducers ORDER BY name"))
+            rows = result.fetchall()
+            
+            return [dict(row._mapping) for row in rows]
     
     def get_introducer_by_name(self, name: str) -> Optional[Dict[str, Any]]:
         """Get an introducer by name."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT * FROM introducers WHERE name = ?", (name,))
-        row = cursor.fetchone()
-        
-        if row:
-            columns = [desc[0] for desc in cursor.description]
-            return dict(zip(columns, row))
-        return None
+        engine = self._get_connection()
+        with engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT * FROM introducers WHERE name = :name"),
+                {"name": name}
+            )
+            row = result.fetchone()
+            
+            if row:
+                return dict(row._mapping)
+            return None
     
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((Exception,)),
+        reraise=True
+    )
     def update_introducer(self, introducer_id: int, name: str, discount_type: str, discount_value: float):
         """Update an existing introducer."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        engine = self._get_connection()
         
-        now = datetime.now().isoformat()
+        now = datetime.now()
         
-        cursor.execute("""
-            UPDATE introducers 
-            SET name = ?, discount_type = ?, discount_value = ?, updated_date = ?
-            WHERE id = ?
-        """, (name, discount_type, discount_value, now, introducer_id))
-        
-        conn.commit()
+        with engine.connect() as conn:
+            trans = conn.begin()
+            try:
+                conn.execute(text("""
+                    UPDATE introducers 
+                    SET name = :name, discount_type = :discount_type, 
+                        discount_value = :discount_value, updated_date = :updated_date
+                    WHERE id = :id
+                """), {
+                    "name": name,
+                    "discount_type": discount_type,
+                    "discount_value": discount_value,
+                    "updated_date": now,
+                    "id": introducer_id
+                })
+                
+                trans.commit()
+            except Exception as e:
+                trans.rollback()
+                raise
     
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((Exception,)),
+        reraise=True
+    )
     def delete_introducer(self, introducer_id: int):
         """Delete an introducer."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        engine = self._get_connection()
         
-        cursor.execute("DELETE FROM introducers WHERE id = ?", (introducer_id,))
+        with engine.connect() as conn:
+            trans = conn.begin()
+            try:
+                conn.execute(
+                    text("DELETE FROM introducers WHERE id = :id"),
+                    {"id": introducer_id}
+                )
+                
+                trans.commit()
+            except Exception as e:
+                trans.rollback()
+                raise
+    
+    def db_healthcheck(self) -> bool:
+        """
+        Perform a basic connectivity test to the database.
         
-        conn.commit()
+        Returns:
+            True if the database is accessible, False otherwise
+        """
+        return DatabaseConnection.db_healthcheck()
