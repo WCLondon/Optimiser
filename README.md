@@ -12,19 +12,24 @@ A Streamlit application for optimizing Biodiversity Net Gain (BNG) unit allocati
 - **Manual Entries**: Add hedgerow and watercourse units manually to supplement optimization results
 - **Client Reports**: Generate professional client-facing reports and email templates
 
-### Database & Admin Features (NEW)
+### Database & Admin Features
+- **PostgreSQL Database**: Persistent data storage with transaction support and automatic retries
 - **Automatic Data Tracking**: All submissions and optimization results saved automatically
 - **Admin Dashboard**: Secure password-protected dashboard for viewing historical data
 - **Advanced Filtering**: Filter submissions by date, client, LPA, NCA, or reference number
 - **Data Export**: Export submissions and allocation details to CSV
 - **Summary Statistics**: View total submissions, revenue, and top clients/LPAs
+- **JSONB Storage**: Efficient native JSON storage for complex data
+- **Connection Pooling**: Managed database connections for optimal performance
 
-See [DATABASE_FEATURE.md](DATABASE_FEATURE.md) for complete database documentation.
+See [DATABASE_FEATURE.md](DATABASE_FEATURE.md) for database feature documentation and [POSTGRESQL_MIGRATION.md](POSTGRESQL_MIGRATION.md) for migration guide.
+
 
 ## Requirements
 
 - Python 3.8+
 - Streamlit 1.37+
+- PostgreSQL 12+ (for production deployment)
 - See `requirements.txt` for full dependencies
 
 ## Installation
@@ -40,9 +45,12 @@ cd Optimiser
 pip install -r requirements.txt
 ```
 
-3. (Optional) Configure authentication:
+3. Configure database and authentication:
 Create `.streamlit/secrets.toml`:
 ```toml
+[database]
+url = "postgresql://user:password@host:port/database"
+
 [auth]
 username = "your_username"
 password = "your_password"
@@ -96,14 +104,17 @@ The app will open in your default web browser at `http://localhost:8501`
 ```
 Optimiser/
 ├── app.py                          # Main Streamlit application
-├── database.py                     # Database module for submissions tracking
+├── database.py                     # Database module for submissions tracking (PostgreSQL)
+├── db.py                           # Database connection management (SQLAlchemy)
 ├── requirements.txt                # Python dependencies
-├── submissions.db                  # SQLite database (created automatically)
+├── secrets.toml.example            # Example secrets configuration
+├── test_database_validation.py     # Validation tests for database module
 ├── .gitignore                      # Git ignore rules
 ├── data/                           # Example backend data
 │   └── HabitatBackend_WITH_STOCK.xlsx
 └── docs/
     ├── DATABASE_FEATURE.md         # Database feature documentation
+    ├── POSTGRESQL_MIGRATION.md     # PostgreSQL migration guide
     ├── MANUAL_ENTRIES_FEATURE.md   # Manual entries documentation
     ├── IMPLEMENTATION_SUMMARY.md   # Implementation details
     ├── PAIRED_ALLOCATION_FIX.md    # Paired allocation documentation
@@ -140,6 +151,29 @@ These integrate seamlessly into final reports and costs.
 
 ## Configuration
 
+### Database Configuration (PostgreSQL)
+
+Create `.streamlit/secrets.toml` with your PostgreSQL connection:
+
+```toml
+[database]
+url = "postgresql://username:password@host:port/database"
+
+[auth]
+username = "WC0323"
+password = "Wimborne"
+
+[admin]
+password = "WCAdmin2024"
+```
+
+**Connection String Examples:**
+- Local: `postgresql://user:pass@localhost:5432/optimiser_db`
+- AWS RDS: `postgresql://user:pass@mydb.abc123.us-east-1.rds.amazonaws.com:5432/optimiser_db`
+- Heroku: Use DATABASE_URL from Heroku dashboard
+
+**For detailed migration instructions**, see [POSTGRESQL_MIGRATION.md](POSTGRESQL_MIGRATION.md)
+
 ### Backend Data Format
 The backend Excel file must contain these sheets:
 - **Banks**: Bank details (name, location, coordinates)
@@ -157,9 +191,10 @@ The backend Excel file must contain these sheets:
 ## Security Notes
 
 - Default passwords should be changed in production
-- Database file (`submissions.db`) excluded from git
+- Never commit `.streamlit/secrets.toml` to version control
 - Admin dashboard requires separate authentication
 - No sensitive data exposed in client-facing reports
+- Use SSL/TLS for PostgreSQL connections in production
 
 ## Troubleshooting
 
@@ -177,16 +212,25 @@ The backend Excel file must contain these sheets:
 - Verify trading rules allow requested allocations
 - Review diagnostics section for details
 
+**"Database connection errors"**
+- Verify PostgreSQL is running and accessible
+- Check database URL in `.streamlit/secrets.toml`
+- Ensure firewall allows connections to PostgreSQL port
+- Test with `db_healthcheck()` method
+
 **"Database not saving"**
-- Ensure write permissions in application directory
-- Check that optimization completed successfully
-- Verify client details filled in before clicking "Update Email Details"
+- Verify database credentials are correct
+- Check PostgreSQL user has necessary permissions
+- Review Streamlit logs for error messages
+- Ensure database schema is initialized
 
 ### Getting Help
 
-- Check the relevant documentation files in the project
-- Review the diagnostics section in the app
-- Check Streamlit logs for detailed error messages
+- Check [POSTGRESQL_MIGRATION.md](POSTGRESQL_MIGRATION.md) for database setup
+- Review [DATABASE_FEATURE.md](DATABASE_FEATURE.md) for feature documentation
+- Check the diagnostics section in the app
+- Review Streamlit logs for detailed error messages
+- Test database connectivity with validation script: `python test_database_validation.py`
 
 ## License
 
