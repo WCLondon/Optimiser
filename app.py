@@ -2397,8 +2397,11 @@ def optimise(demand_df: pd.DataFrame,
 
         allocA, costA = extract(xA, zA)
 
-        # Stage B: minimise #banks under +1% cost cap
-        probB, xB, zB, yB = build_problem(minimise_banks=True, cost_cap=(1.0 + SINGLE_BANK_SOFT_PCT) * best_cost)
+        # Stage B: minimise #banks, but only if cost stays within numerical precision of Stage A
+        # Use a very tight threshold (£10 or 0.01%, whichever is smaller) to ensure we prioritize
+        # "always select cheapest" over bank minimization
+        tight_threshold = min(10.0, best_cost * 0.0001)  # £10 or 0.01% of cost
+        probB, xB, zB, yB = build_problem(minimise_banks=True, cost_cap=best_cost + tight_threshold)
         probB.solve(pulp.PULP_CBC_CMD(msg=False))
         statusB = pulp.LpStatus[probB.status]
 
