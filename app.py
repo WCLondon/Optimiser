@@ -2310,19 +2310,20 @@ def optimise(demand_df: pd.DataFrame,
 
             if minimise_banks:
                 obj = pulp.lpSum([y[b] for b in bank_keys])
-                eps = 1e-9
-                eps2 = 1e-12
+                eps = 1e-9  # Cost tie-break
+                eps2 = 1e-12  # Proximity tie-break
+                eps3 = 1e-17  # Capacity tie-break (much smaller to ensure proximity always dominates)
                 # Secondary tie-break: cost
                 obj += eps * pulp.lpSum([options[i]["unit_price"] * x[i] for i in range(len(options))])
                 # Tertiary tie-break: prefer closer banks (local > adjacent > far)
                 obj += eps2 * pulp.lpSum([TIER_PROXIMITY_RANK.get(options[i].get("tier", "far"), 2) * x[i] for i in range(len(options))])
                 # Final tie-break: prefer higher-capacity banks
-                obj += -eps2 * pulp.lpSum([bank_capacity_total[b] * y[b] for b in bank_keys])
+                obj += -eps3 * pulp.lpSum([bank_capacity_total[b] * y[b] for b in bank_keys])
             else:
                 # Primary: minimize cost
                 obj = pulp.lpSum([options[i]["unit_price"] * x[i] for i in range(len(options))])
-                eps = 1e-9
-                eps2 = 1e-12
+                eps = 1e-9  # Proximity tie-break
+                eps2 = 1e-14  # Capacity tie-break (much smaller to ensure proximity always dominates)
                 # Secondary tie-break: prefer closer banks (local > adjacent > far)
                 obj += eps * pulp.lpSum([TIER_PROXIMITY_RANK.get(options[i].get("tier", "far"), 2) * x[i] for i in range(len(options))])
                 # Tertiary tie-break: prefer higher-capacity banks
