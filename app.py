@@ -50,6 +50,9 @@ LEDGER_AREA = "area"
 LEDGER_HEDGE = "hedgerow"
 LEDGER_WATER = "watercourse"
 
+# Tier proximity ranking: lower is better (closer)
+TIER_PROXIMITY_RANK = {"local": 0, "adjacent": 1, "far": 2}
+
 NET_GAIN_WATERCOURSE_LABEL = "Net Gain (Watercourses)"  # new
 POSTCODES_IO = "https://api.postcodes.io/postcodes/"
 NOMINATIM_SEARCH = "https://nominatim.openstreetmap.org/search"
@@ -2298,7 +2301,7 @@ def optimise(demand_df: pd.DataFrame,
             z = [pulp.LpVariable(f"z_{i}", lowBound=0, upBound=1, cat="Binary") for i in range(len(options))]
             y = {b: pulp.LpVariable(f"y_{norm_name(b)}", lowBound=0, upBound=1, cat="Binary") for b in bank_keys}
 
-            # tiny tie-break towards higher-capacity banks
+            # Calculate tie-break metrics
             bank_capacity_total: Dict[str, float] = {b: 0.0 for b in bank_keys}
             for sid, cap in stock_caps.items():
                 bkey = stock_bankkey.get(sid, "")
@@ -2308,12 +2311,22 @@ def optimise(demand_df: pd.DataFrame,
             if minimise_banks:
                 obj = pulp.lpSum([y[b] for b in bank_keys])
                 eps = 1e-9
+                eps2 = 1e-12
+                # Secondary tie-break: cost
                 obj += eps * pulp.lpSum([options[i]["unit_price"] * x[i] for i in range(len(options))])
-                obj += -eps * pulp.lpSum([bank_capacity_total[b] * y[b] for b in bank_keys])
+                # Tertiary tie-break: prefer closer banks (local > adjacent > far)
+                obj += eps2 * pulp.lpSum([TIER_PROXIMITY_RANK.get(options[i].get("tier", "far"), 2) * x[i] for i in range(len(options))])
+                # Final tie-break: prefer higher-capacity banks
+                obj += -eps2 * pulp.lpSum([bank_capacity_total[b] * y[b] for b in bank_keys])
             else:
+                # Primary: minimize cost
                 obj = pulp.lpSum([options[i]["unit_price"] * x[i] for i in range(len(options))])
                 eps = 1e-9
-                obj += -eps * pulp.lpSum([bank_capacity_total[b] * y[b] for b in bank_keys])
+                eps2 = 1e-12
+                # Secondary tie-break: prefer closer banks (local > adjacent > far)
+                obj += eps * pulp.lpSum([TIER_PROXIMITY_RANK.get(options[i].get("tier", "far"), 2) * x[i] for i in range(len(options))])
+                # Tertiary tie-break: prefer higher-capacity banks
+                obj += -eps2 * pulp.lpSum([bank_capacity_total[b] * y[b] for b in bank_keys])
             prob += obj
 
             # Hard limit: <= 2 banks
@@ -2424,8 +2437,15 @@ def optimise(demand_df: pd.DataFrame,
 
         for di, drow in demand_df.iterrows():
             need = float(drow["units_required"])
-            cand_idx = sorted([i for i in range(len(options)) if options[i]["demand_idx"] == di],
-                              key=lambda i: options[i]["unit_price"])
+            # Sort by price first, then by proximity (local > adjacent > far), then by capacity
+            cand_idx = sorted(
+                [i for i in range(len(options)) if options[i]["demand_idx"] == di],
+                key=lambda i: (
+                    options[i]["unit_price"],
+                    TIER_PROXIMITY_RANK.get(options[i].get("tier", "far"), 2),
+                    -sum(stock_caps.get(sid, 0.0) for sid in options[i]["stock_use"].keys())
+                )
+            )
 
             best_i = None
             best_cost = float('inf')
