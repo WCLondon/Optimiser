@@ -43,3 +43,7 @@ Thumbs.db
 
 # Streamlit secrets
 .streamlit/secrets.toml
+
+# Test files (temporary)
+test_data_serialization.py
+test_sanitize_function.py
