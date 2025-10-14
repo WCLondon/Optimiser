@@ -5,12 +5,65 @@ Uses PostgreSQL via SQLAlchemy for persistent storage of all form submissions an
 
 import json
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
+from decimal import Decimal
 import pandas as pd
+import numpy as np
 from sqlalchemy import text, Table, MetaData, Column, Integer, String, Float, DateTime, ForeignKey, Index, ARRAY, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from db import DatabaseConnection
+
+
+def sanitize_for_db(value: Any) -> Any:
+    """
+    Sanitize a value for database insertion.
+    
+    Converts:
+    - numpy numeric types to native Python types
+    - Decimal to float
+    - Ensures proper JSON serialization
+    - Handles None values
+    
+    Args:
+        value: Value to sanitize
+    
+    Returns:
+        Sanitized value ready for database insertion
+    """
+    if value is None:
+        return None
+    
+    # Check for NaN/inf in regular floats first (np.nan is actually a Python float)
+    if isinstance(value, float):
+        if np.isnan(value) or np.isinf(value):
+            return None
+        return value
+    
+    # Convert numpy types to native Python types
+    if isinstance(value, (np.integer, np.int64, np.int32)):
+        return int(value)
+    elif isinstance(value, (np.floating, np.float64, np.float32)):
+        # Check for NaN or inf
+        if np.isnan(value) or np.isinf(value):
+            return None
+        return float(value)
+    elif isinstance(value, np.bool_):
+        return bool(value)
+    
+    # Convert Decimal to float
+    elif isinstance(value, Decimal):
+        return float(value)
+    
+    # Handle lists recursively
+    elif isinstance(value, list):
+        return [sanitize_for_db(item) for item in value]
+    
+    # Handle dicts recursively
+    elif isinstance(value, dict):
+        return {key: sanitize_for_db(val) for key, val in value.items()}
+    
+    return value
 
 
 class SubmissionsDB:
@@ -193,15 +246,36 @@ class SubmissionsDB:
         
         # Prepare data
         submission_date = datetime.now()
-        total_with_admin = total_cost + admin_fee
+        total_with_admin = float(total_cost) + float(admin_fee)
         
-        # Banks used
+        # Banks used - ensure it's a proper list of strings
         banks_used = allocation_df["BANK_KEY"].unique().tolist() if not allocation_df.empty else []
+        banks_used = [str(bank) for bank in banks_used]  # Ensure all are strings
         num_banks = len(banks_used)
         
+        # Sanitize array fields - convert to JSON strings for JSONB columns
+        lpa_neighbors_json = json.dumps([str(item) for item in lpa_neighbors]) if lpa_neighbors else json.dumps([])
+        nca_neighbors_json = json.dumps([str(item) for item in nca_neighbors]) if nca_neighbors else json.dumps([])
+        banks_used_json = json.dumps([str(bank) for bank in banks_used])
+        
         # Convert DataFrames to JSON for JSONB storage
+        # Sanitize to ensure all numpy/Decimal types are converted
         demand_habitats_json = json.loads(demand_df.to_json(orient='records')) if not demand_df.empty else []
+        demand_habitats_json = sanitize_for_db(demand_habitats_json)
+        
         allocation_results_json = json.loads(allocation_df.to_json(orient='records')) if not allocation_df.empty else []
+        allocation_results_json = sanitize_for_db(allocation_results_json)
+        
+        # Sanitize manual entries
+        manual_hedgerow_rows_clean = sanitize_for_db(manual_hedgerow_rows)
+        manual_watercourse_rows_clean = sanitize_for_db(manual_watercourse_rows)
+        
+        # Sanitize numeric fields
+        target_lat_clean = float(target_lat) if target_lat is not None else None
+        target_lon_clean = float(target_lon) if target_lon is not None else None
+        total_cost_clean = float(total_cost)
+        admin_fee_clean = float(admin_fee)
+        promoter_discount_value_clean = float(promoter_discount_value) if promoter_discount_value is not None else None
         
         with engine.connect() as conn:
             # Start transaction
@@ -235,24 +309,24 @@ class SubmissionsDB:
                     "site_location": site_location,
                     "target_lpa": target_lpa,
                     "target_nca": target_nca,
-                    "target_lat": target_lat,
-                    "target_lon": target_lon,
-                    "lpa_neighbors": lpa_neighbors,  # PostgreSQL array
-                    "nca_neighbors": nca_neighbors,  # PostgreSQL array
+                    "target_lat": target_lat_clean,
+                    "target_lon": target_lon_clean,
+                    "lpa_neighbors": lpa_neighbors_json,  # JSONB
+                    "nca_neighbors": nca_neighbors_json,  # JSONB
                     "demand_habitats": json.dumps(demand_habitats_json),  # JSONB
                     "contract_size": contract_size,
-                    "total_cost": total_cost,
-                    "admin_fee": admin_fee,
+                    "total_cost": total_cost_clean,
+                    "admin_fee": admin_fee_clean,
                     "total_with_admin": total_with_admin,
                     "num_banks_selected": num_banks,
-                    "banks_used": banks_used,  # PostgreSQL array
-                    "manual_hedgerow_entries": json.dumps(manual_hedgerow_rows),  # JSONB
-                    "manual_watercourse_entries": json.dumps(manual_watercourse_rows),  # JSONB
+                    "banks_used": banks_used_json,  # JSONB
+                    "manual_hedgerow_entries": json.dumps(manual_hedgerow_rows_clean),  # JSONB
+                    "manual_watercourse_entries": json.dumps(manual_watercourse_rows_clean),  # JSONB
                     "allocation_results": json.dumps(allocation_results_json),  # JSONB
                     "username": username,
                     "promoter_name": promoter_name,
                     "promoter_discount_type": promoter_discount_type,
-                    "promoter_discount_value": promoter_discount_value
+                    "promoter_discount_value": promoter_discount_value_clean
                 })
                 
                 submission_id = result.fetchone()[0]
@@ -260,6 +334,20 @@ class SubmissionsDB:
                 # Insert allocation details
                 if not allocation_df.empty:
                     for _, row in allocation_df.iterrows():
+                        # Sanitize row data
+                        row_dict = {
+                            "submission_id": submission_id,
+                            "bank_key": str(row.get("BANK_KEY", "")),
+                            "bank_name": str(row.get("bank_name", "")),
+                            "demand_habitat": str(row.get("demand_habitat", "")),
+                            "supply_habitat": str(row.get("supply_habitat", "")),
+                            "allocation_type": str(row.get("allocation_type", "")),
+                            "tier": str(row.get("proximity", "")),
+                            "units_supplied": float(sanitize_for_db(row.get("units_supplied", 0.0))),
+                            "unit_price": float(sanitize_for_db(row.get("unit_price", 0.0))),
+                            "cost": float(sanitize_for_db(row.get("cost", 0.0)))
+                        }
+                        
                         conn.execute(text("""
                             INSERT INTO allocation_details (
                                 submission_id, bank_key, bank_name,
@@ -270,18 +358,7 @@ class SubmissionsDB:
                                 :demand_habitat, :supply_habitat, :allocation_type,
                                 :tier, :units_supplied, :unit_price, :cost
                             )
-                        """), {
-                            "submission_id": submission_id,
-                            "bank_key": row.get("BANK_KEY", ""),
-                            "bank_name": row.get("bank_name", ""),
-                            "demand_habitat": row.get("demand_habitat", ""),
-                            "supply_habitat": row.get("supply_habitat", ""),
-                            "allocation_type": row.get("allocation_type", ""),
-                            "tier": row.get("proximity", ""),
-                            "units_supplied": float(row.get("units_supplied", 0.0)),
-                            "unit_price": float(row.get("unit_price", 0.0)),
-                            "cost": float(row.get("cost", 0.0))
-                        })
+                        """), row_dict)
                 
                 # Commit transaction
                 trans.commit()
