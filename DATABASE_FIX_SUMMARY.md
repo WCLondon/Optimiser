@@ -11,7 +11,7 @@ CONTEXT: JSON data, line 1: {"Bath and North East Somerset",...
 ## Root Cause
 The error occurred due to improper handling of data types when inserting into PostgreSQL:
 
-1. **Array Fields**: Python lists containing strings with special characters were not being properly passed to TEXT[] PostgreSQL array columns. When using SQLAlchemy's `text()` with parameter binding, psycopg does not automatically infer the PostgreSQL array type, causing conversion errors.
+1. **Array Fields**: The actual database schema uses JSONB columns for array fields (lpa_neighbors, nca_neighbors, banks_used), not TEXT[] arrays. Python lists need to be converted to JSON strings before insertion.
 2. **Numeric Types**: numpy.float64, numpy.int64, and Decimal types from pandas DataFrames were not being converted to native Python types
 3. **NaN/Inf Values**: Special float values (NaN, Inf) needed to be converted to NULL for database compatibility
 
@@ -28,8 +28,7 @@ Created a comprehensive data sanitization function in `database.py` that:
 
 ### 2. Updated `store_submission()` Method
 Modified the submission storage to:
-- Sanitize all array fields (lpa_neighbors, nca_neighbors, banks_used) to ensure they are lists of strings
-- **Added explicit PostgreSQL type casts using CAST() function** in the SQL INSERT statement for array parameters
+- **Convert array fields to JSON strings** for JSONB columns (lpa_neighbors, nca_neighbors, banks_used)
 - Sanitize all JSONB fields (demand_habitats, allocation_results, manual entries) to ensure proper JSON serialization
 - Convert all numeric fields to native Python types
 - Apply sanitization to allocation details rows
@@ -38,7 +37,7 @@ Modified the submission storage to:
 - Added explicit type conversions for coordinates (target_lat, target_lon)
 - Added type conversions for financial fields (total_cost, admin_fee, promoter_discount_value)
 - Ensured all bank keys are converted to strings
-- **Added PostgreSQL type casts using CAST() function** for array fields in SQL to ensure proper type inference while maintaining SQLAlchemy compatibility
+- **All array fields are now JSON-encoded strings** to match the actual JSONB column types in the database
 
 ## Code Changes
 
@@ -62,11 +61,11 @@ import numpy as np
 4. **Updated INSERT parameters** (lines 297-322):
    - Use cleaned/sanitized variables
    - Ensure proper type conversion
-   - **Added explicit PostgreSQL type casts using CAST() function** for array parameters:
-     - `CAST(:lpa_neighbors AS TEXT[])`
-     - `CAST(:nca_neighbors AS TEXT[])`
-     - `CAST(:banks_used AS TEXT[])`
-   - Note: CAST() syntax is used instead of :: operator for SQLAlchemy text() compatibility
+   - **Convert array fields to JSON strings** for JSONB columns:
+     - `lpa_neighbors_json = json.dumps([...])`
+     - `nca_neighbors_json = json.dumps([...])`
+     - `banks_used_json = json.dumps([...])`
+   - Note: The actual database uses JSONB columns for arrays, not TEXT[] arrays
 
 5. **Updated allocation_details insertion** (lines 326-353):
    - Create sanitized row_dict before insertion

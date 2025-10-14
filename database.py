@@ -253,9 +253,10 @@ class SubmissionsDB:
         banks_used = [str(bank) for bank in banks_used]  # Ensure all are strings
         num_banks = len(banks_used)
         
-        # Sanitize array fields - ensure they are lists of strings
-        lpa_neighbors_clean = [str(item) for item in lpa_neighbors] if lpa_neighbors else []
-        nca_neighbors_clean = [str(item) for item in nca_neighbors] if nca_neighbors else []
+        # Sanitize array fields - convert to JSON strings for JSONB columns
+        lpa_neighbors_json = json.dumps([str(item) for item in lpa_neighbors]) if lpa_neighbors else json.dumps([])
+        nca_neighbors_json = json.dumps([str(item) for item in nca_neighbors]) if nca_neighbors else json.dumps([])
+        banks_used_json = json.dumps([str(bank) for bank in banks_used])
         
         # Convert DataFrames to JSON for JSONB storage
         # Sanitize to ensure all numpy/Decimal types are converted
@@ -294,9 +295,9 @@ class SubmissionsDB:
                     ) VALUES (
                         :submission_date, :client_name, :reference_number, :site_location,
                         :target_lpa, :target_nca, :target_lat, :target_lon,
-                        CAST(:lpa_neighbors AS TEXT[]), CAST(:nca_neighbors AS TEXT[]), :demand_habitats,
+                        :lpa_neighbors, :nca_neighbors, :demand_habitats,
                         :contract_size, :total_cost, :admin_fee, :total_with_admin,
-                        :num_banks_selected, CAST(:banks_used AS TEXT[]),
+                        :num_banks_selected, :banks_used,
                         :manual_hedgerow_entries, :manual_watercourse_entries,
                         :allocation_results, :username,
                         :promoter_name, :promoter_discount_type, :promoter_discount_value
@@ -310,15 +311,15 @@ class SubmissionsDB:
                     "target_nca": target_nca,
                     "target_lat": target_lat_clean,
                     "target_lon": target_lon_clean,
-                    "lpa_neighbors": lpa_neighbors_clean,  # PostgreSQL array
-                    "nca_neighbors": nca_neighbors_clean,  # PostgreSQL array
+                    "lpa_neighbors": lpa_neighbors_json,  # JSONB
+                    "nca_neighbors": nca_neighbors_json,  # JSONB
                     "demand_habitats": json.dumps(demand_habitats_json),  # JSONB
                     "contract_size": contract_size,
                     "total_cost": total_cost_clean,
                     "admin_fee": admin_fee_clean,
                     "total_with_admin": total_with_admin,
                     "num_banks_selected": num_banks,
-                    "banks_used": banks_used,  # PostgreSQL array
+                    "banks_used": banks_used_json,  # JSONB
                     "manual_hedgerow_entries": json.dumps(manual_hedgerow_rows_clean),  # JSONB
                     "manual_watercourse_entries": json.dumps(manual_watercourse_rows_clean),  # JSONB
                     "allocation_results": json.dumps(allocation_results_json),  # JSONB
