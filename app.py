@@ -1799,112 +1799,121 @@ def prepare_options(demand_df: pd.DataFrame,
                 "price_habitat": price_hab_used,
             })
 
-        # Paired Orchard+Other for MEDIUM — ADJACENT and FAR
-        if sstr(d_dist).lower() == "medium" and ORCHARD_NAME:
-            banks_keys = stock_full["BANK_KEY"].dropna().unique().tolist()
-            for bk in banks_keys:
-                orch_rows = stock_full[(stock_full["BANK_KEY"] == bk) & (stock_full["habitat_name"] == ORCHARD_NAME)]
-                if orch_rows.empty:
+        # Paired allocations for ANY demand at ADJACENT and FAR tiers
+        # When SRM > 1.0, pairing with a cheaper habitat can reduce effective cost
+        banks_keys = stock_full["BANK_KEY"].dropna().unique().tolist()
+        for bk in banks_keys:
+            # Get stock rows for the demand habitat at this bank
+            demand_rows = candidates[candidates["BANK_KEY"] == bk].copy()
+            if demand_rows.empty:
+                continue
+            
+            # Get "companion" candidates: any area habitat with positive stock
+            # These will be used to offset the SRM penalty
+            companion_candidates = stock_full[
+                (stock_full["BANK_KEY"] == bk) &
+                (stock_full["habitat_name"] != dem_hab) &
+                (~stock_full["habitat_name"].map(is_hedgerow)) &
+                (stock_full["quantity_available"].astype(float) > 0)
+            ].copy()
+            
+            if companion_candidates.empty:
+                continue
+            
+            # Process each demand habitat stock entry
+            for _, d_stock in demand_rows.iterrows():
+                cap_d = float(d_stock.get("quantity_available", 0) or 0.0)
+                if cap_d <= 0:
                     continue
                 
-                # Get "Other" candidates: area habitats with distinctiveness <= Medium, positive stock
-                other_candidates = stock_full[
-                    (stock_full["BANK_KEY"] == bk) &
-                    (stock_full["habitat_name"] != ORCHARD_NAME) &
-                    (~stock_full["habitat_name"].map(is_hedgerow)) &
-                    (stock_full["distinctiveness_name"].map(lambda x: dval(x) <= dval("Medium"))) &
-                    (stock_full["quantity_available"].astype(float) > 0)
-                ].copy()
-                
-                if other_candidates.empty:
-                    continue
-                
-                # Process each Orchard stock entry
-                for _, o in orch_rows.iterrows():
-                    cap_o = float(o.get("quantity_available", 0) or 0.0)
-                    if cap_o <= 0:
+                # For each tier (adjacent and far), find the best companion
+                for target_tier in ["adjacent", "far"]:
+                    # Check if demand habitat is at this tier
+                    tier_demand = tier_for_bank(
+                        sstr(d_stock.get("lpa_name")), sstr(d_stock.get("nca_name")),
+                        target_lpa, target_nca, lpa_neigh, nca_neigh, lpa_neigh_norm, nca_neigh_norm
+                    )
+                    # Only create paired options for the actual tier of the demand
+                    if tier_demand != target_tier:
                         continue
                     
-                    # For each tier (adjacent and far), find the best "Other" component
-                    for target_tier in ["adjacent", "far"]:
-                        # Find "Other" candidates at this tier with valid prices
-                        tier_other_candidates = []
-                        for _, other_row in other_candidates.iterrows():
-                            tier_test = tier_for_bank(
-                                sstr(other_row.get("lpa_name")), sstr(other_row.get("nca_name")),
-                                target_lpa, target_nca, lpa_neigh, nca_neigh, lpa_neigh_norm, nca_neigh_norm
-                            )
-                            if tier_test != target_tier:
-                                continue
-                            
-                            # Check if we can price this "Other" component (tier_up already applied to contract size)
-                            pi_other = find_price_for_supply(bk, other_row["habitat_name"], target_tier, d_broader, d_dist)
-                            if not pi_other:
-                                continue
-                            
-                            tier_other_candidates.append({
-                                "row": other_row,
-                                "price": float(pi_other[0]),
-                                "price_info": pi_other,
-                                "cap": float(other_row.get("quantity_available", 0) or 0.0)
-                            })
-                        
-                        if not tier_other_candidates:
+                    # Get demand habitat price at this tier
+                    pi_demand = find_price_for_supply(bk, dem_hab, target_tier, d_broader, d_dist)
+                    if not pi_demand:
+                        continue
+                    price_demand = float(pi_demand[0])
+                    
+                    # Find companion candidates at this tier with valid prices
+                    tier_companion_candidates = []
+                    for _, comp_row in companion_candidates.iterrows():
+                        tier_test = tier_for_bank(
+                            sstr(comp_row.get("lpa_name")), sstr(comp_row.get("nca_name")),
+                            target_lpa, target_nca, lpa_neigh, nca_neigh, lpa_neigh_norm, nca_neigh_norm
+                        )
+                        if tier_test != target_tier:
                             continue
                         
-                        # Sort by price (ascending), then by available stock (descending) for tie-breaking
-                        tier_other_candidates.sort(key=lambda x: (x["price"], -x["cap"]))
-                        best_other = tier_other_candidates[0]
-                        
-                        # Get Orchard price at this tier (tier_up already applied to contract size)
-                        pi_o = find_price_for_supply(bk, ORCHARD_NAME, target_tier, d_broader, d_dist)
-                        if not pi_o:
+                        # Check if we can price this companion (use proxy pricing for flexibility)
+                        pi_comp = find_price_for_supply(bk, comp_row["habitat_name"], target_tier, d_broader, d_dist)
+                        if not pi_comp:
                             continue
                         
-                        price_o = float(pi_o[0])
-                        price_other = best_other["price"]
-                        other_row = best_other["row"]
-                        pi_other = best_other["price_info"]
-                        
-                        # Calculate blended price and stock_use based on tier
-                        # For paired allocations: each component delivers full effective requirement
-                        # Blended price = (price_o + price_other) / SRM
-                        if target_tier == "adjacent":
-                            # Adjacent: SRM = 4/3, each component delivers full effective
-                            srm = 4/3
-                            blended_price = (price_o + price_other) / srm
-                            # Stock consumption: each component uses (1/SRM) per effective unit
-                            stock_use_orchard = 1.0 / srm  # = 0.75
-                            stock_use_other = 1.0 / srm    # = 0.75
-                        else:  # far
-                            # Far: SRM = 2.0, each component delivers full effective
-                            srm = 2.0
-                            blended_price = (price_o + price_other) / srm
-                            # Stock consumption: each component uses (1/SRM) per effective unit
-                            stock_use_orchard = 1.0 / srm  # = 0.5
-                            stock_use_other = 1.0 / srm    # = 0.5
-                        
-                        # Apply percentage discount if active (to blended price)
-                        if promoter_discount_type == "percentage" and promoter_discount_value:
-                            blended_price = apply_percentage_discount(blended_price, promoter_discount_value)
-                        
+                        tier_companion_candidates.append({
+                            "row": comp_row,
+                            "price": float(pi_comp[0]),
+                            "price_info": pi_comp,
+                            "cap": float(comp_row.get("quantity_available", 0) or 0.0)
+                        })
+                    
+                    if not tier_companion_candidates:
+                        continue
+                    
+                    # Sort by price (ascending) - select the CHEAPEST companion
+                    tier_companion_candidates.sort(key=lambda x: (x["price"], -x["cap"]))
+                    best_companion = tier_companion_candidates[0]
+                    
+                    price_companion = best_companion["price"]
+                    comp_row = best_companion["row"]
+                    pi_comp = best_companion["price_info"]
+                    
+                    # Calculate blended price and stock_use based on tier
+                    # For paired allocations: each component delivers full effective requirement
+                    # Blended price = (price_demand + price_companion) / SRM
+                    if target_tier == "adjacent":
+                        srm = 4/3
+                        blended_price = (price_demand + price_companion) / srm
+                        stock_use_demand = 1.0 / srm  # = 0.75
+                        stock_use_companion = 1.0 / srm  # = 0.75
+                    else:  # far
+                        srm = 2.0
+                        blended_price = (price_demand + price_companion) / srm
+                        stock_use_demand = 1.0 / srm  # = 0.5
+                        stock_use_companion = 1.0 / srm  # = 0.5
+                    
+                    # Apply percentage discount if active (to blended price)
+                    if promoter_discount_type == "percentage" and promoter_discount_value:
+                        blended_price = apply_percentage_discount(blended_price, promoter_discount_value)
+                    
+                    # Only add paired option if it's cheaper than normal allocation
+                    # (to avoid creating unnecessary options)
+                    if blended_price < price_demand:
                         options.append({
                             "type": "paired",
                             "demand_idx": di,
                             "demand_habitat": dem_hab,
                             "BANK_KEY": bk,
-                            "bank_name": sstr(o.get("bank_name")),
-                            "bank_id": sstr(o.get("bank_id")),
-                            "supply_habitat": f"{ORCHARD_NAME} + {sstr(other_row['habitat_name'])}",
-                            "tier": target_tier,  # Keep original tier for reporting
+                            "bank_name": sstr(d_stock.get("bank_name")),
+                            "bank_id": sstr(d_stock.get("bank_id")),
+                            "supply_habitat": f"{dem_hab} + {sstr(comp_row['habitat_name'])}",
+                            "tier": target_tier,
                             "proximity": target_tier,
-                            "unit_price": blended_price,  # Use discounted price
-                            "stock_use": {sstr(o["stock_id"]): stock_use_orchard, sstr(other_row["stock_id"]): stock_use_other},
-                            "price_source": "group-proxy",
-                            "price_habitat": f"{pi_o[2]} + {pi_other[2]}",
+                            "unit_price": blended_price,
+                            "stock_use": {sstr(d_stock["stock_id"]): stock_use_demand, sstr(comp_row["stock_id"]): stock_use_companion},
+                            "price_source": "paired",
+                            "price_habitat": f"{pi_demand[2]} + {pi_comp[2]}",
                             "paired_parts": [
-                                {"habitat": ORCHARD_NAME, "unit_price": price_o, "stock_use": stock_use_orchard},
-                                {"habitat": sstr(other_row["habitat_name"]), "unit_price": price_other, "stock_use": stock_use_other},
+                                {"habitat": dem_hab, "unit_price": price_demand, "stock_use": stock_use_demand},
+                                {"habitat": sstr(comp_row["habitat_name"]), "unit_price": price_companion, "stock_use": stock_use_companion},
                             ],
                         })
 
