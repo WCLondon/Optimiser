@@ -47,3 +47,5 @@ Thumbs.db
 # Test files (temporary)
 test_data_serialization.py
 test_sanitize_function.py
+test_integration.py
+FIX_VERIFICATION.md
