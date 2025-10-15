@@ -377,12 +377,13 @@ if st.session_state.app_mode == "Admin Dashboard":
         with st.expander("➕ Add New Introducer", expanded=False):
             with st.form("add_introducer_form"):
                 new_name = st.text_input("Introducer Name", key="new_introducer_name")
-                new_discount_type = st.selectbox("Discount Type", ["tier_up", "percentage"], key="new_discount_type")
+                new_discount_type = st.selectbox("Discount Type", ["tier_up", "percentage", "no_discount"], key="new_discount_type")
                 new_discount_value = st.number_input("Discount Value", 
                                                      min_value=0.0, 
                                                      step=0.1,
                                                      key="new_discount_value",
-                                                     help="For percentage: enter as decimal (e.g., 10.5 for 10.5%). For tier_up: value is ignored.")
+                                                     help="For percentage: enter as decimal (e.g., 10.5 for 10.5%). For tier_up or no_discount: value is ignored.",
+                                                     disabled=(st.session_state.get("new_discount_type") == "no_discount"))
                 add_submit = st.form_submit_button("Add Introducer")
                 
                 if add_submit:
@@ -390,7 +391,9 @@ if st.session_state.app_mode == "Admin Dashboard":
                         st.error("Please enter an introducer name.")
                     else:
                         try:
-                            db.add_introducer(new_name.strip(), new_discount_type, new_discount_value)
+                            # For no_discount type, set value to 0
+                            discount_value = 0.0 if st.session_state.get("new_discount_type") == "no_discount" else new_discount_value
+                            db.add_introducer(new_name.strip(), new_discount_type, discount_value)
                             st.success(f"✅ Added introducer: {new_name}")
                             st.rerun()
                         except Exception as e:
@@ -408,6 +411,8 @@ if st.session_state.app_mode == "Admin Dashboard":
                 with col3:
                     if intro['discount_type'] == 'percentage':
                         st.write(f"Value: {intro['discount_value']}%")
+                    elif intro['discount_type'] == 'no_discount':
+                        st.write("No Discount")
                     else:
                         st.write("Tier Up")
                 with col4:
@@ -429,14 +434,15 @@ if st.session_state.app_mode == "Admin Dashboard":
                     with st.form(f"edit_form_{intro['id']}"):
                         edit_name = st.text_input("Name", value=intro['name'], key=f"edit_name_{intro['id']}")
                         edit_discount_type = st.selectbox("Discount Type", 
-                                                         ["tier_up", "percentage"],
-                                                         index=0 if intro['discount_type'] == 'tier_up' else 1,
+                                                         ["tier_up", "percentage", "no_discount"],
+                                                         index=0 if intro['discount_type'] == 'tier_up' else (1 if intro['discount_type'] == 'percentage' else 2),
                                                          key=f"edit_type_{intro['id']}")
                         edit_discount_value = st.number_input("Discount Value",
                                                              value=float(intro['discount_value']),
                                                              min_value=0.0,
                                                              step=0.1,
-                                                             key=f"edit_value_{intro['id']}")
+                                                             key=f"edit_value_{intro['id']}",
+                                                             disabled=(edit_discount_type == "no_discount"))
                         
                         col_save, col_cancel = st.columns(2)
                         with col_save:
@@ -449,7 +455,9 @@ if st.session_state.app_mode == "Admin Dashboard":
                                 st.error("Please enter a name.")
                             else:
                                 try:
-                                    db.update_introducer(intro['id'], edit_name.strip(), edit_discount_type, edit_discount_value)
+                                    # For no_discount type, set value to 0
+                                    discount_value = 0.0 if edit_discount_type == "no_discount" else edit_discount_value
+                                    db.update_introducer(intro['id'], edit_name.strip(), edit_discount_type, discount_value)
                                     st.success(f"Updated: {edit_name}")
                                     st.session_state[f"editing_introducer_{intro['id']}"] = False
                                     st.rerun()
@@ -1155,8 +1163,10 @@ with st.container():
                         # Show discount info
                         if selected_intro['discount_type'] == 'tier_up':
                             st.info(f"💡 **Tier Up Discount**: Pricing uses one contract size tier higher (e.g., fractional → small, small → medium, medium → large) for better rates")
-                        else:
+                        elif selected_intro['discount_type'] == 'percentage':
                             st.info(f"💡 **Percentage Discount**: {selected_intro['discount_value']}% discount on all items except £500 admin fee")
+                        else:  # no_discount
+                            st.info(f"💡 **No Discount Applied**: Promoter registered for dynamic email text only")
         else:
             st.session_state["selected_promoter"] = None
             st.session_state["promoter_discount_type"] = None
@@ -3510,6 +3520,12 @@ We offer two contract options:
 If you have any questions, please reply to this email or call 01962 436574."""
     
     # Generate full email body matching exact template
+    # Dynamic intro text based on promoter selection
+    if promoter_name:
+        intro_text = f"{promoter_name} has advised us that you need Biodiversity Net Gain units for your development in {location}, and we're here to help you discharge your BNG condition."
+    else:
+        intro_text = f"Thank you for enquiring about BNG Units for your development in {location}"
+    
     email_body = f"""
 <div style="font-family: Arial, sans-serif; font-size: 12px; line-height: 1.4;">
 
@@ -3517,9 +3533,7 @@ If you have any questions, please reply to this email or call 01962 436574."""
 <br><br>
 <strong>Our Ref: {ref_number}</strong>
 <br><br>
-Arbtech has advised us that you need Biodiversity Net Gain units for your development in {location}, and we're here to help you discharge your BNG condition.
-<br><br>
-Thank you for enquiring about BNG Units for your development in {location}
+{intro_text}
 <br><br>
 <strong>About Us</strong>
 <br><br>
@@ -3534,9 +3548,9 @@ Our key advantages:
 <br><br>
 <strong>Your Quote - £{total_with_admin:,.0f} + VAT</strong>
 <br><br>
-{f"<strong>Discount Applied:</strong> Introducer/Promoter: {promoter_name}" if promoter_name else ""}
-{f"<br>Discount Type: {'Tier Up (pricing uses one contract size tier higher for better rates)' if promoter_discount_type == 'tier_up' else f'{promoter_discount_value}% percentage discount on all items (excluding £500 admin fee)'}" if promoter_name else ""}
-{"<br><br>" if promoter_name else ""}
+{f"<strong>Discount Applied:</strong> Introducer/Promoter: {promoter_name}" if promoter_name and promoter_discount_type != 'no_discount' else ""}
+{f"<br>Discount Type: {'Tier Up (pricing uses one contract size tier higher for better rates)' if promoter_discount_type == 'tier_up' else f'{promoter_discount_value}% percentage discount on all items (excluding £500 admin fee)'}" if promoter_name and promoter_discount_type != 'no_discount' else ""}
+{"<br><br>" if promoter_name and promoter_discount_type != 'no_discount' else ""}
 See a detailed breakdown of the pricing below. I've attached a PDF outlining the BNG offset and condition discharge process. If you have any questions, please let us know—we're here to help.
 <br><br>
 

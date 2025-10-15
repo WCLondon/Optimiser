@@ -188,12 +188,40 @@ class SubmissionsDB:
                 CREATE TABLE IF NOT EXISTS introducers (
                     id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
-                    discount_type TEXT NOT NULL CHECK(discount_type IN ('tier_up', 'percentage')),
+                    discount_type TEXT NOT NULL CHECK(discount_type IN ('tier_up', 'percentage', 'no_discount')),
                     discount_value FLOAT NOT NULL,
                     created_date TIMESTAMP NOT NULL,
                     updated_date TIMESTAMP NOT NULL
                 )
             """))
+            
+            # Migrate existing introducers table to support 'no_discount' option
+            # Drop and recreate the constraint to add 'no_discount' option
+            try:
+                # Check if the constraint needs updating
+                conn.execute(text("""
+                    DO $$
+                    BEGIN
+                        -- Drop old constraint if it exists
+                        IF EXISTS (
+                            SELECT 1 FROM pg_constraint 
+                            WHERE conname = 'introducers_discount_type_check'
+                        ) THEN
+                            ALTER TABLE introducers DROP CONSTRAINT introducers_discount_type_check;
+                        END IF;
+                        
+                        -- Add new constraint with 'no_discount' option
+                        ALTER TABLE introducers ADD CONSTRAINT introducers_discount_type_check 
+                        CHECK(discount_type IN ('tier_up', 'percentage', 'no_discount'));
+                    EXCEPTION
+                        WHEN OTHERS THEN
+                            -- Constraint doesn't exist or already updated, continue
+                            NULL;
+                    END $$;
+                """))
+            except Exception:
+                # Table might not exist yet or constraint already correct
+                pass
             
             # Create index for introducers
             conn.execute(text("""
