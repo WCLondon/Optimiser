@@ -156,6 +156,33 @@ class SubmissionsDB:
                 ON submissions(target_nca)
             """))
             
+            # Migrate submissions table to support 'no_discount' option
+            # Drop and recreate the constraint if it exists with old values
+            try:
+                conn.execute(text("""
+                    DO $$
+                    BEGIN
+                        -- Drop old constraint if it exists
+                        IF EXISTS (
+                            SELECT 1 FROM pg_constraint 
+                            WHERE conname = 'submissions_promoter_discount_type_check'
+                        ) THEN
+                            ALTER TABLE submissions DROP CONSTRAINT submissions_promoter_discount_type_check;
+                        END IF;
+                        
+                        -- Add new constraint with 'no_discount' option
+                        ALTER TABLE submissions ADD CONSTRAINT submissions_promoter_discount_type_check 
+                        CHECK(promoter_discount_type IS NULL OR promoter_discount_type IN ('tier_up', 'percentage', 'no_discount'));
+                    EXCEPTION
+                        WHEN OTHERS THEN
+                            -- Constraint doesn't exist or already updated, continue
+                            NULL;
+                    END $$;
+                """))
+            except Exception:
+                # Table might not exist yet or constraint already correct
+                pass
+            
             # Allocations detail table (normalized)
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS allocation_details (
