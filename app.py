@@ -110,7 +110,9 @@ def init_session_state():
         "promoter_discount_value": None,
         "use_lpa_nca_dropdown": False,
         "selected_lpa_dropdown": None,
-        "selected_nca_dropdown": None
+        "selected_nca_dropdown": None,
+        "all_lpas_list": None,  # Cache for complete LPA list from ArcGIS
+        "all_ncas_list": None   # Cache for complete NCA list from ArcGIS
     }
     
     for key, value in defaults.items():
@@ -737,6 +739,50 @@ def layer_intersect_names(layer_url: str, polygon_geom: Dict[str, Any], name_fie
     names = [sstr((f.get("attributes") or {}).get(name_field)) for f in js.get("features", [])]
     return sorted({n for n in names if n})
 
+def fetch_all_lpas_from_arcgis() -> List[str]:
+    """
+    Fetch all unique LPA names from the ArcGIS LPA layer.
+    Uses a simple query to get all records.
+    """
+    try:
+        params = {
+            "f": "json",
+            "where": "1=1",
+            "outFields": "LAD24NM",
+            "returnGeometry": "false",
+            "returnDistinctValues": "true"
+        }
+        r = http_get(f"{LPA_URL}/query", params=params)
+        js = safe_json(r)
+        features = js.get("features", [])
+        lpas = [sstr((f.get("attributes") or {}).get("LAD24NM")) for f in features]
+        return sorted({lpa for lpa in lpas if lpa})
+    except Exception as e:
+        st.warning(f"Could not fetch LPA list from ArcGIS: {e}")
+        return []
+
+def fetch_all_ncas_from_arcgis() -> List[str]:
+    """
+    Fetch all unique NCA names from the ArcGIS NCA layer.
+    Uses a simple query to get all records.
+    """
+    try:
+        params = {
+            "f": "json",
+            "where": "1=1",
+            "outFields": "NCA_Name",
+            "returnGeometry": "false",
+            "returnDistinctValues": "true"
+        }
+        r = http_get(f"{NCA_URL}/query", params=params)
+        js = safe_json(r)
+        features = js.get("features", [])
+        ncas = [sstr((f.get("attributes") or {}).get("NCA_Name")) for f in features]
+        return sorted({nca for nca in ncas if nca})
+    except Exception as e:
+        st.warning(f"Could not fetch NCA list from ArcGIS: {e}")
+        return []
+
 def get_lpa_nca_for_point(lat: float, lon: float) -> Tuple[str, str]:
     lpa = sstr((arcgis_point_query(LPA_URL, lat, lon, "LAD24NM").get("attributes") or {}).get("LAD24NM"))
     nca = sstr((arcgis_point_query(NCA_URL, lat, lon, "NCA_Name").get("attributes") or {}).get("NCA_Name"))
@@ -982,44 +1028,69 @@ with st.container():
     st.markdown("**Option A: Select LPA/NCA directly (for promoters)**")
     col_dropdown1, col_dropdown2 = st.columns(2)
     
-    # Get unique LPA and NCA names from backend Banks data
-    if backend is not None and "Banks" in backend:
-        banks_df = backend["Banks"]
-        unique_lpas = sorted([str(x) for x in banks_df["lpa_name"].dropna().unique() if str(x).strip()])
-        unique_ncas = sorted([str(x) for x in banks_df["nca_name"].dropna().unique() if str(x).strip()])
-    else:
-        unique_lpas = []
-        unique_ncas = []
+    # Fetch complete LPA and NCA lists from ArcGIS (cached in session state)
+    if st.session_state["all_lpas_list"] is None:
+        with st.spinner("Loading complete LPA list from ArcGIS..."):
+            st.session_state["all_lpas_list"] = fetch_all_lpas_from_arcgis()
+    
+    if st.session_state["all_ncas_list"] is None:
+        with st.spinner("Loading complete NCA list from ArcGIS..."):
+            st.session_state["all_ncas_list"] = fetch_all_ncas_from_arcgis()
+    
+    all_lpas = st.session_state["all_lpas_list"] or []
+    all_ncas = st.session_state["all_ncas_list"] or []
+    
+    # Add "Custom - Type your own" option to the lists
+    lpa_options = [""] + all_lpas + ["⌨️ Custom - Type your own"]
+    nca_options = [""] + all_ncas + ["⌨️ Custom - Type your own"]
     
     with col_dropdown1:
-        if unique_lpas:
-            selected_lpa = st.selectbox(
-                "Select LPA",
-                options=[""] + unique_lpas,
-                index=0,
-                key="lpa_dropdown",
-                help="Select Local Planning Authority directly"
+        selected_lpa = st.selectbox(
+            "Select LPA",
+            options=lpa_options,
+            index=0,
+            key="lpa_dropdown",
+            help="Select Local Planning Authority from the list, or choose 'Custom' to type your own"
+        )
+        
+        # Show custom text input if "Custom" is selected
+        custom_lpa = None
+        if selected_lpa == "⌨️ Custom - Type your own":
+            custom_lpa = st.text_input(
+                "Enter LPA name",
+                key="custom_lpa_input",
+                help="Type the LPA name exactly as it appears in official records"
             )
-            if selected_lpa:
-                st.session_state["selected_lpa_dropdown"] = selected_lpa
+            if custom_lpa:
+                st.session_state["selected_lpa_dropdown"] = custom_lpa
                 st.session_state["use_lpa_nca_dropdown"] = True
-        else:
-            st.info("LPA list will be available once backend is loaded")
+        elif selected_lpa:
+            st.session_state["selected_lpa_dropdown"] = selected_lpa
+            st.session_state["use_lpa_nca_dropdown"] = True
     
     with col_dropdown2:
-        if unique_ncas:
-            selected_nca = st.selectbox(
-                "Select NCA",
-                options=[""] + unique_ncas,
-                index=0,
-                key="nca_dropdown",
-                help="Select National Character Area directly"
+        selected_nca = st.selectbox(
+            "Select NCA",
+            options=nca_options,
+            index=0,
+            key="nca_dropdown",
+            help="Select National Character Area from the list, or choose 'Custom' to type your own"
+        )
+        
+        # Show custom text input if "Custom" is selected
+        custom_nca = None
+        if selected_nca == "⌨️ Custom - Type your own":
+            custom_nca = st.text_input(
+                "Enter NCA name",
+                key="custom_nca_input",
+                help="Type the NCA name exactly as it appears in official records"
             )
-            if selected_nca:
-                st.session_state["selected_nca_dropdown"] = selected_nca
+            if custom_nca:
+                st.session_state["selected_nca_dropdown"] = custom_nca
                 st.session_state["use_lpa_nca_dropdown"] = True
-        else:
-            st.info("NCA list will be available once backend is loaded")
+        elif selected_nca:
+            st.session_state["selected_nca_dropdown"] = selected_nca
+            st.session_state["use_lpa_nca_dropdown"] = True
     
     # Apply LPA/NCA dropdown selection
     if st.button("Apply LPA/NCA Selection", key="apply_lpa_nca_btn"):
