@@ -783,6 +783,84 @@ def fetch_all_ncas_from_arcgis() -> List[str]:
         st.warning(f"Could not fetch NCA list from ArcGIS: {e}")
         return []
 
+def query_lpa_by_name(lpa_name: str) -> Dict[str, Any]:
+    """
+    Query LPA geometry and neighbors by name.
+    Returns dict with geometry, neighbors, and normalized neighbors.
+    """
+    try:
+        # Query for the specific LPA by name
+        params = {
+            "f": "json",
+            "where": f"LAD24NM = '{lpa_name}'",
+            "outFields": "LAD24NM",
+            "returnGeometry": "true",
+            "outSR": 4326
+        }
+        r = http_get(f"{LPA_URL}/query", params=params)
+        js = safe_json(r)
+        features = js.get("features", [])
+        
+        if not features:
+            return {"geometry": None, "neighbors": [], "neighbors_norm": []}
+        
+        feat = features[0]
+        lpa_geom_esri = feat.get("geometry")
+        lpa_gj = esri_polygon_to_geojson(lpa_geom_esri)
+        
+        # Get neighbors
+        lpa_nei = [n for n in layer_intersect_names(LPA_URL, lpa_geom_esri, "LAD24NM") if n != lpa_name]
+        lpa_nei_norm = [norm_name(n) for n in lpa_nei]
+        
+        return {
+            "geometry": lpa_gj,
+            "geometry_esri": lpa_geom_esri,
+            "neighbors": lpa_nei,
+            "neighbors_norm": lpa_nei_norm
+        }
+    except Exception as e:
+        st.warning(f"Could not fetch LPA geometry for {lpa_name}: {e}")
+        return {"geometry": None, "neighbors": [], "neighbors_norm": []}
+
+def query_nca_by_name(nca_name: str) -> Dict[str, Any]:
+    """
+    Query NCA geometry and neighbors by name.
+    Returns dict with geometry, neighbors, and normalized neighbors.
+    """
+    try:
+        # Query for the specific NCA by name
+        params = {
+            "f": "json",
+            "where": f"NCA_Name = '{nca_name}'",
+            "outFields": "NCA_Name",
+            "returnGeometry": "true",
+            "outSR": 4326
+        }
+        r = http_get(f"{NCA_URL}/query", params=params)
+        js = safe_json(r)
+        features = js.get("features", [])
+        
+        if not features:
+            return {"geometry": None, "neighbors": [], "neighbors_norm": []}
+        
+        feat = features[0]
+        nca_geom_esri = feat.get("geometry")
+        nca_gj = esri_polygon_to_geojson(nca_geom_esri)
+        
+        # Get neighbors
+        nca_nei = [n for n in layer_intersect_names(NCA_URL, nca_geom_esri, "NCA_Name") if n != nca_name]
+        nca_nei_norm = [norm_name(n) for n in nca_nei]
+        
+        return {
+            "geometry": nca_gj,
+            "geometry_esri": nca_geom_esri,
+            "neighbors": nca_nei,
+            "neighbors_norm": nca_nei_norm
+        }
+    except Exception as e:
+        st.warning(f"Could not fetch NCA geometry for {nca_name}: {e}")
+        return {"geometry": None, "neighbors": [], "neighbors_norm": []}
+
 def get_lpa_nca_for_point(lat: float, lon: float) -> Tuple[str, str]:
     lpa = sstr((arcgis_point_query(LPA_URL, lat, lon, "LAD24NM").get("attributes") or {}).get("LAD24NM"))
     nca = sstr((arcgis_point_query(NCA_URL, lat, lon, "NCA_Name").get("attributes") or {}).get("NCA_Name"))
@@ -1095,26 +1173,72 @@ with st.container():
     # Apply LPA/NCA dropdown selection
     if st.button("Apply LPA/NCA Selection", key="apply_lpa_nca_btn"):
         if st.session_state.get("selected_lpa_dropdown") or st.session_state.get("selected_nca_dropdown"):
-            # Update session state with selected LPA/NCA
-            if st.session_state.get("selected_lpa_dropdown"):
-                st.session_state["target_lpa_name"] = st.session_state["selected_lpa_dropdown"]
-            if st.session_state.get("selected_nca_dropdown"):
-                st.session_state["target_nca_name"] = st.session_state["selected_nca_dropdown"]
+            # Fetch geometries and neighbors from ArcGIS
+            lpa_data = None
+            nca_data = None
             
-            # Clear location-based data since we don't have coordinates
-            st.session_state["target_lat"] = None
-            st.session_state["target_lon"] = None
-            st.session_state["lpa_geojson"] = None
-            st.session_state["nca_geojson"] = None
-            st.session_state["lpa_neighbors"] = []
-            st.session_state["nca_neighbors"] = []
-            st.session_state["lpa_neighbors_norm"] = []
-            st.session_state["nca_neighbors_norm"] = []
+            if st.session_state.get("selected_lpa_dropdown"):
+                lpa_name = st.session_state["selected_lpa_dropdown"]
+                st.session_state["target_lpa_name"] = lpa_name
+                with st.spinner(f"Fetching geometry for LPA: {lpa_name}..."):
+                    lpa_data = query_lpa_by_name(lpa_name)
+            
+            if st.session_state.get("selected_nca_dropdown"):
+                nca_name = st.session_state["selected_nca_dropdown"]
+                st.session_state["target_nca_name"] = nca_name
+                with st.spinner(f"Fetching geometry for NCA: {nca_name}..."):
+                    nca_data = query_nca_by_name(nca_name)
+            
+            # Update session state with geometries and neighbors
+            if lpa_data:
+                st.session_state["lpa_geojson"] = lpa_data.get("geometry")
+                st.session_state["lpa_neighbors"] = lpa_data.get("neighbors", [])
+                st.session_state["lpa_neighbors_norm"] = lpa_data.get("neighbors_norm", [])
+            else:
+                st.session_state["lpa_geojson"] = None
+                st.session_state["lpa_neighbors"] = []
+                st.session_state["lpa_neighbors_norm"] = []
+            
+            if nca_data:
+                st.session_state["nca_geojson"] = nca_data.get("geometry")
+                st.session_state["nca_neighbors"] = nca_data.get("neighbors", [])
+                st.session_state["nca_neighbors_norm"] = nca_data.get("neighbors_norm", [])
+            else:
+                st.session_state["nca_geojson"] = None
+                st.session_state["nca_neighbors"] = []
+                st.session_state["nca_neighbors_norm"] = []
+            
+            # Calculate centroid for map centering if we have at least one geometry
+            if lpa_data and lpa_data.get("geometry_esri"):
+                # Calculate centroid from LPA geometry
+                rings = lpa_data["geometry_esri"].get("rings", [[]])
+                if rings and rings[0]:
+                    coords = rings[0]
+                    avg_lon = sum(c[0] for c in coords) / len(coords)
+                    avg_lat = sum(c[1] for c in coords) / len(coords)
+                    st.session_state["target_lat"] = avg_lat
+                    st.session_state["target_lon"] = avg_lon
+            elif nca_data and nca_data.get("geometry_esri"):
+                # Calculate centroid from NCA geometry
+                rings = nca_data["geometry_esri"].get("rings", [[]])
+                if rings and rings[0]:
+                    coords = rings[0]
+                    avg_lon = sum(c[0] for c in coords) / len(coords)
+                    avg_lat = sum(c[1] for c in coords) / len(coords)
+                    st.session_state["target_lat"] = avg_lat
+                    st.session_state["target_lon"] = avg_lon
+            else:
+                # No geometry available, clear coordinates
+                st.session_state["target_lat"] = None
+                st.session_state["target_lon"] = None
             
             # Clear any previous optimization results
             if "last_alloc_df" in st.session_state:
                 st.session_state["last_alloc_df"] = None
             st.session_state["optimization_complete"] = False
+            
+            # Increment map version to force refresh
+            st.session_state["map_version"] = st.session_state.get("map_version", 0) + 1
             
             st.success(f"Selected LPA/NCA: **{st.session_state.get('target_lpa_name', '—')}** | **{st.session_state.get('target_nca_name', '—')}**")
             st.rerun()
