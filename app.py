@@ -2186,7 +2186,7 @@ def prepare_options(demand_df: pd.DataFrame,
                         options.append({
                             "type": "paired",
                             "demand_idx": di,
-                            "demand_habitat": pi_demand[2],  # Use pricing habitat, not stock habitat
+                            "demand_habitat": dem_hab,  # Keep original demand habitat for matching
                             "BANK_KEY": bk,
                             "bank_name": sstr(d_stock.get("bank_name")),
                             "bank_id": sstr(d_stock.get("bank_id")),
