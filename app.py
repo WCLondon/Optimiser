@@ -2198,8 +2198,8 @@ def prepare_options(demand_df: pd.DataFrame,
                             "price_source": "paired",
                             "price_habitat": f"{pi_demand[2]} + {pi_comp[2]}",
                             "paired_parts": [
-                                {"habitat": dem_hab, "unit_price": price_demand, "stock_use": stock_use_demand},
-                                {"habitat": sstr(comp_row["habitat_name"]), "unit_price": price_companion, "stock_use": stock_use_companion},
+                                {"habitat": pi_demand[2], "unit_price": price_demand, "stock_use": stock_use_demand},
+                                {"habitat": pi_comp[2], "unit_price": price_companion, "stock_use": stock_use_companion},
                             ],
                         })
 
