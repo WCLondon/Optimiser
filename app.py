@@ -3288,7 +3288,7 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                     if paired_parts and len(paired_parts) >= 2:
                         # Get distinctiveness for each habitat in the pair
                         habitat_distinctiveness = []
-                        for part in paired_parts:
+                        for idx, part in enumerate(paired_parts):
                             habitat = sstr(part.get("habitat", ""))
                             cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat]
                             if not cat_match.empty:
@@ -3297,12 +3297,14 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                                 habitat_distinctiveness.append({
                                     "habitat": habitat,
                                     "distinctiveness_name": dist_name,
-                                    "distinctiveness_value": dist_value
+                                    "distinctiveness_value": dist_value,
+                                    "index": idx  # Track original index to prefer demand habitat in ties
                                 })
                         
                         # Select the habitat with highest distinctiveness value
+                        # In case of tie, prefer the demand habitat (index 0)
                         if habitat_distinctiveness:
-                            highest_dist = max(habitat_distinctiveness, key=lambda x: x["distinctiveness_value"])
+                            highest_dist = max(habitat_distinctiveness, key=lambda x: (x["distinctiveness_value"], -x["index"]))
                             supply_habitat = highest_dist["habitat"]
                             supply_distinctiveness = highest_dist["distinctiveness_name"]
                         else:
