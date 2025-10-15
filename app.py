@@ -2186,11 +2186,11 @@ def prepare_options(demand_df: pd.DataFrame,
                         options.append({
                             "type": "paired",
                             "demand_idx": di,
-                            "demand_habitat": dem_hab,
+                            "demand_habitat": pi_demand[2],  # Use pricing habitat, not stock habitat
                             "BANK_KEY": bk,
                             "bank_name": sstr(d_stock.get("bank_name")),
                             "bank_id": sstr(d_stock.get("bank_id")),
-                            "supply_habitat": f"{dem_hab} + {sstr(comp_row['habitat_name'])}",
+                            "supply_habitat": f"{pi_demand[2]} + {pi_comp[2]}",  # Use pricing habitats
                             "tier": target_tier,
                             "proximity": target_tier,
                             "unit_price": blended_price,
