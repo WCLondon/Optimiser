@@ -107,7 +107,10 @@ def init_session_state():
         "use_promoter": False,
         "selected_promoter": None,
         "promoter_discount_type": None,
-        "promoter_discount_value": None
+        "promoter_discount_value": None,
+        "use_lpa_nca_dropdown": False,
+        "selected_lpa_dropdown": None,
+        "selected_nca_dropdown": None
     }
     
     for key, value in defaults.items():
@@ -966,6 +969,81 @@ if st.session_state.get("needs_map_refresh", False):
 # ================= Locate UI =================
 with st.container():
     st.subheader("1) Locate target site")
+    
+    # LPA/NCA Dropdown Option for promoters
+    st.markdown("**Option A: Select LPA/NCA directly (for promoters)**")
+    col_dropdown1, col_dropdown2 = st.columns(2)
+    
+    # Get unique LPA and NCA names from backend Banks data
+    if backend is not None and "Banks" in backend:
+        banks_df = backend["Banks"]
+        unique_lpas = sorted([str(x) for x in banks_df["lpa_name"].dropna().unique() if str(x).strip()])
+        unique_ncas = sorted([str(x) for x in banks_df["nca_name"].dropna().unique() if str(x).strip()])
+    else:
+        unique_lpas = []
+        unique_ncas = []
+    
+    with col_dropdown1:
+        if unique_lpas:
+            selected_lpa = st.selectbox(
+                "Select LPA",
+                options=[""] + unique_lpas,
+                index=0,
+                key="lpa_dropdown",
+                help="Select Local Planning Authority directly"
+            )
+            if selected_lpa:
+                st.session_state["selected_lpa_dropdown"] = selected_lpa
+                st.session_state["use_lpa_nca_dropdown"] = True
+        else:
+            st.info("LPA list will be available once backend is loaded")
+    
+    with col_dropdown2:
+        if unique_ncas:
+            selected_nca = st.selectbox(
+                "Select NCA",
+                options=[""] + unique_ncas,
+                index=0,
+                key="nca_dropdown",
+                help="Select National Character Area directly"
+            )
+            if selected_nca:
+                st.session_state["selected_nca_dropdown"] = selected_nca
+                st.session_state["use_lpa_nca_dropdown"] = True
+        else:
+            st.info("NCA list will be available once backend is loaded")
+    
+    # Apply LPA/NCA dropdown selection
+    if st.button("Apply LPA/NCA Selection", key="apply_lpa_nca_btn"):
+        if st.session_state.get("selected_lpa_dropdown") or st.session_state.get("selected_nca_dropdown"):
+            # Update session state with selected LPA/NCA
+            if st.session_state.get("selected_lpa_dropdown"):
+                st.session_state["target_lpa_name"] = st.session_state["selected_lpa_dropdown"]
+            if st.session_state.get("selected_nca_dropdown"):
+                st.session_state["target_nca_name"] = st.session_state["selected_nca_dropdown"]
+            
+            # Clear location-based data since we don't have coordinates
+            st.session_state["target_lat"] = None
+            st.session_state["target_lon"] = None
+            st.session_state["lpa_geojson"] = None
+            st.session_state["nca_geojson"] = None
+            st.session_state["lpa_neighbors"] = []
+            st.session_state["nca_neighbors"] = []
+            st.session_state["lpa_neighbors_norm"] = []
+            st.session_state["nca_neighbors_norm"] = []
+            
+            # Clear any previous optimization results
+            if "last_alloc_df" in st.session_state:
+                st.session_state["last_alloc_df"] = None
+            st.session_state["optimization_complete"] = False
+            
+            st.success(f"Selected LPA/NCA: **{st.session_state.get('target_lpa_name', '—')}** | **{st.session_state.get('target_nca_name', '—')}**")
+            st.rerun()
+        else:
+            st.warning("Please select at least one LPA or NCA")
+    
+    st.markdown("---")
+    st.markdown("**Option B: Enter postcode or address (standard method)**")
     c1, c2, c3 = st.columns([1,1,1])
     with c1:
         postcode = st.text_input("Postcode (quicker)", key="postcode_input")
@@ -1005,6 +1083,8 @@ def find_site(postcode: str, address: str):
     st.session_state["target_lon"] = lon
     st.session_state["lpa_geojson"] = lpa_gj
     st.session_state["nca_geojson"] = nca_gj
+    # Clear dropdown flag since we're using postcode/address
+    st.session_state["use_lpa_nca_dropdown"] = False
     # Clear any previous optimization results when locating new site
     if "last_alloc_df" in st.session_state:
         st.session_state["last_alloc_df"] = None
@@ -1024,9 +1104,10 @@ if run_locate:
 
 # Show persistent location banner
 if st.session_state["target_lpa_name"] or st.session_state["target_nca_name"]:
+    location_source = " (via dropdown)" if st.session_state.get("use_lpa_nca_dropdown") else " (via postcode/address)"
     st.success(
         f"LPA: **{st.session_state['target_lpa_name'] or '—'}** | "
-        f"NCA: **{st.session_state['target_nca_name'] or '—'}**"
+        f"NCA: **{st.session_state['target_nca_name'] or '—'}**{location_source}"
     )
 
 # ================= Promoter/Introducer Selection =================
