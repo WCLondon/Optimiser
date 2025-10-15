@@ -107,7 +107,12 @@ def init_session_state():
         "use_promoter": False,
         "selected_promoter": None,
         "promoter_discount_type": None,
-        "promoter_discount_value": None
+        "promoter_discount_value": None,
+        "use_lpa_nca_dropdown": False,
+        "selected_lpa_dropdown": None,
+        "selected_nca_dropdown": None,
+        "all_lpas_list": None,  # Cache for complete LPA list from ArcGIS
+        "all_ncas_list": None   # Cache for complete NCA list from ArcGIS
     }
     
     for key, value in defaults.items():
@@ -374,12 +379,13 @@ if st.session_state.app_mode == "Admin Dashboard":
         with st.expander("➕ Add New Introducer", expanded=False):
             with st.form("add_introducer_form"):
                 new_name = st.text_input("Introducer Name", key="new_introducer_name")
-                new_discount_type = st.selectbox("Discount Type", ["tier_up", "percentage"], key="new_discount_type")
+                new_discount_type = st.selectbox("Discount Type", ["tier_up", "percentage", "no_discount"], key="new_discount_type")
                 new_discount_value = st.number_input("Discount Value", 
                                                      min_value=0.0, 
                                                      step=0.1,
                                                      key="new_discount_value",
-                                                     help="For percentage: enter as decimal (e.g., 10.5 for 10.5%). For tier_up: value is ignored.")
+                                                     help="For percentage: enter as decimal (e.g., 10.5 for 10.5%). For tier_up or no_discount: value is ignored.",
+                                                     disabled=(st.session_state.get("new_discount_type") == "no_discount"))
                 add_submit = st.form_submit_button("Add Introducer")
                 
                 if add_submit:
@@ -387,7 +393,9 @@ if st.session_state.app_mode == "Admin Dashboard":
                         st.error("Please enter an introducer name.")
                     else:
                         try:
-                            db.add_introducer(new_name.strip(), new_discount_type, new_discount_value)
+                            # For no_discount type, set value to 0
+                            discount_value = 0.0 if st.session_state.get("new_discount_type") == "no_discount" else new_discount_value
+                            db.add_introducer(new_name.strip(), new_discount_type, discount_value)
                             st.success(f"✅ Added introducer: {new_name}")
                             st.rerun()
                         except Exception as e:
@@ -405,6 +413,8 @@ if st.session_state.app_mode == "Admin Dashboard":
                 with col3:
                     if intro['discount_type'] == 'percentage':
                         st.write(f"Value: {intro['discount_value']}%")
+                    elif intro['discount_type'] == 'no_discount':
+                        st.write("No Discount")
                     else:
                         st.write("Tier Up")
                 with col4:
@@ -426,14 +436,15 @@ if st.session_state.app_mode == "Admin Dashboard":
                     with st.form(f"edit_form_{intro['id']}"):
                         edit_name = st.text_input("Name", value=intro['name'], key=f"edit_name_{intro['id']}")
                         edit_discount_type = st.selectbox("Discount Type", 
-                                                         ["tier_up", "percentage"],
-                                                         index=0 if intro['discount_type'] == 'tier_up' else 1,
+                                                         ["tier_up", "percentage", "no_discount"],
+                                                         index=0 if intro['discount_type'] == 'tier_up' else (1 if intro['discount_type'] == 'percentage' else 2),
                                                          key=f"edit_type_{intro['id']}")
                         edit_discount_value = st.number_input("Discount Value",
                                                              value=float(intro['discount_value']),
                                                              min_value=0.0,
                                                              step=0.1,
-                                                             key=f"edit_value_{intro['id']}")
+                                                             key=f"edit_value_{intro['id']}",
+                                                             disabled=(edit_discount_type == "no_discount"))
                         
                         col_save, col_cancel = st.columns(2)
                         with col_save:
@@ -446,7 +457,9 @@ if st.session_state.app_mode == "Admin Dashboard":
                                 st.error("Please enter a name.")
                             else:
                                 try:
-                                    db.update_introducer(intro['id'], edit_name.strip(), edit_discount_type, edit_discount_value)
+                                    # For no_discount type, set value to 0
+                                    discount_value = 0.0 if edit_discount_type == "no_discount" else edit_discount_value
+                                    db.update_introducer(intro['id'], edit_name.strip(), edit_discount_type, discount_value)
                                     st.success(f"Updated: {edit_name}")
                                     st.session_state[f"editing_introducer_{intro['id']}"] = False
                                     st.rerun()
@@ -726,6 +739,128 @@ def layer_intersect_names(layer_url: str, polygon_geom: Dict[str, Any], name_fie
     names = [sstr((f.get("attributes") or {}).get(name_field)) for f in js.get("features", [])]
     return sorted({n for n in names if n})
 
+def fetch_all_lpas_from_arcgis() -> List[str]:
+    """
+    Fetch all unique LPA names from the ArcGIS LPA layer.
+    Uses a simple query to get all records.
+    """
+    try:
+        params = {
+            "f": "json",
+            "where": "1=1",
+            "outFields": "LAD24NM",
+            "returnGeometry": "false",
+            "returnDistinctValues": "true"
+        }
+        r = http_get(f"{LPA_URL}/query", params=params)
+        js = safe_json(r)
+        features = js.get("features", [])
+        lpas = [sstr((f.get("attributes") or {}).get("LAD24NM")) for f in features]
+        return sorted({lpa for lpa in lpas if lpa})
+    except Exception as e:
+        st.warning(f"Could not fetch LPA list from ArcGIS: {e}")
+        return []
+
+def fetch_all_ncas_from_arcgis() -> List[str]:
+    """
+    Fetch all unique NCA names from the ArcGIS NCA layer.
+    Uses a simple query to get all records.
+    """
+    try:
+        params = {
+            "f": "json",
+            "where": "1=1",
+            "outFields": "NCA_Name",
+            "returnGeometry": "false",
+            "returnDistinctValues": "true"
+        }
+        r = http_get(f"{NCA_URL}/query", params=params)
+        js = safe_json(r)
+        features = js.get("features", [])
+        ncas = [sstr((f.get("attributes") or {}).get("NCA_Name")) for f in features]
+        return sorted({nca for nca in ncas if nca})
+    except Exception as e:
+        st.warning(f"Could not fetch NCA list from ArcGIS: {e}")
+        return []
+
+def query_lpa_by_name(lpa_name: str) -> Dict[str, Any]:
+    """
+    Query LPA geometry and neighbors by name.
+    Returns dict with geometry, neighbors, and normalized neighbors.
+    """
+    try:
+        # Query for the specific LPA by name
+        params = {
+            "f": "json",
+            "where": f"LAD24NM = '{lpa_name}'",
+            "outFields": "LAD24NM",
+            "returnGeometry": "true",
+            "outSR": 4326
+        }
+        r = http_get(f"{LPA_URL}/query", params=params)
+        js = safe_json(r)
+        features = js.get("features", [])
+        
+        if not features:
+            return {"geometry": None, "neighbors": [], "neighbors_norm": []}
+        
+        feat = features[0]
+        lpa_geom_esri = feat.get("geometry")
+        lpa_gj = esri_polygon_to_geojson(lpa_geom_esri)
+        
+        # Get neighbors
+        lpa_nei = [n for n in layer_intersect_names(LPA_URL, lpa_geom_esri, "LAD24NM") if n != lpa_name]
+        lpa_nei_norm = [norm_name(n) for n in lpa_nei]
+        
+        return {
+            "geometry": lpa_gj,
+            "geometry_esri": lpa_geom_esri,
+            "neighbors": lpa_nei,
+            "neighbors_norm": lpa_nei_norm
+        }
+    except Exception as e:
+        st.warning(f"Could not fetch LPA geometry for {lpa_name}: {e}")
+        return {"geometry": None, "neighbors": [], "neighbors_norm": []}
+
+def query_nca_by_name(nca_name: str) -> Dict[str, Any]:
+    """
+    Query NCA geometry and neighbors by name.
+    Returns dict with geometry, neighbors, and normalized neighbors.
+    """
+    try:
+        # Query for the specific NCA by name
+        params = {
+            "f": "json",
+            "where": f"NCA_Name = '{nca_name}'",
+            "outFields": "NCA_Name",
+            "returnGeometry": "true",
+            "outSR": 4326
+        }
+        r = http_get(f"{NCA_URL}/query", params=params)
+        js = safe_json(r)
+        features = js.get("features", [])
+        
+        if not features:
+            return {"geometry": None, "neighbors": [], "neighbors_norm": []}
+        
+        feat = features[0]
+        nca_geom_esri = feat.get("geometry")
+        nca_gj = esri_polygon_to_geojson(nca_geom_esri)
+        
+        # Get neighbors
+        nca_nei = [n for n in layer_intersect_names(NCA_URL, nca_geom_esri, "NCA_Name") if n != nca_name]
+        nca_nei_norm = [norm_name(n) for n in nca_nei]
+        
+        return {
+            "geometry": nca_gj,
+            "geometry_esri": nca_geom_esri,
+            "neighbors": nca_nei,
+            "neighbors_norm": nca_nei_norm
+        }
+    except Exception as e:
+        st.warning(f"Could not fetch NCA geometry for {nca_name}: {e}")
+        return {"geometry": None, "neighbors": [], "neighbors_norm": []}
+
 def get_lpa_nca_for_point(lat: float, lon: float) -> Tuple[str, str]:
     lpa = sstr((arcgis_point_query(LPA_URL, lat, lon, "LAD24NM").get("attributes") or {}).get("LAD24NM"))
     nca = sstr((arcgis_point_query(NCA_URL, lat, lon, "NCA_Name").get("attributes") or {}).get("NCA_Name"))
@@ -966,6 +1101,152 @@ if st.session_state.get("needs_map_refresh", False):
 # ================= Locate UI =================
 with st.container():
     st.subheader("1) Locate target site")
+    
+    # LPA/NCA Dropdown Option for promoters
+    st.markdown("**Option A: Select LPA/NCA directly (for promoters)**")
+    col_dropdown1, col_dropdown2 = st.columns(2)
+    
+    # Fetch complete LPA and NCA lists from ArcGIS (cached in session state)
+    if st.session_state["all_lpas_list"] is None:
+        with st.spinner("Loading complete LPA list from ArcGIS..."):
+            st.session_state["all_lpas_list"] = fetch_all_lpas_from_arcgis()
+    
+    if st.session_state["all_ncas_list"] is None:
+        with st.spinner("Loading complete NCA list from ArcGIS..."):
+            st.session_state["all_ncas_list"] = fetch_all_ncas_from_arcgis()
+    
+    all_lpas = st.session_state["all_lpas_list"] or []
+    all_ncas = st.session_state["all_ncas_list"] or []
+    
+    # Add "Custom - Type your own" option to the lists
+    lpa_options = [""] + all_lpas + ["⌨️ Custom - Type your own"]
+    nca_options = [""] + all_ncas + ["⌨️ Custom - Type your own"]
+    
+    with col_dropdown1:
+        selected_lpa = st.selectbox(
+            "Select LPA",
+            options=lpa_options,
+            index=0,
+            key="lpa_dropdown",
+            help="Select Local Planning Authority from the list, or choose 'Custom' to type your own"
+        )
+        
+        # Show custom text input if "Custom" is selected
+        custom_lpa = None
+        if selected_lpa == "⌨️ Custom - Type your own":
+            custom_lpa = st.text_input(
+                "Enter LPA name",
+                key="custom_lpa_input",
+                help="Type the LPA name exactly as it appears in official records"
+            )
+            if custom_lpa:
+                st.session_state["selected_lpa_dropdown"] = custom_lpa
+                st.session_state["use_lpa_nca_dropdown"] = True
+        elif selected_lpa:
+            st.session_state["selected_lpa_dropdown"] = selected_lpa
+            st.session_state["use_lpa_nca_dropdown"] = True
+    
+    with col_dropdown2:
+        selected_nca = st.selectbox(
+            "Select NCA",
+            options=nca_options,
+            index=0,
+            key="nca_dropdown",
+            help="Select National Character Area from the list, or choose 'Custom' to type your own"
+        )
+        
+        # Show custom text input if "Custom" is selected
+        custom_nca = None
+        if selected_nca == "⌨️ Custom - Type your own":
+            custom_nca = st.text_input(
+                "Enter NCA name",
+                key="custom_nca_input",
+                help="Type the NCA name exactly as it appears in official records"
+            )
+            if custom_nca:
+                st.session_state["selected_nca_dropdown"] = custom_nca
+                st.session_state["use_lpa_nca_dropdown"] = True
+        elif selected_nca:
+            st.session_state["selected_nca_dropdown"] = selected_nca
+            st.session_state["use_lpa_nca_dropdown"] = True
+    
+    # Apply LPA/NCA dropdown selection
+    if st.button("Apply LPA/NCA Selection", key="apply_lpa_nca_btn"):
+        if st.session_state.get("selected_lpa_dropdown") or st.session_state.get("selected_nca_dropdown"):
+            # Fetch geometries and neighbors from ArcGIS
+            lpa_data = None
+            nca_data = None
+            
+            if st.session_state.get("selected_lpa_dropdown"):
+                lpa_name = st.session_state["selected_lpa_dropdown"]
+                st.session_state["target_lpa_name"] = lpa_name
+                with st.spinner(f"Fetching geometry for LPA: {lpa_name}..."):
+                    lpa_data = query_lpa_by_name(lpa_name)
+            
+            if st.session_state.get("selected_nca_dropdown"):
+                nca_name = st.session_state["selected_nca_dropdown"]
+                st.session_state["target_nca_name"] = nca_name
+                with st.spinner(f"Fetching geometry for NCA: {nca_name}..."):
+                    nca_data = query_nca_by_name(nca_name)
+            
+            # Update session state with geometries and neighbors
+            if lpa_data:
+                st.session_state["lpa_geojson"] = lpa_data.get("geometry")
+                st.session_state["lpa_neighbors"] = lpa_data.get("neighbors", [])
+                st.session_state["lpa_neighbors_norm"] = lpa_data.get("neighbors_norm", [])
+            else:
+                st.session_state["lpa_geojson"] = None
+                st.session_state["lpa_neighbors"] = []
+                st.session_state["lpa_neighbors_norm"] = []
+            
+            if nca_data:
+                st.session_state["nca_geojson"] = nca_data.get("geometry")
+                st.session_state["nca_neighbors"] = nca_data.get("neighbors", [])
+                st.session_state["nca_neighbors_norm"] = nca_data.get("neighbors_norm", [])
+            else:
+                st.session_state["nca_geojson"] = None
+                st.session_state["nca_neighbors"] = []
+                st.session_state["nca_neighbors_norm"] = []
+            
+            # Calculate centroid for map centering if we have at least one geometry
+            if lpa_data and lpa_data.get("geometry_esri"):
+                # Calculate centroid from LPA geometry
+                rings = lpa_data["geometry_esri"].get("rings", [[]])
+                if rings and rings[0]:
+                    coords = rings[0]
+                    avg_lon = sum(c[0] for c in coords) / len(coords)
+                    avg_lat = sum(c[1] for c in coords) / len(coords)
+                    st.session_state["target_lat"] = avg_lat
+                    st.session_state["target_lon"] = avg_lon
+            elif nca_data and nca_data.get("geometry_esri"):
+                # Calculate centroid from NCA geometry
+                rings = nca_data["geometry_esri"].get("rings", [[]])
+                if rings and rings[0]:
+                    coords = rings[0]
+                    avg_lon = sum(c[0] for c in coords) / len(coords)
+                    avg_lat = sum(c[1] for c in coords) / len(coords)
+                    st.session_state["target_lat"] = avg_lat
+                    st.session_state["target_lon"] = avg_lon
+            else:
+                # No geometry available, clear coordinates
+                st.session_state["target_lat"] = None
+                st.session_state["target_lon"] = None
+            
+            # Clear any previous optimization results
+            if "last_alloc_df" in st.session_state:
+                st.session_state["last_alloc_df"] = None
+            st.session_state["optimization_complete"] = False
+            
+            # Increment map version to force refresh
+            st.session_state["map_version"] = st.session_state.get("map_version", 0) + 1
+            
+            st.success(f"Selected LPA/NCA: **{st.session_state.get('target_lpa_name', '—')}** | **{st.session_state.get('target_nca_name', '—')}**")
+            st.rerun()
+        else:
+            st.warning("Please select at least one LPA or NCA")
+    
+    st.markdown("---")
+    st.markdown("**Option B: Enter postcode or address (standard method)**")
     c1, c2, c3 = st.columns([1,1,1])
     with c1:
         postcode = st.text_input("Postcode (quicker)", key="postcode_input")
@@ -1005,6 +1286,8 @@ def find_site(postcode: str, address: str):
     st.session_state["target_lon"] = lon
     st.session_state["lpa_geojson"] = lpa_gj
     st.session_state["nca_geojson"] = nca_gj
+    # Clear dropdown flag since we're using postcode/address
+    st.session_state["use_lpa_nca_dropdown"] = False
     # Clear any previous optimization results when locating new site
     if "last_alloc_df" in st.session_state:
         st.session_state["last_alloc_df"] = None
@@ -1024,9 +1307,10 @@ if run_locate:
 
 # Show persistent location banner
 if st.session_state["target_lpa_name"] or st.session_state["target_nca_name"]:
+    location_source = " (via dropdown)" if st.session_state.get("use_lpa_nca_dropdown") else " (via postcode/address)"
     st.success(
         f"LPA: **{st.session_state['target_lpa_name'] or '—'}** | "
-        f"NCA: **{st.session_state['target_nca_name'] or '—'}**"
+        f"NCA: **{st.session_state['target_nca_name'] or '—'}**{location_source}"
     )
 
 # ================= Promoter/Introducer Selection =================
@@ -1074,8 +1358,10 @@ with st.container():
                         # Show discount info
                         if selected_intro['discount_type'] == 'tier_up':
                             st.info(f"💡 **Tier Up Discount**: Pricing uses one contract size tier higher (e.g., fractional → small, small → medium, medium → large) for better rates")
-                        else:
+                        elif selected_intro['discount_type'] == 'percentage':
                             st.info(f"💡 **Percentage Discount**: {selected_intro['discount_value']}% discount on all items except £500 admin fee")
+                        else:  # no_discount
+                            st.info(f"💡 **No Discount Applied**: Promoter registered for dynamic email text only")
         else:
             st.session_state["selected_promoter"] = None
             st.session_state["promoter_discount_type"] = None
@@ -1900,11 +2186,11 @@ def prepare_options(demand_df: pd.DataFrame,
                         options.append({
                             "type": "paired",
                             "demand_idx": di,
-                            "demand_habitat": dem_hab,
+                            "demand_habitat": dem_hab,  # Keep original demand habitat for matching
                             "BANK_KEY": bk,
                             "bank_name": sstr(d_stock.get("bank_name")),
                             "bank_id": sstr(d_stock.get("bank_id")),
-                            "supply_habitat": f"{dem_hab} + {sstr(comp_row['habitat_name'])}",
+                            "supply_habitat": f"{pi_demand[2]} + {pi_comp[2]}",  # Use pricing habitats
                             "tier": target_tier,
                             "proximity": target_tier,
                             "unit_price": blended_price,
@@ -1912,8 +2198,8 @@ def prepare_options(demand_df: pd.DataFrame,
                             "price_source": "paired",
                             "price_habitat": f"{pi_demand[2]} + {pi_comp[2]}",
                             "paired_parts": [
-                                {"habitat": dem_hab, "unit_price": price_demand, "stock_use": stock_use_demand},
-                                {"habitat": sstr(comp_row["habitat_name"]), "unit_price": price_companion, "stock_use": stock_use_companion},
+                                {"habitat": pi_demand[2], "unit_price": price_demand, "stock_use": stock_use_demand},
+                                {"habitat": pi_comp[2], "unit_price": price_companion, "stock_use": stock_use_companion},
                             ],
                         })
 
@@ -3002,7 +3288,7 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                     if paired_parts and len(paired_parts) >= 2:
                         # Get distinctiveness for each habitat in the pair
                         habitat_distinctiveness = []
-                        for part in paired_parts:
+                        for idx, part in enumerate(paired_parts):
                             habitat = sstr(part.get("habitat", ""))
                             cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat]
                             if not cat_match.empty:
@@ -3011,12 +3297,14 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                                 habitat_distinctiveness.append({
                                     "habitat": habitat,
                                     "distinctiveness_name": dist_name,
-                                    "distinctiveness_value": dist_value
+                                    "distinctiveness_value": dist_value,
+                                    "index": idx  # Track original index to prefer demand habitat in ties
                                 })
                         
                         # Select the habitat with highest distinctiveness value
+                        # In case of tie, prefer the demand habitat (index 0)
                         if habitat_distinctiveness:
-                            highest_dist = max(habitat_distinctiveness, key=lambda x: x["distinctiveness_value"])
+                            highest_dist = max(habitat_distinctiveness, key=lambda x: (x["distinctiveness_value"], -x["index"]))
                             supply_habitat = highest_dist["habitat"]
                             supply_distinctiveness = highest_dist["distinctiveness_name"]
                         else:
@@ -3429,6 +3717,12 @@ We offer two contract options:
 If you have any questions, please reply to this email or call 01962 436574."""
     
     # Generate full email body matching exact template
+    # Dynamic intro text based on promoter selection
+    if promoter_name:
+        intro_text = f"{promoter_name} has advised us that you need Biodiversity Net Gain units for your development in {location}, and we're here to help you discharge your BNG condition."
+    else:
+        intro_text = f"Thank you for enquiring about BNG Units for your development in {location}"
+    
     email_body = f"""
 <div style="font-family: Arial, sans-serif; font-size: 12px; line-height: 1.4;">
 
@@ -3436,9 +3730,7 @@ If you have any questions, please reply to this email or call 01962 436574."""
 <br><br>
 <strong>Our Ref: {ref_number}</strong>
 <br><br>
-Arbtech has advised us that you need Biodiversity Net Gain units for your development in {location}, and we're here to help you discharge your BNG condition.
-<br><br>
-Thank you for enquiring about BNG Units for your development in {location}
+{intro_text}
 <br><br>
 <strong>About Us</strong>
 <br><br>
@@ -3453,9 +3745,9 @@ Our key advantages:
 <br><br>
 <strong>Your Quote - £{total_with_admin:,.0f} + VAT</strong>
 <br><br>
-{f"<strong>Discount Applied:</strong> Introducer/Promoter: {promoter_name}" if promoter_name else ""}
-{f"<br>Discount Type: {'Tier Up (pricing uses one contract size tier higher for better rates)' if promoter_discount_type == 'tier_up' else f'{promoter_discount_value}% percentage discount on all items (excluding £500 admin fee)'}" if promoter_name else ""}
-{"<br><br>" if promoter_name else ""}
+{f"<strong>Discount Applied:</strong> Introducer/Promoter: {promoter_name}" if promoter_name and promoter_discount_type != 'no_discount' else ""}
+{f"<br>Discount Type: {'Tier Up (pricing uses one contract size tier higher for better rates)' if promoter_discount_type == 'tier_up' else f'{promoter_discount_value}% percentage discount on all items (excluding £500 admin fee)'}" if promoter_name and promoter_discount_type != 'no_discount' else ""}
+{"<br><br>" if promoter_name and promoter_discount_type != 'no_discount' else ""}
 See a detailed breakdown of the pricing below. I've attached a PDF outlining the BNG offset and condition discharge process. If you have any questions, please let us know—we're here to help.
 <br><br>
 
