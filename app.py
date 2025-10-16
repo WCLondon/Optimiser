@@ -4398,6 +4398,24 @@ if (st.session_state.get("optimization_complete", False) and
                     key="form_location"
                 )
             
+            # Customer info section
+            st.markdown("**👤 Customer Information (Optional):**")
+            st.caption("Link this quote to a customer record for tracking. Either Email or Mobile is recommended.")
+            
+            col_cust1, col_cust2 = st.columns(2)
+            with col_cust1:
+                form_customer_email = st.text_input("Customer Email", key="form_customer_email")
+            with col_cust2:
+                form_customer_mobile = st.text_input("Customer Mobile", key="form_customer_mobile")
+            
+            col_cust3, col_cust4 = st.columns(2)
+            with col_cust3:
+                form_customer_company = st.text_input("Company Name", key="form_customer_company")
+            with col_cust4:
+                form_customer_contact = st.text_input("Contact Person", key="form_customer_contact")
+            
+            form_customer_address = st.text_area("Customer Address", key="form_customer_address", height=80)
+            
             # Form submit button
             form_submitted = st.form_submit_button("Update Email Details")
         
@@ -4421,6 +4439,30 @@ if (st.session_state.get("optimization_complete", False) and
                 st.error("❌ No optimization results to save. Please run the optimizer first.")
             else:
                 try:
+                    # Handle customer info if provided
+                    customer_id = None
+                    if form_customer_email or form_customer_mobile:
+                        # Check if customer already exists
+                        existing_customer = db.get_customer_by_contact(
+                            email=form_customer_email if form_customer_email else None,
+                            mobile_number=form_customer_mobile if form_customer_mobile else None
+                        )
+                        
+                        if existing_customer:
+                            customer_id = existing_customer['id']
+                            st.info(f"ℹ️ Linked to existing customer: {existing_customer['client_name']} (ID: {customer_id})")
+                        else:
+                            # Create new customer
+                            customer_id = db.add_customer(
+                                client_name=form_client_name,
+                                company_name=form_customer_company if form_customer_company else None,
+                                contact_person=form_customer_contact if form_customer_contact else None,
+                                address=form_customer_address if form_customer_address else None,
+                                email=form_customer_email if form_customer_email else None,
+                                mobile_number=form_customer_mobile if form_customer_mobile else None
+                            )
+                            st.info(f"✅ New customer created (ID: {customer_id})")
+                    
                     # Get the current username
                     current_user = st.secrets.get("auth", {}).get("username", DEFAULT_USER)
                     
@@ -4449,7 +4491,8 @@ if (st.session_state.get("optimization_complete", False) and
                         username=current_user,
                         promoter_name=st.session_state.get("selected_promoter"),
                         promoter_discount_type=st.session_state.get("promoter_discount_type"),
-                        promoter_discount_value=st.session_state.get("promoter_discount_value")
+                        promoter_discount_value=st.session_state.get("promoter_discount_value"),
+                        customer_id=customer_id
                     )
                     st.success(f"✅ Quote saved to database! Submission ID: {submission_id}")
                     st.info(f"📊 Client: {form_client_name} | Reference: {form_ref_number} | Total: £{session_total_cost + ADMIN_FEE_GBP:,.0f}")
