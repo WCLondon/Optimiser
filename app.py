@@ -2142,37 +2142,40 @@ def prepare_options(demand_df: pd.DataFrame,
             if demand_rows.empty:
                 continue
             
-            # Get "companion" candidates: any area habitat with positive stock
-            # These will be used to offset the SRM penalty
-            companion_candidates = stock_full[
-                (stock_full["BANK_KEY"] == bk) &
-                (stock_full["habitat_name"] != dem_hab) &
-                (~stock_full["habitat_name"].map(is_hedgerow)) &
-                (stock_full["quantity_available"].astype(float) > 0)
-            ].copy()
-            
-            if companion_candidates.empty:
-                continue
-            
-            # Process each demand habitat stock entry
+            # Process each demand habitat stock entry (includes substitutes from trading rules)
             for _, d_stock in demand_rows.iterrows():
                 cap_d = float(d_stock.get("quantity_available", 0) or 0.0)
                 if cap_d <= 0:
                     continue
                 
+                # Get supply habitat name (may be different from demand if it's a substitute)
+                supply_hab = sstr(d_stock["habitat_name"])
+                
+                # Get "companion" candidates: any area habitat with positive stock
+                # excluding the supply habitat itself to avoid self-pairing
+                companion_candidates = stock_full[
+                    (stock_full["BANK_KEY"] == bk) &
+                    (stock_full["habitat_name"] != supply_hab) &
+                    (~stock_full["habitat_name"].map(is_hedgerow)) &
+                    (stock_full["quantity_available"].astype(float) > 0)
+                ].copy()
+                
+                if companion_candidates.empty:
+                    continue
+                
                 # For each tier (adjacent and far), find the best companion
                 for target_tier in ["adjacent", "far"]:
-                    # Check if demand habitat is at this tier
+                    # Check if supply habitat is at this tier
                     tier_demand = tier_for_bank(
                         sstr(d_stock.get("lpa_name")), sstr(d_stock.get("nca_name")),
                         target_lpa, target_nca, lpa_neigh, nca_neigh, lpa_neigh_norm, nca_neigh_norm
                     )
-                    # Only create paired options for the actual tier of the demand
+                    # Only create paired options for the actual tier of the supply habitat
                     if tier_demand != target_tier:
                         continue
                     
-                    # Get demand habitat price at this tier
-                    pi_demand = find_price_for_supply(bk, dem_hab, target_tier, d_broader, d_dist)
+                    # Get supply habitat price at this tier (not demand habitat - use actual supply)
+                    pi_demand = find_price_for_supply(bk, supply_hab, target_tier, d_broader, d_dist)
                     if not pi_demand:
                         continue
                     price_demand = float(pi_demand[0])
@@ -2211,45 +2214,44 @@ def prepare_options(demand_df: pd.DataFrame,
                     pi_comp = best_companion["price_info"]
                     
                     # Calculate blended price and stock_use based on tier
-                    # For paired allocations: each component delivers full effective requirement
-                    # Blended price = (price_demand + price_companion) / SRM
+                    # SRM is already baked into pricing, so we use weighted average
+                    # Adjacent: 3/4 main component + 1/4 companion
+                    # Far: 1/2 main component + 1/2 companion
                     if target_tier == "adjacent":
                         srm = 4/3
-                        blended_price = (price_demand + price_companion) / srm
-                        stock_use_demand = 1.0 / srm  # = 0.75
-                        stock_use_companion = 1.0 / srm  # = 0.75
+                        stock_use_demand = 3/4  # Main component contributes 3/4
+                        stock_use_companion = 1/4  # Companion contributes 1/4
+                        blended_price = stock_use_demand * price_demand + stock_use_companion * price_companion
                     else:  # far
                         srm = 2.0
-                        blended_price = (price_demand + price_companion) / srm
-                        stock_use_demand = 1.0 / srm  # = 0.5
-                        stock_use_companion = 1.0 / srm  # = 0.5
+                        stock_use_demand = 1/2  # Main component contributes 1/2
+                        stock_use_companion = 1/2  # Companion contributes 1/2
+                        blended_price = stock_use_demand * price_demand + stock_use_companion * price_companion
                     
                     # Apply percentage discount if active (to blended price)
                     if promoter_discount_type == "percentage" and promoter_discount_value:
                         blended_price = apply_percentage_discount(blended_price, promoter_discount_value)
                     
-                    # Only add paired option if it's cheaper than normal allocation
-                    # (to avoid creating unnecessary options)
-                    if blended_price < price_demand:
-                        options.append({
-                            "type": "paired",
-                            "demand_idx": di,
-                            "demand_habitat": dem_hab,  # Keep original demand habitat for matching
-                            "BANK_KEY": bk,
-                            "bank_name": sstr(d_stock.get("bank_name")),
-                            "bank_id": sstr(d_stock.get("bank_id")),
-                            "supply_habitat": f"{pi_demand[2]} + {pi_comp[2]}",  # Use pricing habitats
-                            "tier": target_tier,
-                            "proximity": target_tier,
-                            "unit_price": blended_price,
-                            "stock_use": {sstr(d_stock["stock_id"]): stock_use_demand, sstr(comp_row["stock_id"]): stock_use_companion},
-                            "price_source": "paired",
-                            "price_habitat": f"{pi_demand[2]} + {pi_comp[2]}",
-                            "paired_parts": [
-                                {"habitat": pi_demand[2], "unit_price": price_demand, "stock_use": stock_use_demand},
-                                {"habitat": pi_comp[2], "unit_price": price_companion, "stock_use": stock_use_companion},
-                            ],
-                        })
+                    # Always add paired option and let optimizer choose the best allocation
+                    options.append({
+                        "type": "paired",
+                        "demand_idx": di,
+                        "demand_habitat": dem_hab,  # Keep original demand habitat for matching
+                        "BANK_KEY": bk,
+                        "bank_name": sstr(d_stock.get("bank_name")),
+                        "bank_id": sstr(d_stock.get("bank_id")),
+                        "supply_habitat": f"{pi_demand[2]} + {pi_comp[2]}",  # Use pricing habitats
+                        "tier": target_tier,
+                        "proximity": target_tier,
+                        "unit_price": blended_price,
+                        "stock_use": {sstr(d_stock["stock_id"]): stock_use_demand, sstr(comp_row["stock_id"]): stock_use_companion},
+                        "price_source": "paired",
+                        "price_habitat": f"{pi_demand[2]} + {pi_comp[2]}",
+                        "paired_parts": [
+                            {"habitat": pi_demand[2], "unit_price": price_demand, "stock_use": stock_use_demand},
+                            {"habitat": pi_comp[2], "unit_price": price_companion, "stock_use": stock_use_companion},
+                        ],
+                    })
 
     return options, stock_caps, stock_bankkey
 
@@ -3179,17 +3181,17 @@ if run:
                 srm = MULT.get(tier, 1.0)
 
                 if len(parts) == 2:
-                    # For paired allocations, each component must independently satisfy
-                    # the full effective requirement. Do NOT split using stock_use.
-                    # units_total is the effective requirement; compute raw units per component.
-                    raw_units_per_component = units_total / srm
+                    # For paired allocations, split units according to stock_use ratios
+                    # units_total is the effective requirement
+                    # Each component contributes according to its stock_use ratio
                     
                     for idx, part in enumerate(parts):
                         rr = r.to_dict()
                         rr["supply_habitat"] = sstr(part.get("habitat") or (name_parts[idx] if idx < len(name_parts) else f"Part {idx+1}"))
                         
-                        # Each component gets the full raw requirement
-                        rr["units_supplied"] = raw_units_per_component
+                        # Use stock_use ratio to determine units for this component
+                        stock_use = float(part.get("stock_use", 0.5))  # Default to 50/50 if not specified
+                        rr["units_supplied"] = units_total * stock_use
                         rr["unit_price"] = float(part.get("unit_price", rr.get("unit_price", 0.0)))
                         rr["cost"] = rr["units_supplied"] * rr["unit_price"]
                         rows.append(rr)
