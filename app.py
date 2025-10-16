@@ -1867,13 +1867,18 @@ with st.container():
     
     st.markdown("---")
     st.markdown("**Option B: Enter postcode or address (standard method)**")
-    c1, c2, c3 = st.columns([1,1,1])
-    with c1:
-        postcode = st.text_input("Postcode (quicker)", key="postcode_input")
-    with c2:
-        address = st.text_input("Address (if no postcode)", key="address_input")
-    with c3:
-        run_locate = st.button("Locate", key="locate_btn")
+    
+    # Use form to prevent rerun on text input changes - only rerun when Locate is clicked
+    with st.form("locate_form", clear_on_submit=False):
+        c1, c2, c3 = st.columns([1,1,1])
+        with c1:
+            postcode = st.text_input("Postcode (quicker)", key="postcode_input")
+        with c2:
+            address = st.text_input("Address (if no postcode)", key="address_input")
+        with c3:
+            # Add spacing to align button with inputs
+            st.write("")  # Empty line for spacing
+            run_locate = st.form_submit_button("Locate", type="primary")
 
 def find_site(postcode: str, address: str):
     if sstr(postcode):
