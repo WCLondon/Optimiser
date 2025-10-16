@@ -816,6 +816,39 @@ if st.session_state.app_mode == "Quote Management":
         # Button to populate customers from existing submissions
         with st.expander("🔄 Import Customers from Existing Quotes", expanded=False):
             st.info("This will create customer records for all unique client names in existing quotes that don't already have a customer record.")
+            
+            # Show current status
+            try:
+                from sqlalchemy import text
+                engine = db._get_connection()
+                with engine.connect() as conn:
+                    # Count submissions without customer_id
+                    result = conn.execute(text("""
+                        SELECT COUNT(DISTINCT client_name) 
+                        FROM submissions 
+                        WHERE client_name IS NOT NULL 
+                          AND client_name != ''
+                          AND customer_id IS NULL
+                    """))
+                    unlinked_count = result.fetchone()[0]
+                    
+                    # Count total unique client names
+                    result = conn.execute(text("""
+                        SELECT COUNT(DISTINCT client_name) 
+                        FROM submissions 
+                        WHERE client_name IS NOT NULL 
+                          AND client_name != ''
+                    """))
+                    total_count = result.fetchone()[0]
+                    
+                    # Count existing customers
+                    result = conn.execute(text("SELECT COUNT(*) FROM customers"))
+                    customer_count = result.fetchone()[0]
+                    
+                    st.caption(f"📊 Status: {unlinked_count} unique client names without customer records | {customer_count} existing customers | {total_count} total unique client names in submissions")
+            except Exception as e:
+                st.caption(f"Could not load status: {e}")
+            
             if st.button("Import Customers from Submissions", key="import_customers_btn"):
                 try:
                     created_count = db.populate_customers_from_submissions()
@@ -824,6 +857,7 @@ if st.session_state.app_mode == "Quote Management":
                         st.rerun()
                     else:
                         st.info("ℹ️ No new customers to import. All existing client names already have customer records.")
+                        st.caption("💡 Tip: If you expect to see customers here, check that submissions have valid client_name values and that the customers table is accessible.")
                 except Exception as e:
                     st.error(f"Error importing customers: {e}")
                     import traceback

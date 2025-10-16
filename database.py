@@ -903,13 +903,12 @@ class SubmissionsDB:
         engine = self._get_connection()
         
         with engine.connect() as conn:
-            # Get distinct client names from submissions that don't have customer_id
+            # Get distinct client names from all submissions
             result = conn.execute(text("""
                 SELECT DISTINCT client_name 
                 FROM submissions 
                 WHERE client_name IS NOT NULL 
                   AND client_name != ''
-                  AND (customer_id IS NULL OR customer_id NOT IN (SELECT id FROM customers))
                 ORDER BY client_name
             """))
             
@@ -923,8 +922,24 @@ class SubmissionsDB:
                         SELECT id FROM customers WHERE client_name = :client_name LIMIT 1
                     """), {"client_name": client_name})
                     
-                    if check_result.fetchone():
-                        # Customer already exists, skip
+                    existing_customer = check_result.fetchone()
+                    
+                    if existing_customer:
+                        # Customer already exists, but update submissions that don't have customer_id set
+                        customer_id = existing_customer[0]
+                        trans = conn.begin()
+                        try:
+                            conn.execute(text("""
+                                UPDATE submissions 
+                                SET customer_id = :customer_id 
+                                WHERE client_name = :client_name AND customer_id IS NULL
+                            """), {
+                                "customer_id": customer_id,
+                                "client_name": client_name
+                            })
+                            trans.commit()
+                        except Exception:
+                            trans.rollback()
                         continue
                     
                     # Create customer record
