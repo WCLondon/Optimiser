@@ -261,6 +261,9 @@ class SubmissionsDB:
                 CREATE TABLE IF NOT EXISTS customers (
                     id SERIAL PRIMARY KEY,
                     client_name TEXT NOT NULL,
+                    title TEXT,
+                    first_name TEXT,
+                    last_name TEXT,
                     company_name TEXT,
                     contact_person TEXT,
                     address TEXT,
@@ -270,6 +273,31 @@ class SubmissionsDB:
                     updated_date TIMESTAMP NOT NULL DEFAULT NOW(),
                     CONSTRAINT customers_unique_email_mobile UNIQUE NULLS NOT DISTINCT (email, mobile_number)
                 )
+            """))
+            
+            # Add new columns to existing customers table if they don't exist
+            conn.execute(text("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name = 'customers' AND column_name = 'title'
+                    ) THEN
+                        ALTER TABLE customers ADD COLUMN title TEXT;
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name = 'customers' AND column_name = 'first_name'
+                    ) THEN
+                        ALTER TABLE customers ADD COLUMN first_name TEXT;
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name = 'customers' AND column_name = 'last_name'
+                    ) THEN
+                        ALTER TABLE customers ADD COLUMN last_name TEXT;
+                    END IF;
+                END $$;
             """))
             
             # Create indexes for customers
@@ -721,9 +749,11 @@ class SubmissionsDB:
         retry=retry_if_exception_type((Exception,)),
         reraise=True
     )
-    def add_customer(self, client_name: str, company_name: Optional[str] = None,
-                     contact_person: Optional[str] = None, address: Optional[str] = None,
-                     email: Optional[str] = None, mobile_number: Optional[str] = None) -> int:
+    def add_customer(self, client_name: str, title: Optional[str] = None,
+                     first_name: Optional[str] = None, last_name: Optional[str] = None,
+                     company_name: Optional[str] = None, contact_person: Optional[str] = None,
+                     address: Optional[str] = None, email: Optional[str] = None,
+                     mobile_number: Optional[str] = None) -> int:
         """Add a new customer or return existing customer with same email/mobile."""
         engine = self._get_connection()
         
@@ -747,13 +777,18 @@ class SubmissionsDB:
                 
                 # Insert new customer
                 result = conn.execute(text("""
-                    INSERT INTO customers (client_name, company_name, contact_person, address, 
+                    INSERT INTO customers (client_name, title, first_name, last_name, 
+                                          company_name, contact_person, address, 
                                           email, mobile_number, created_date, updated_date)
-                    VALUES (:client_name, :company_name, :contact_person, :address,
+                    VALUES (:client_name, :title, :first_name, :last_name,
+                           :company_name, :contact_person, :address,
                            :email, :mobile_number, :created_date, :updated_date)
                     RETURNING id
                 """), {
                     "client_name": client_name,
+                    "title": title,
+                    "first_name": first_name,
+                    "last_name": last_name,
                     "company_name": company_name,
                     "contact_person": contact_person,
                     "address": address,
@@ -804,9 +839,10 @@ class SubmissionsDB:
             return [dict(row._mapping) for row in rows]
     
     def update_customer(self, customer_id: int, client_name: Optional[str] = None,
-                       company_name: Optional[str] = None, contact_person: Optional[str] = None,
-                       address: Optional[str] = None, email: Optional[str] = None,
-                       mobile_number: Optional[str] = None):
+                       title: Optional[str] = None, first_name: Optional[str] = None,
+                       last_name: Optional[str] = None, company_name: Optional[str] = None,
+                       contact_person: Optional[str] = None, address: Optional[str] = None,
+                       email: Optional[str] = None, mobile_number: Optional[str] = None):
         """Update a customer."""
         engine = self._get_connection()
         
@@ -820,6 +856,15 @@ class SubmissionsDB:
                 if client_name is not None:
                     updates.append("client_name = :client_name")
                     params["client_name"] = client_name
+                if title is not None:
+                    updates.append("title = :title")
+                    params["title"] = title
+                if first_name is not None:
+                    updates.append("first_name = :first_name")
+                    params["first_name"] = first_name
+                if last_name is not None:
+                    updates.append("last_name = :last_name")
+                    params["last_name"] = last_name
                 if company_name is not None:
                     updates.append("company_name = :company_name")
                     params["company_name"] = company_name
@@ -847,6 +892,79 @@ class SubmissionsDB:
             except Exception as e:
                 trans.rollback()
                 raise
+    
+    def populate_customers_from_submissions(self) -> int:
+        """
+        Populate customers table from existing submissions.
+        Creates a customer record for each unique client_name in submissions
+        that doesn't already have a customer record.
+        Returns the number of customers created.
+        """
+        engine = self._get_connection()
+        
+        with engine.connect() as conn:
+            # Get distinct client names from submissions that don't have customer_id
+            result = conn.execute(text("""
+                SELECT DISTINCT client_name 
+                FROM submissions 
+                WHERE client_name IS NOT NULL 
+                  AND client_name != ''
+                  AND (customer_id IS NULL OR customer_id NOT IN (SELECT id FROM customers))
+                ORDER BY client_name
+            """))
+            
+            client_names = [row[0] for row in result.fetchall()]
+            
+            created_count = 0
+            for client_name in client_names:
+                try:
+                    # Check if customer already exists with this name
+                    check_result = conn.execute(text("""
+                        SELECT id FROM customers WHERE client_name = :client_name LIMIT 1
+                    """), {"client_name": client_name})
+                    
+                    if check_result.fetchone():
+                        # Customer already exists, skip
+                        continue
+                    
+                    # Create customer record
+                    trans = conn.begin()
+                    try:
+                        now = datetime.now()
+                        insert_result = conn.execute(text("""
+                            INSERT INTO customers (client_name, created_date, updated_date)
+                            VALUES (:client_name, :created_date, :updated_date)
+                            RETURNING id
+                        """), {
+                            "client_name": client_name,
+                            "created_date": now,
+                            "updated_date": now
+                        })
+                        
+                        customer_id = insert_result.fetchone()[0]
+                        
+                        # Update submissions with this client_name to link to the new customer
+                        conn.execute(text("""
+                            UPDATE submissions 
+                            SET customer_id = :customer_id 
+                            WHERE client_name = :client_name AND customer_id IS NULL
+                        """), {
+                            "customer_id": customer_id,
+                            "client_name": client_name
+                        })
+                        
+                        trans.commit()
+                        created_count += 1
+                    except Exception:
+                        trans.rollback()
+                        # Continue with next customer
+                        pass
+                        
+                except Exception:
+                    # Continue with next customer
+                    pass
+            
+            return created_count
     
     # ================= Quote/Requote Methods =================
     

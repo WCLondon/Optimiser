@@ -813,14 +813,44 @@ if st.session_state.app_mode == "Quote Management":
     with tab2:
         st.markdown("#### 👥 Customer Management")
         
+        # Button to populate customers from existing submissions
+        with st.expander("🔄 Import Customers from Existing Quotes", expanded=False):
+            st.info("This will create customer records for all unique client names in existing quotes that don't already have a customer record.")
+            if st.button("Import Customers from Submissions", key="import_customers_btn"):
+                try:
+                    created_count = db.populate_customers_from_submissions()
+                    if created_count > 0:
+                        st.success(f"✅ Successfully created {created_count} customer record(s) from existing submissions!")
+                        st.rerun()
+                    else:
+                        st.info("ℹ️ No new customers to import. All existing client names already have customer records.")
+                except Exception as e:
+                    st.error(f"Error importing customers: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
+        
         # Add new customer
         with st.expander("➕ Add New Customer", expanded=False):
             with st.form("add_customer_form"):
-                cust_client_name = st.text_input("Client Name*", key="cust_client_name")
+                st.markdown("**Basic Information:**")
+                col1, col2 = st.columns([1, 3])
+                with col1:
+                    cust_title = st.selectbox("Title", ["", "Mr", "Mrs", "Miss", "Ms", "Dr", "Prof"], key="cust_title")
+                with col2:
+                    cust_client_name = st.text_input("Client Name*", key="cust_client_name")
+                
+                col3, col4 = st.columns(2)
+                with col3:
+                    cust_first_name = st.text_input("First Name", key="cust_first_name")
+                with col4:
+                    cust_last_name = st.text_input("Last Name", key="cust_last_name")
+                
+                st.markdown("**Company/Organization:**")
                 cust_company_name = st.text_input("Company Name", key="cust_company_name")
                 cust_contact_person = st.text_input("Contact Person", key="cust_contact_person")
                 cust_address = st.text_area("Address", key="cust_address")
                 
+                st.markdown("**Contact Details:**")
                 col1, col2 = st.columns(2)
                 with col1:
                     cust_email = st.text_input("Email Address", key="cust_email")
@@ -838,6 +868,9 @@ if st.session_state.app_mode == "Quote Management":
                         try:
                             customer_id = db.add_customer(
                                 client_name=cust_client_name.strip(),
+                                title=cust_title if cust_title else None,
+                                first_name=cust_first_name.strip() if cust_first_name else None,
+                                last_name=cust_last_name.strip() if cust_last_name else None,
                                 company_name=cust_company_name.strip() if cust_company_name else None,
                                 contact_person=cust_contact_person.strip() if cust_contact_person else None,
                                 address=cust_address.strip() if cust_address else None,
@@ -858,8 +891,8 @@ if st.session_state.app_mode == "Quote Management":
                 
                 # Create DataFrame for display
                 customers_df = pd.DataFrame(customers)
-                display_customer_cols = ["id", "client_name", "company_name", "contact_person", 
-                                         "email", "mobile_number", "created_date"]
+                display_customer_cols = ["id", "title", "first_name", "last_name", "client_name", 
+                                         "company_name", "email", "mobile_number", "created_date"]
                 display_customer_cols = [c for c in display_customer_cols if c in customers_df.columns]
                 
                 df_cust_display = customers_df[display_customer_cols].copy()
@@ -4399,7 +4432,7 @@ if (st.session_state.get("optimization_complete", False) and
             
             # Customer info section
             st.markdown("**👤 Customer Information (Optional):**")
-            st.caption("Link this quote to a customer record for tracking. Either Email or Mobile is recommended.")
+            st.caption("Link this quote to a customer record for tracking. Email or Mobile helps avoid duplicates.")
             
             col_cust1, col_cust2 = st.columns(2)
             with col_cust1:
@@ -4407,13 +4440,22 @@ if (st.session_state.get("optimization_complete", False) and
             with col_cust2:
                 form_customer_mobile = st.text_input("Customer Mobile", key="form_customer_mobile")
             
-            col_cust3, col_cust4 = st.columns(2)
-            with col_cust3:
-                form_customer_company = st.text_input("Company Name", key="form_customer_company")
-            with col_cust4:
-                form_customer_contact = st.text_input("Contact Person", key="form_customer_contact")
-            
-            form_customer_address = st.text_area("Customer Address", key="form_customer_address", height=80)
+            with st.expander("Additional Customer Details (Optional)", expanded=False):
+                col_title, col_fname, col_lname = st.columns([1, 2, 2])
+                with col_title:
+                    form_customer_title = st.selectbox("Title", ["", "Mr", "Mrs", "Miss", "Ms", "Dr", "Prof"], key="form_customer_title")
+                with col_fname:
+                    form_customer_first_name = st.text_input("First Name", key="form_customer_first_name")
+                with col_lname:
+                    form_customer_last_name = st.text_input("Last Name", key="form_customer_last_name")
+                
+                col_cust3, col_cust4 = st.columns(2)
+                with col_cust3:
+                    form_customer_company = st.text_input("Company Name", key="form_customer_company")
+                with col_cust4:
+                    form_customer_contact = st.text_input("Contact Person", key="form_customer_contact")
+                
+                form_customer_address = st.text_area("Customer Address", key="form_customer_address", height=80)
             
             # Form submit button
             form_submitted = st.form_submit_button("Update Email Details")
@@ -4454,6 +4496,9 @@ if (st.session_state.get("optimization_complete", False) and
                             # Create new customer
                             customer_id = db.add_customer(
                                 client_name=form_client_name,
+                                title=form_customer_title if form_customer_title else None,
+                                first_name=form_customer_first_name if form_customer_first_name else None,
+                                last_name=form_customer_last_name if form_customer_last_name else None,
                                 company_name=form_customer_company if form_customer_company else None,
                                 contact_person=form_customer_contact if form_customer_contact else None,
                                 address=form_customer_address if form_customer_address else None,
