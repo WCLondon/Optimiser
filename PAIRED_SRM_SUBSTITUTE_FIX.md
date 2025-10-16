@@ -1,7 +1,10 @@
-# Paired SRM Offset Fix - Bug Resolution
+# Paired SRM Offset Fix - Bug Resolution (CORRECTED)
 
 ## Issue Summary
 When allocating demand for 'Individual trees - Urban Tree' to an adjacent bank, the optimiser correctly identified a cheaper substitute trade for 'Traditional orchard' in the adjacent bank. However, although a legal pairing with 'Mixed Scrub' (also in stock and cheaper) was possible, this pairing was not selected. The pairing would have reduced the overall SRM-adjusted price for that line item.
+
+## Important Note
+This document was updated to correct a fundamental misunderstanding about how paired allocations should work. The original PAIRED_ALLOCATION_FIX.md had the wrong formula. The correct logic uses weighted averages, not equal contributions from both components.
 
 ## Root Cause
 The bug had three components:
@@ -74,6 +77,47 @@ options.append({
 
 This change ensures paired options are always created when a valid companion exists, allowing the optimizer's linear programming solver to evaluate all options and select the truly cheapest allocation.
 
+### Change 4: Fix blended price calculation (CRITICAL CORRECTION)
+**Incorrect formula** (from PAIRED_ALLOCATION_FIX.md):
+```python
+# Adjacent
+blended_price = (price_demand + price_companion) / srm  # WRONG!
+stock_use_demand = 1.0 / srm  # = 0.75
+stock_use_companion = 1.0 / srm  # = 0.75
+```
+
+**Correct formula** (weighted average as originally intended):
+```python
+# Adjacent: 3/4 main + 1/4 companion
+stock_use_demand = 3/4
+stock_use_companion = 1/4
+blended_price = 0.75 * price_demand + 0.25 * price_companion
+
+# Far: 1/2 main + 1/2 companion
+stock_use_demand = 1/2
+stock_use_companion = 1/2
+blended_price = 0.5 * price_demand + 0.5 * price_companion
+```
+
+**Explanation**: SRM is already baked into the pricing matrix. For adjacent tier (SRM 4/3), we use 3/4 of the main component and 1/4 of the cheapest companion to create a weighted average price. This is NOT equal contributions from both components.
+
+### Change 5: Fix split_paired_rows to use stock_use ratios
+**Incorrect logic** (from PAIRED_ALLOCATION_FIX.md):
+```python
+# Each component gets the full raw requirement
+raw_units_per_component = units_total / srm
+rr["units_supplied"] = raw_units_per_component
+```
+
+**Correct logic**:
+```python
+# Use stock_use ratio to determine units for this component
+stock_use = float(part.get("stock_use", 0.5))
+rr["units_supplied"] = units_total * stock_use
+```
+
+This ensures the split reflects the weighted contribution of each component (3/4 and 1/4 for adjacent, 1/2 and 1/2 for far).
+
 ## Impact
 
 ### What's Fixed
@@ -81,23 +125,26 @@ This change ensures paired options are always created when a valid companion exi
 ✅ Companion habitats are properly excluded from being paired with themselves
 ✅ Price lookups use the actual supply habitat, ensuring valid prices are found
 ✅ The optimiser can now select cheaper paired allocations that were previously missed
+✅ **CRITICAL**: Blended price now uses correct weighted average formula
+✅ **CRITICAL**: Units are split according to actual contribution ratios (3/4 and 1/4, not equal)
 
 ### Example Scenario
-- **Demand**: 'Individual trees - Urban Tree' (0.14 units)
+- **Demand**: 'Individual trees - Urban Tree' (0.07 units at adjacent tier)
 - **Bank A** has:
-  - 'Traditional orchard' (substitute, £40.80/unit at adjacent tier)
-  - 'Mixed Scrub' (companion, £28.80/unit at adjacent tier)
+  - 'Traditional orchard' (substitute, £32,800/unit)
+  - 'Mixed Scrub' (companion, £20,000/unit estimated)
   
 **Before fix**:
 - Only 'Traditional orchard' option created (no paired option)
-- Cost: £40.80 × 0.14 = £5.71
+- Cost: £32,800 × 0.07 = £2,296
 
-**After fix**:
+**After fix (CORRECTED)**:
 - Both single and paired options created:
-  1. Single: 'Traditional orchard' at £40.80/unit
-  2. Paired: 'Traditional orchard' + 'Mixed Scrub' at blended price
-- Blended price = (£40.80 + £28.80) / (4/3) = £52.20 per effective unit
-- Optimizer can choose the cheaper option
+  1. Single: 'Traditional orchard' at £32,800/unit → £2,296
+  2. Paired: 'Traditional orchard' (0.0525 units) + 'Mixed Scrub' (0.0175 units)
+- Blended price = 0.75 × £32,800 + 0.25 × £20,000 = £29,600 per effective unit
+- Total paired cost: 0.0525 × £32,800 + 0.0175 × £20,000 = £2,072
+- Optimizer selects the cheaper paired option, saving £224
 
 ### What's Unchanged
 ✅ Non-substitute trades continue to work as before
