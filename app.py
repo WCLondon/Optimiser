@@ -943,6 +943,95 @@ if st.session_state.app_mode == "Quote Management":
                 
                 st.dataframe(df_cust_display, use_container_width=True, hide_index=True)
                 
+                # Edit customer section
+                st.markdown("##### ✏️ Edit Customer Details")
+                customer_id_to_edit = st.selectbox(
+                    "Select Customer to Edit", 
+                    options=[c['id'] for c in customers],
+                    format_func=lambda x: f"ID {x}: {next((c['client_name'] for c in customers if c['id'] == x), 'Unknown')}",
+                    key="customer_id_to_edit"
+                )
+                
+                if st.button("Load Customer for Editing", key="load_edit_customer_btn"):
+                    st.session_state.edit_customer_id = customer_id_to_edit
+                    selected_customer = next((c for c in customers if c['id'] == customer_id_to_edit), None)
+                    if selected_customer:
+                        st.session_state.edit_customer_data = selected_customer
+                        st.rerun()
+                
+                # Show edit form if customer is loaded
+                if hasattr(st.session_state, 'edit_customer_id') and hasattr(st.session_state, 'edit_customer_data'):
+                    customer_data = st.session_state.edit_customer_data
+                    
+                    with st.form("edit_customer_form"):
+                        st.markdown(f"**Editing Customer ID: {st.session_state.edit_customer_id}**")
+                        
+                        st.markdown("**Basic Information:**")
+                        col1, col2 = st.columns([1, 3])
+                        with col1:
+                            edit_title = st.selectbox("Title", ["", "Mr", "Mrs", "Miss", "Ms", "Dr", "Prof"], 
+                                                     index=["", "Mr", "Mrs", "Miss", "Ms", "Dr", "Prof"].index(customer_data.get('title', '') or ''),
+                                                     key="edit_title")
+                        with col2:
+                            edit_client_name = st.text_input("Client Name*", value=customer_data.get('client_name', ''), key="edit_client_name")
+                        
+                        col3, col4 = st.columns(2)
+                        with col3:
+                            edit_first_name = st.text_input("First Name", value=customer_data.get('first_name', '') or '', key="edit_first_name")
+                        with col4:
+                            edit_last_name = st.text_input("Last Name", value=customer_data.get('last_name', '') or '', key="edit_last_name")
+                        
+                        st.markdown("**Company/Organization:**")
+                        edit_company_name = st.text_input("Company Name", value=customer_data.get('company_name', '') or '', key="edit_company_name")
+                        edit_contact_person = st.text_input("Contact Person", value=customer_data.get('contact_person', '') or '', key="edit_contact_person")
+                        edit_address = st.text_area("Address", value=customer_data.get('address', '') or '', key="edit_address")
+                        
+                        st.markdown("**Contact Details:**")
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            edit_email = st.text_input("Email Address", value=customer_data.get('email', '') or '', key="edit_email")
+                        with col2:
+                            edit_mobile = st.text_input("Mobile Number", value=customer_data.get('mobile_number', '') or '', key="edit_mobile")
+                        
+                        col_submit, col_cancel = st.columns(2)
+                        with col_submit:
+                            update_cust_btn = st.form_submit_button("💾 Update Customer", type="primary")
+                        with col_cancel:
+                            cancel_edit_btn = st.form_submit_button("❌ Cancel")
+                        
+                        if update_cust_btn:
+                            if not edit_client_name or not edit_client_name.strip():
+                                st.error("Client name is required.")
+                            else:
+                                try:
+                                    db.update_customer(
+                                        customer_id=st.session_state.edit_customer_id,
+                                        client_name=edit_client_name.strip(),
+                                        title=edit_title if edit_title else None,
+                                        first_name=edit_first_name.strip() if edit_first_name else None,
+                                        last_name=edit_last_name.strip() if edit_last_name else None,
+                                        company_name=edit_company_name.strip() if edit_company_name else None,
+                                        contact_person=edit_contact_person.strip() if edit_contact_person else None,
+                                        address=edit_address.strip() if edit_address else None,
+                                        email=edit_email.strip() if edit_email else None,
+                                        mobile_number=edit_mobile.strip() if edit_mobile else None
+                                    )
+                                    st.success(f"✅ Customer {st.session_state.edit_customer_id} updated successfully!")
+                                    # Clear edit state
+                                    del st.session_state.edit_customer_id
+                                    del st.session_state.edit_customer_data
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error updating customer: {e}")
+                        
+                        if cancel_edit_btn:
+                            # Clear edit state
+                            if hasattr(st.session_state, 'edit_customer_id'):
+                                del st.session_state.edit_customer_id
+                            if hasattr(st.session_state, 'edit_customer_data'):
+                                del st.session_state.edit_customer_data
+                            st.rerun()
+                
                 # View customer quotes
                 st.markdown("##### 🔍 View Customer Quotes")
                 customer_id_select = st.selectbox("Select Customer ID", [c['id'] for c in customers], key="customer_id_select")
