@@ -903,8 +903,8 @@ class SubmissionsDB:
         engine = self._get_connection()
         errors = []
         
+        # Get distinct client names from all submissions
         with engine.connect() as conn:
-            # Get distinct client names from all submissions
             result = conn.execute(text("""
                 SELECT DISTINCT client_name 
                 FROM submissions 
@@ -912,24 +912,24 @@ class SubmissionsDB:
                   AND client_name != ''
                 ORDER BY client_name
             """))
-            
             client_names = [row[0] for row in result.fetchall()]
-            
-            created_count = 0
-            for client_name in client_names:
-                try:
-                    # Check if customer already exists with this name
-                    check_result = conn.execute(text("""
-                        SELECT id FROM customers WHERE client_name = :client_name LIMIT 1
-                    """), {"client_name": client_name})
-                    
-                    existing_customer = check_result.fetchone()
-                    
-                    if existing_customer:
-                        # Customer already exists, but update submissions that don't have customer_id set
-                        customer_id = existing_customer[0]
-                        trans = conn.begin()
-                        try:
+        
+        created_count = 0
+        for client_name in client_names:
+            try:
+                # Use a fresh connection with transaction for each customer
+                with engine.connect() as conn:
+                    with conn.begin():
+                        # Check if customer already exists with this name
+                        check_result = conn.execute(text("""
+                            SELECT id FROM customers WHERE client_name = :client_name LIMIT 1
+                        """), {"client_name": client_name})
+                        
+                        existing_customer = check_result.fetchone()
+                        
+                        if existing_customer:
+                            # Customer already exists, but update submissions that don't have customer_id set
+                            customer_id = existing_customer[0]
                             conn.execute(text("""
                                 UPDATE submissions 
                                 SET customer_id = :customer_id 
@@ -938,48 +938,38 @@ class SubmissionsDB:
                                 "customer_id": customer_id,
                                 "client_name": client_name
                             })
-                            trans.commit()
-                        except Exception as e:
-                            trans.rollback()
-                            errors.append(f"Failed to link existing customer '{client_name}': {str(e)}")
-                        continue
+                        else:
+                            # Create customer record
+                            now = datetime.now()
+                            insert_result = conn.execute(text("""
+                                INSERT INTO customers (client_name, created_date, updated_date)
+                                VALUES (:client_name, :created_date, :updated_date)
+                                RETURNING id
+                            """), {
+                                "client_name": client_name,
+                                "created_date": now,
+                                "updated_date": now
+                            })
+                            
+                            customer_id = insert_result.fetchone()[0]
+                            
+                            # Update submissions with this client_name to link to the new customer
+                            conn.execute(text("""
+                                UPDATE submissions 
+                                SET customer_id = :customer_id 
+                                WHERE client_name = :client_name AND customer_id IS NULL
+                            """), {
+                                "customer_id": customer_id,
+                                "client_name": client_name
+                            })
+                            
+                            created_count += 1
+                    # Transaction auto-commits on successful exit from 'with conn.begin()'
                     
-                    # Create customer record
-                    trans = conn.begin()
-                    try:
-                        now = datetime.now()
-                        insert_result = conn.execute(text("""
-                            INSERT INTO customers (client_name, created_date, updated_date)
-                            VALUES (:client_name, :created_date, :updated_date)
-                            RETURNING id
-                        """), {
-                            "client_name": client_name,
-                            "created_date": now,
-                            "updated_date": now
-                        })
-                        
-                        customer_id = insert_result.fetchone()[0]
-                        
-                        # Update submissions with this client_name to link to the new customer
-                        conn.execute(text("""
-                            UPDATE submissions 
-                            SET customer_id = :customer_id 
-                            WHERE client_name = :client_name AND customer_id IS NULL
-                        """), {
-                            "customer_id": customer_id,
-                            "client_name": client_name
-                        })
-                        
-                        trans.commit()
-                        created_count += 1
-                    except Exception as e:
-                        trans.rollback()
-                        errors.append(f"Failed to create customer '{client_name}': {str(e)}")
-                        
-                except Exception as e:
-                    errors.append(f"Error processing '{client_name}': {str(e)}")
-            
-            return created_count, errors
+            except Exception as e:
+                errors.append(f"Error processing '{client_name}': {str(e)}")
+        
+        return created_count, errors
     
     # ================= Quote/Requote Methods =================
     
