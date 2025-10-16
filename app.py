@@ -714,10 +714,10 @@ if st.session_state.app_mode == "Quote Management":
                     
                     query += " ORDER BY submission_date DESC LIMIT 100"
                     
-                    from sqlalchemy import text
+                    # Use pd.read_sql_query without text() wrapper - it handles parameters correctly
                     engine = db._get_connection()
                     with engine.connect() as conn:
-                        results_df = pd.read_sql_query(text(query), conn, params=params)
+                        results_df = pd.read_sql_query(query, conn, params=params)
                 else:
                     # Use standard filter
                     results_df = db.filter_submissions(
@@ -874,11 +874,10 @@ if st.session_state.app_mode == "Quote Management":
                 
                 if st.button("View Customer Quotes", key="view_customer_quotes_btn"):
                     # Get all submissions for this customer
-                    from sqlalchemy import text
                     engine = db._get_connection()
                     with engine.connect() as conn:
                         customer_quotes_df = pd.read_sql_query(
-                            text("SELECT * FROM submissions WHERE customer_id = :customer_id ORDER BY submission_date DESC"),
+                            "SELECT * FROM submissions WHERE customer_id = :customer_id ORDER BY submission_date DESC",
                             conn,
                             params={"customer_id": customer_id_select}
                         )
