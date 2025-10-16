@@ -113,7 +113,9 @@ def init_session_state():
         "selected_lpa_dropdown": None,
         "selected_nca_dropdown": None,
         "all_lpas_list": None,  # Cache for complete LPA list from ArcGIS
-        "all_ncas_list": None   # Cache for complete NCA list from ArcGIS
+        "all_ncas_list": None,   # Cache for complete NCA list from ArcGIS
+        "enriched_banks_cache": None,  # Cache for enriched banks data with LPA/NCA
+        "enriched_banks_timestamp": None  # Timestamp when banks were last enriched
     }
     
     for key, value in defaults.items():
@@ -1561,7 +1563,32 @@ def bank_row_to_latlon(row: pd.Series) -> Optional[Tuple[float,float,str]]:
             pass
     return None
 
-def enrich_banks_geography(banks_df: pd.DataFrame) -> pd.DataFrame:
+def enrich_banks_geography(banks_df: pd.DataFrame, force_refresh: bool = False) -> pd.DataFrame:
+    """
+    Enrich banks DataFrame with LPA/NCA data.
+    Uses session state cache to avoid repeated API calls on every rerun.
+    
+    Args:
+        banks_df: DataFrame with banks data
+        force_refresh: If True, forces re-resolution of all banks' LPA/NCA even if cached
+        
+    Returns:
+        DataFrame with enriched banks data including lpa_name and nca_name
+    """
+    # Check if we have a cached version and it matches the current banks data
+    if not force_refresh and st.session_state.get("enriched_banks_cache") is not None:
+        try:
+            cached_df = st.session_state["enriched_banks_cache"]
+            # Verify the cache is still valid by checking if bank_ids match
+            if "bank_id" in banks_df.columns and "bank_id" in cached_df.columns:
+                if set(banks_df["bank_id"]) == set(cached_df["bank_id"]):
+                    # Cache is valid, return it
+                    return cached_df.copy()
+        except Exception as e:
+            # If cache validation fails, proceed with fresh resolution
+            st.sidebar.warning(f"Cache validation failed, refreshing banks: {e}")
+    
+    # Cache is invalid or force refresh requested, perform enrichment
     df = banks_df.copy()
     if "lpa_name" not in df.columns: df["lpa_name"] = ""
     if "nca_name" not in df.columns: df["nca_name"] = ""
@@ -1574,7 +1601,7 @@ def enrich_banks_geography(banks_df: pd.DataFrame) -> pd.DataFrame:
     for _, row in df.iterrows():
         lpa_now = sstr(row.get("lpa_name"))
         nca_now = sstr(row.get("nca_name"))
-        if lpa_now and nca_now:
+        if lpa_now and nca_now and not force_refresh:
             rows.append(row)
         else:
             loc = bank_row_to_latlon(row)
@@ -1582,7 +1609,7 @@ def enrich_banks_geography(banks_df: pd.DataFrame) -> pd.DataFrame:
                 rows.append(row)
             else:
                 lat, lon, key = loc
-                if key in cache:
+                if key in cache and not force_refresh:
                     lpa, nca = cache[key]
                 else:
                     lpa, nca = get_lpa_nca_for_point(lat, lon)
@@ -1599,9 +1626,20 @@ def enrich_banks_geography(banks_df: pd.DataFrame) -> pd.DataFrame:
         prog.empty()
         if updated:
             st.sidebar.success(f"Updated {updated} bank(s) with LPA/NCA")
-    return pd.DataFrame(rows)
+    
+    enriched_df = pd.DataFrame(rows)
+    
+    # Store in cache with timestamp
+    try:
+        st.session_state["enriched_banks_cache"] = enriched_df.copy()
+        st.session_state["enriched_banks_timestamp"] = pd.Timestamp.now()
+    except Exception as e:
+        # If caching fails, log but don't break the app
+        st.sidebar.warning(f"Failed to cache banks: {e}")
+    
+    return enriched_df
 
-backend["Banks"] = enrich_banks_geography(backend["Banks"])
+backend["Banks"] = enrich_banks_geography(backend["Banks"], force_refresh=False)
 backend["Banks"] = make_bank_key_col(backend["Banks"], backend["Banks"])
 
 # Validate minimal columns
@@ -1642,6 +1680,38 @@ dist_levels_map = {
     for _, r in backend["DistinctivenessLevels"].iterrows()
 }
 dist_levels_map.update({k.lower(): v for k, v in list(dist_levels_map.items())})
+
+# ================= Bank Refresh UI in Sidebar =================
+with st.sidebar:
+    st.markdown("---")
+    st.subheader("Bank Data")
+    
+    # Display cache status
+    if st.session_state.get("enriched_banks_timestamp"):
+        timestamp = st.session_state["enriched_banks_timestamp"]
+        cache_age = pd.Timestamp.now() - timestamp
+        cache_age_minutes = int(cache_age.total_seconds() / 60)
+        st.caption(f"✅ Banks cached ({cache_age_minutes}m ago)")
+    else:
+        st.caption("⚠️ Banks not yet cached")
+    
+    # Refresh button
+    if st.button("🔄 Refresh Banks LPA/NCA", 
+                 help="Manually refresh all banks' LPA/NCA data from ArcGIS APIs",
+                 key="refresh_banks_btn"):
+        try:
+            # Force refresh the banks enrichment
+            with st.spinner("Refreshing bank LPA/NCA data..."):
+                backend["Banks"] = enrich_banks_geography(backend["Banks"], force_refresh=True)
+                backend["Banks"] = make_bank_key_col(backend["Banks"], backend["Banks"])
+                # Re-normalize pricing with updated banks
+                backend["Pricing"] = normalise_pricing(backend["Pricing"])
+            st.success("✅ Banks refreshed!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Error refreshing banks: {e}")
+            import traceback
+            st.code(traceback.format_exc())
 
 # Check if we need to refresh the map after optimization (after backend is loaded)
 if st.session_state.get("needs_map_refresh", False):
@@ -1797,13 +1867,18 @@ with st.container():
     
     st.markdown("---")
     st.markdown("**Option B: Enter postcode or address (standard method)**")
-    c1, c2, c3 = st.columns([1,1,1])
-    with c1:
-        postcode = st.text_input("Postcode (quicker)", key="postcode_input")
-    with c2:
-        address = st.text_input("Address (if no postcode)", key="address_input")
-    with c3:
-        run_locate = st.button("Locate", key="locate_btn")
+    
+    # Use form to prevent rerun on text input changes - only rerun when Locate is clicked
+    with st.form("locate_form", clear_on_submit=False):
+        c1, c2, c3 = st.columns([1,1,1])
+        with c1:
+            postcode = st.text_input("Postcode (quicker)", key="postcode_input")
+        with c2:
+            address = st.text_input("Address (if no postcode)", key="address_input")
+        with c3:
+            # Add spacing to align button with inputs
+            st.write("")  # Empty line for spacing
+            run_locate = st.form_submit_button("Locate", type="primary")
 
 def find_site(postcode: str, address: str):
     if sstr(postcode):
