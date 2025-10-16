@@ -256,6 +256,52 @@ class SubmissionsDB:
                 ON introducers(name)
             """))
             
+            # Customers table
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS customers (
+                    id SERIAL PRIMARY KEY,
+                    client_name TEXT NOT NULL,
+                    company_name TEXT,
+                    contact_person TEXT,
+                    address TEXT,
+                    email TEXT,
+                    mobile_number TEXT,
+                    created_date TIMESTAMP NOT NULL DEFAULT NOW(),
+                    updated_date TIMESTAMP NOT NULL DEFAULT NOW(),
+                    CONSTRAINT customers_unique_email_mobile UNIQUE NULLS NOT DISTINCT (email, mobile_number)
+                )
+            """))
+            
+            # Create indexes for customers
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_customers_email 
+                ON customers(email)
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_customers_mobile 
+                ON customers(mobile_number)
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_customers_client_name 
+                ON customers(client_name)
+            """))
+            
+            # Add customer_id to submissions table if not exists
+            conn.execute(text("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name = 'submissions' AND column_name = 'customer_id'
+                    ) THEN
+                        ALTER TABLE submissions ADD COLUMN customer_id INTEGER;
+                        ALTER TABLE submissions ADD CONSTRAINT fk_submissions_customer 
+                        FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL;
+                        CREATE INDEX idx_submissions_customer ON submissions(customer_id);
+                    END IF;
+                END $$;
+            """))
+            
             conn.commit()
     
     def close(self):
@@ -290,7 +336,8 @@ class SubmissionsDB:
                         username: str = "",
                         promoter_name: Optional[str] = None,
                         promoter_discount_type: Optional[str] = None,
-                        promoter_discount_value: Optional[float] = None) -> int:
+                        promoter_discount_value: Optional[float] = None,
+                        customer_id: Optional[int] = None) -> int:
         """
         Store a complete submission to the database.
         Returns the submission_id for reference.
@@ -346,7 +393,8 @@ class SubmissionsDB:
                         num_banks_selected, banks_used,
                         manual_hedgerow_entries, manual_watercourse_entries,
                         allocation_results, username,
-                        promoter_name, promoter_discount_type, promoter_discount_value
+                        promoter_name, promoter_discount_type, promoter_discount_value,
+                        customer_id
                     ) VALUES (
                         :submission_date, :client_name, :reference_number, :site_location,
                         :target_lpa, :target_nca, :target_lat, :target_lon,
@@ -355,7 +403,8 @@ class SubmissionsDB:
                         :num_banks_selected, :banks_used,
                         :manual_hedgerow_entries, :manual_watercourse_entries,
                         :allocation_results, :username,
-                        :promoter_name, :promoter_discount_type, :promoter_discount_value
+                        :promoter_name, :promoter_discount_type, :promoter_discount_value,
+                        :customer_id
                     ) RETURNING id
                 """), {
                     "submission_date": submission_date,
@@ -381,7 +430,8 @@ class SubmissionsDB:
                     "username": username,
                     "promoter_name": promoter_name,
                     "promoter_discount_type": promoter_discount_type,
-                    "promoter_discount_value": promoter_discount_value_clean
+                    "promoter_discount_value": promoter_discount_value_clean,
+                    "customer_id": customer_id
                 })
                 
                 submission_id = result.fetchone()[0]
@@ -659,6 +709,307 @@ class SubmissionsDB:
                 )
                 
                 trans.commit()
+            except Exception as e:
+                trans.rollback()
+                raise
+    
+    # ================= Customers CRUD =================
+    
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((Exception,)),
+        reraise=True
+    )
+    def add_customer(self, client_name: str, company_name: Optional[str] = None,
+                     contact_person: Optional[str] = None, address: Optional[str] = None,
+                     email: Optional[str] = None, mobile_number: Optional[str] = None) -> int:
+        """Add a new customer or return existing customer with same email/mobile."""
+        engine = self._get_connection()
+        
+        now = datetime.now()
+        
+        with engine.connect() as conn:
+            trans = conn.begin()
+            try:
+                # Check if customer exists with same email or mobile
+                if email or mobile_number:
+                    result = conn.execute(text("""
+                        SELECT id FROM customers 
+                        WHERE (email = :email AND email IS NOT NULL) 
+                           OR (mobile_number = :mobile AND mobile_number IS NOT NULL)
+                        LIMIT 1
+                    """), {"email": email, "mobile": mobile_number})
+                    existing = result.fetchone()
+                    if existing:
+                        trans.rollback()
+                        return existing[0]
+                
+                # Insert new customer
+                result = conn.execute(text("""
+                    INSERT INTO customers (client_name, company_name, contact_person, address, 
+                                          email, mobile_number, created_date, updated_date)
+                    VALUES (:client_name, :company_name, :contact_person, :address,
+                           :email, :mobile_number, :created_date, :updated_date)
+                    RETURNING id
+                """), {
+                    "client_name": client_name,
+                    "company_name": company_name,
+                    "contact_person": contact_person,
+                    "address": address,
+                    "email": email,
+                    "mobile_number": mobile_number,
+                    "created_date": now,
+                    "updated_date": now
+                })
+                
+                customer_id = result.fetchone()[0]
+                trans.commit()
+                return customer_id
+            except Exception as e:
+                trans.rollback()
+                raise
+    
+    def get_customer_by_id(self, customer_id: int) -> Optional[Dict[str, Any]]:
+        """Get a customer by ID."""
+        engine = self._get_connection()
+        with engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT * FROM customers WHERE id = :id"),
+                {"id": customer_id}
+            )
+            row = result.fetchone()
+            return dict(row._mapping) if row else None
+    
+    def get_customer_by_contact(self, email: Optional[str] = None, 
+                                mobile_number: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a customer by email or mobile number."""
+        engine = self._get_connection()
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT * FROM customers 
+                WHERE (email = :email AND email IS NOT NULL) 
+                   OR (mobile_number = :mobile AND mobile_number IS NOT NULL)
+                LIMIT 1
+            """), {"email": email, "mobile": mobile_number})
+            row = result.fetchone()
+            return dict(row._mapping) if row else None
+    
+    def get_all_customers(self) -> List[Dict[str, Any]]:
+        """Get all customers."""
+        engine = self._get_connection()
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT * FROM customers ORDER BY created_date DESC"))
+            rows = result.fetchall()
+            return [dict(row._mapping) for row in rows]
+    
+    def update_customer(self, customer_id: int, client_name: Optional[str] = None,
+                       company_name: Optional[str] = None, contact_person: Optional[str] = None,
+                       address: Optional[str] = None, email: Optional[str] = None,
+                       mobile_number: Optional[str] = None):
+        """Update a customer."""
+        engine = self._get_connection()
+        
+        with engine.connect() as conn:
+            trans = conn.begin()
+            try:
+                # Build dynamic update query
+                updates = []
+                params = {"id": customer_id, "updated_date": datetime.now()}
+                
+                if client_name is not None:
+                    updates.append("client_name = :client_name")
+                    params["client_name"] = client_name
+                if company_name is not None:
+                    updates.append("company_name = :company_name")
+                    params["company_name"] = company_name
+                if contact_person is not None:
+                    updates.append("contact_person = :contact_person")
+                    params["contact_person"] = contact_person
+                if address is not None:
+                    updates.append("address = :address")
+                    params["address"] = address
+                if email is not None:
+                    updates.append("email = :email")
+                    params["email"] = email
+                if mobile_number is not None:
+                    updates.append("mobile_number = :mobile_number")
+                    params["mobile_number"] = mobile_number
+                
+                updates.append("updated_date = :updated_date")
+                
+                if updates:
+                    query = f"UPDATE customers SET {', '.join(updates)} WHERE id = :id"
+                    conn.execute(text(query), params)
+                    trans.commit()
+                else:
+                    trans.rollback()
+            except Exception as e:
+                trans.rollback()
+                raise
+    
+    # ================= Quote/Requote Methods =================
+    
+    def get_next_revision_number(self, base_reference: str) -> str:
+        """
+        Get the next revision number for a reference.
+        E.g., for BNG01234, returns BNG01234.1 if no revisions exist,
+        or BNG01234.2 if BNG01234.1 exists, etc.
+        """
+        engine = self._get_connection()
+        
+        # Strip any existing revision suffix
+        base_ref = base_reference.split('.')[0]
+        
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT reference_number FROM submissions
+                WHERE reference_number LIKE :pattern
+                ORDER BY reference_number DESC
+            """), {"pattern": f"{base_ref}%"})
+            
+            rows = result.fetchall()
+            
+            if not rows:
+                # No existing references, return base.1
+                return f"{base_ref}.1"
+            
+            # Find the highest revision number
+            max_revision = 0
+            for row in rows:
+                ref = row[0]
+                if '.' in ref:
+                    try:
+                        revision = int(ref.split('.')[-1])
+                        max_revision = max(max_revision, revision)
+                    except ValueError:
+                        pass
+            
+            return f"{base_ref}.{max_revision + 1}"
+    
+    def get_quotes_by_reference_base(self, base_reference: str) -> pd.DataFrame:
+        """Get all quotes with a given base reference (including revisions)."""
+        engine = self._get_connection()
+        base_ref = base_reference.split('.')[0]
+        
+        with engine.connect() as conn:
+            df = pd.read_sql_query(
+                text("SELECT * FROM submissions WHERE reference_number LIKE :pattern ORDER BY reference_number"),
+                conn,
+                params={"pattern": f"{base_ref}%"}
+            )
+        return df
+    
+    def create_requote_from_submission(self, submission_id: int, new_demand_df: Optional[pd.DataFrame] = None) -> int:
+        """
+        Create a requote from an existing submission.
+        Copies the submission with a new revision suffix on the reference number.
+        If new_demand_df is provided, uses it; otherwise copies the original demand.
+        Returns the new submission ID.
+        """
+        engine = self._get_connection()
+        
+        with engine.connect() as conn:
+            # Get original submission
+            result = conn.execute(
+                text("SELECT * FROM submissions WHERE id = :id"),
+                {"id": submission_id}
+            )
+            original = result.fetchone()
+            
+            if not original:
+                raise ValueError(f"Submission {submission_id} not found")
+            
+            original_dict = dict(original._mapping)
+            
+            # Get next revision number
+            new_reference = self.get_next_revision_number(original_dict["reference_number"])
+            
+            # Prepare data for new submission
+            submission_date = datetime.now()
+            
+            # Use new demand if provided, otherwise use original
+            if new_demand_df is not None and not new_demand_df.empty:
+                demand_habitats_json = json.loads(new_demand_df.to_json(orient='records'))
+                demand_habitats_json = sanitize_for_db(demand_habitats_json)
+            else:
+                demand_habitats_json = original_dict["demand_habitats"]
+            
+            trans = conn.begin()
+            try:
+                # Insert new submission
+                result = conn.execute(text("""
+                    INSERT INTO submissions (
+                        submission_date, client_name, reference_number, site_location,
+                        target_lpa, target_nca, target_lat, target_lon,
+                        lpa_neighbors, nca_neighbors, demand_habitats,
+                        contract_size, total_cost, admin_fee, total_with_admin,
+                        num_banks_selected, banks_used,
+                        manual_hedgerow_entries, manual_watercourse_entries,
+                        allocation_results, username,
+                        promoter_name, promoter_discount_type, promoter_discount_value,
+                        customer_id
+                    ) VALUES (
+                        :submission_date, :client_name, :reference_number, :site_location,
+                        :target_lpa, :target_nca, :target_lat, :target_lon,
+                        :lpa_neighbors, :nca_neighbors, :demand_habitats,
+                        :contract_size, :total_cost, :admin_fee, :total_with_admin,
+                        :num_banks_selected, :banks_used,
+                        :manual_hedgerow_entries, :manual_watercourse_entries,
+                        :allocation_results, :username,
+                        :promoter_name, :promoter_discount_type, :promoter_discount_value,
+                        :customer_id
+                    ) RETURNING id
+                """), {
+                    "submission_date": submission_date,
+                    "client_name": original_dict["client_name"],
+                    "reference_number": new_reference,
+                    "site_location": original_dict["site_location"],
+                    "target_lpa": original_dict["target_lpa"],
+                    "target_nca": original_dict["target_nca"],
+                    "target_lat": original_dict["target_lat"],
+                    "target_lon": original_dict["target_lon"],
+                    "lpa_neighbors": json.dumps(original_dict["lpa_neighbors"]) if isinstance(original_dict["lpa_neighbors"], list) else original_dict["lpa_neighbors"],
+                    "nca_neighbors": json.dumps(original_dict["nca_neighbors"]) if isinstance(original_dict["nca_neighbors"], list) else original_dict["nca_neighbors"],
+                    "demand_habitats": json.dumps(demand_habitats_json) if isinstance(demand_habitats_json, list) else demand_habitats_json,
+                    "contract_size": original_dict["contract_size"],
+                    "total_cost": original_dict["total_cost"],
+                    "admin_fee": original_dict["admin_fee"],
+                    "total_with_admin": original_dict["total_with_admin"],
+                    "num_banks_selected": original_dict["num_banks_selected"],
+                    "banks_used": json.dumps(original_dict["banks_used"]) if isinstance(original_dict["banks_used"], list) else original_dict["banks_used"],
+                    "manual_hedgerow_entries": json.dumps(original_dict["manual_hedgerow_entries"]) if isinstance(original_dict["manual_hedgerow_entries"], list) else original_dict["manual_hedgerow_entries"],
+                    "manual_watercourse_entries": json.dumps(original_dict["manual_watercourse_entries"]) if isinstance(original_dict["manual_watercourse_entries"], list) else original_dict["manual_watercourse_entries"],
+                    "allocation_results": json.dumps(original_dict["allocation_results"]) if isinstance(original_dict["allocation_results"], list) else original_dict["allocation_results"],
+                    "username": original_dict["username"],
+                    "promoter_name": original_dict.get("promoter_name"),
+                    "promoter_discount_type": original_dict.get("promoter_discount_type"),
+                    "promoter_discount_value": original_dict.get("promoter_discount_value"),
+                    "customer_id": original_dict.get("customer_id")
+                })
+                
+                new_submission_id = result.fetchone()[0]
+                
+                # Copy allocation details
+                conn.execute(text("""
+                    INSERT INTO allocation_details (
+                        submission_id, bank_key, bank_name,
+                        demand_habitat, supply_habitat, allocation_type,
+                        tier, units_supplied, unit_price, cost
+                    )
+                    SELECT :new_submission_id, bank_key, bank_name,
+                           demand_habitat, supply_habitat, allocation_type,
+                           tier, units_supplied, unit_price, cost
+                    FROM allocation_details
+                    WHERE submission_id = :original_submission_id
+                """), {
+                    "new_submission_id": new_submission_id,
+                    "original_submission_id": submission_id
+                })
+                
+                trans.commit()
+                return new_submission_id
+                
             except Exception as e:
                 trans.rollback()
                 raise

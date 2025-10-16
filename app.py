@@ -315,9 +315,9 @@ with st.sidebar:
     st.markdown("---")
     app_mode = st.radio(
         "Mode",
-        ["Optimiser", "Admin Dashboard"],
+        ["Optimiser", "Quote Management", "Admin Dashboard"],
         key="mode_selector",
-        index=0 if st.session_state.app_mode == "Optimiser" else 1
+        index=0 if st.session_state.app_mode == "Optimiser" else (1 if st.session_state.app_mode == "Quote Management" else 2)
     )
     st.session_state.app_mode = app_mode
 
@@ -646,6 +646,345 @@ if st.session_state.app_mode == "Admin Dashboard":
         st.error(f"Error loading submissions: {e}")
         import traceback
         st.code(traceback.format_exc())
+    
+    # Stop here - don't render the rest of the app
+    st.stop()
+
+# ================= Quote Management Mode =================
+if st.session_state.app_mode == "Quote Management":
+    st.markdown("### 🔍 Quote Management & Requotes")
+    
+    if db is None:
+        st.error("Database is not available.")
+        st.stop()
+    
+    # Logout button
+    if st.button("🔓 Return to Optimiser", key="quote_mgmt_return"):
+        st.session_state.app_mode = "Optimiser"
+        st.rerun()
+    
+    # Tab navigation
+    tab1, tab2, tab3 = st.tabs(["Search Quotes", "Customer Management", "Create Requote"])
+    
+    # ================= Tab 1: Search Quotes =================
+    with tab1:
+        st.markdown("#### 🔍 Search Existing Quotes")
+        
+        # Search filters
+        with st.expander("🔎 Search Filters", expanded=True):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                search_client = st.text_input("Client Name (contains)", key="search_client")
+                search_ref = st.text_input("Reference Number (contains)", key="search_ref")
+            with col2:
+                search_location = st.text_input("Development Location (contains)", key="search_location")
+                search_lpa = st.text_input("LPA (contains)", key="search_lpa")
+            with col3:
+                search_start_date = st.date_input("Start Date", value=None, key="search_start_date")
+                search_end_date = st.date_input("End Date", value=None, key="search_end_date")
+            
+            search_btn = st.button("🔍 Search", key="search_quotes_btn", type="primary")
+        
+        # Perform search
+        if search_btn or any([search_client, search_ref, search_location, search_lpa, search_start_date, search_end_date]):
+            try:
+                # Build custom query for location search
+                if search_location:
+                    query = "SELECT * FROM submissions WHERE 1=1"
+                    params = {}
+                    
+                    if search_start_date:
+                        query += " AND submission_date >= :start_date"
+                        params["start_date"] = search_start_date.isoformat()
+                    if search_end_date:
+                        query += " AND submission_date <= :end_date"
+                        params["end_date"] = search_end_date.isoformat()
+                    if search_client:
+                        query += " AND client_name ILIKE :client_name"
+                        params["client_name"] = f"%{search_client}%"
+                    if search_ref:
+                        query += " AND reference_number ILIKE :reference_number"
+                        params["reference_number"] = f"%{search_ref}%"
+                    if search_lpa:
+                        query += " AND target_lpa ILIKE :lpa"
+                        params["lpa"] = f"%{search_lpa}%"
+                    if search_location:
+                        query += " AND site_location ILIKE :location"
+                        params["location"] = f"%{search_location}%"
+                    
+                    query += " ORDER BY submission_date DESC LIMIT 100"
+                    
+                    from sqlalchemy import text
+                    engine = db._get_connection()
+                    with engine.connect() as conn:
+                        results_df = pd.read_sql_query(text(query), conn, params=params)
+                else:
+                    # Use standard filter
+                    results_df = db.filter_submissions(
+                        start_date=search_start_date.isoformat() if search_start_date else None,
+                        end_date=search_end_date.isoformat() if search_end_date else None,
+                        client_name=search_client if search_client else None,
+                        lpa=search_lpa if search_lpa else None,
+                        reference_number=search_ref if search_ref else None
+                    )
+                
+                st.markdown(f"#### 📋 Search Results ({len(results_df)} quotes found)")
+                
+                if results_df.empty:
+                    st.info("No quotes found matching your criteria.")
+                else:
+                    # Display results
+                    display_cols = [
+                        "id", "submission_date", "client_name", "reference_number",
+                        "site_location", "target_lpa", "contract_size", 
+                        "total_with_admin", "customer_id"
+                    ]
+                    display_cols = [c for c in display_cols if c in results_df.columns]
+                    
+                    df_display = results_df[display_cols].copy()
+                    if "submission_date" in df_display.columns:
+                        df_display["submission_date"] = pd.to_datetime(df_display["submission_date"]).dt.strftime("%Y-%m-%d %H:%M")
+                    if "total_with_admin" in df_display.columns:
+                        df_display["total_with_admin"] = df_display["total_with_admin"].apply(
+                            lambda x: f"£{x:,.0f}" if pd.notna(x) else ""
+                        )
+                    
+                    st.dataframe(df_display, use_container_width=True, hide_index=True)
+                    
+                    # View quote details
+                    st.markdown("#### 👁️ View Quote Details")
+                    quote_ids = results_df["id"].tolist()
+                    selected_quote_id = st.selectbox("Select Quote ID to View", quote_ids, key="selected_quote_view")
+                    
+                    if st.button("View Details", key="view_quote_details"):
+                        submission = db.get_submission_by_id(selected_quote_id)
+                        
+                        if submission:
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.markdown("##### Quote Information")
+                                st.write(f"**ID:** {submission['id']}")
+                                st.write(f"**Client:** {submission['client_name']}")
+                                st.write(f"**Reference:** {submission['reference_number']}")
+                                st.write(f"**Location:** {submission['site_location']}")
+                                st.write(f"**Date:** {submission['submission_date']}")
+                                st.write(f"**Contract Size:** {submission['contract_size']}")
+                                st.write(f"**Total with Admin:** £{submission['total_with_admin']:,.0f}")
+                            
+                            with col2:
+                                st.markdown("##### Location & Banks")
+                                st.write(f"**LPA:** {submission['target_lpa']}")
+                                st.write(f"**NCA:** {submission['target_nca']}")
+                                st.write(f"**Banks Used:** {submission['num_banks_selected']}")
+                                if submission.get('promoter_name'):
+                                    st.write(f"**Promoter:** {submission['promoter_name']}")
+                                if submission.get('customer_id'):
+                                    customer = db.get_customer_by_id(submission['customer_id'])
+                                    if customer:
+                                        st.write(f"**Customer:** {customer['client_name']}")
+                                        if customer.get('email'):
+                                            st.write(f"**Email:** {customer['email']}")
+                            
+                            # Show demand details
+                            if submission.get('demand_habitats'):
+                                st.markdown("##### Demand Details")
+                                demand_data = submission['demand_habitats']
+                                if isinstance(demand_data, str):
+                                    demand_data = json.loads(demand_data)
+                                if demand_data:
+                                    demand_df = pd.DataFrame(demand_data)
+                                    st.dataframe(demand_df, use_container_width=True, hide_index=True)
+                            
+                            # Show allocation details
+                            allocations = db.get_allocations_for_submission(selected_quote_id)
+                            if not allocations.empty:
+                                st.markdown("##### Allocation Details")
+                                st.dataframe(allocations, use_container_width=True, hide_index=True)
+                        else:
+                            st.error("Quote not found.")
+            
+            except Exception as e:
+                st.error(f"Error searching quotes: {e}")
+                import traceback
+                st.code(traceback.format_exc())
+    
+    # ================= Tab 2: Customer Management =================
+    with tab2:
+        st.markdown("#### 👥 Customer Management")
+        
+        # Add new customer
+        with st.expander("➕ Add New Customer", expanded=False):
+            with st.form("add_customer_form"):
+                cust_client_name = st.text_input("Client Name*", key="cust_client_name")
+                cust_company_name = st.text_input("Company Name", key="cust_company_name")
+                cust_contact_person = st.text_input("Contact Person", key="cust_contact_person")
+                cust_address = st.text_area("Address", key="cust_address")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    cust_email = st.text_input("Email Address", key="cust_email")
+                with col2:
+                    cust_mobile = st.text_input("Mobile Number", key="cust_mobile")
+                
+                add_cust_btn = st.form_submit_button("Add Customer")
+                
+                if add_cust_btn:
+                    if not cust_client_name or not cust_client_name.strip():
+                        st.error("Client name is required.")
+                    elif not cust_email and not cust_mobile:
+                        st.error("At least one of Email or Mobile Number is required.")
+                    else:
+                        try:
+                            customer_id = db.add_customer(
+                                client_name=cust_client_name.strip(),
+                                company_name=cust_company_name.strip() if cust_company_name else None,
+                                contact_person=cust_contact_person.strip() if cust_contact_person else None,
+                                address=cust_address.strip() if cust_address else None,
+                                email=cust_email.strip() if cust_email else None,
+                                mobile_number=cust_mobile.strip() if cust_mobile else None
+                            )
+                            st.success(f"✅ Customer added successfully! ID: {customer_id}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error adding customer: {e}")
+        
+        # List existing customers
+        try:
+            customers = db.get_all_customers()
+            
+            if customers:
+                st.markdown(f"##### Existing Customers ({len(customers)})")
+                
+                # Create DataFrame for display
+                customers_df = pd.DataFrame(customers)
+                display_customer_cols = ["id", "client_name", "company_name", "contact_person", 
+                                         "email", "mobile_number", "created_date"]
+                display_customer_cols = [c for c in display_customer_cols if c in customers_df.columns]
+                
+                df_cust_display = customers_df[display_customer_cols].copy()
+                if "created_date" in df_cust_display.columns:
+                    df_cust_display["created_date"] = pd.to_datetime(df_cust_display["created_date"]).dt.strftime("%Y-%m-%d")
+                
+                st.dataframe(df_cust_display, use_container_width=True, hide_index=True)
+                
+                # View customer quotes
+                st.markdown("##### 🔍 View Customer Quotes")
+                customer_id_select = st.selectbox("Select Customer ID", [c['id'] for c in customers], key="customer_id_select")
+                
+                if st.button("View Customer Quotes", key="view_customer_quotes_btn"):
+                    # Get all submissions for this customer
+                    from sqlalchemy import text
+                    engine = db._get_connection()
+                    with engine.connect() as conn:
+                        customer_quotes_df = pd.read_sql_query(
+                            text("SELECT * FROM submissions WHERE customer_id = :customer_id ORDER BY submission_date DESC"),
+                            conn,
+                            params={"customer_id": customer_id_select}
+                        )
+                    
+                    if not customer_quotes_df.empty:
+                        st.markdown(f"**{len(customer_quotes_df)} quotes found for this customer**")
+                        
+                        display_cols = ["id", "reference_number", "submission_date", "site_location", 
+                                       "contract_size", "total_with_admin"]
+                        display_cols = [c for c in display_cols if c in customer_quotes_df.columns]
+                        
+                        df_display = customer_quotes_df[display_cols].copy()
+                        if "submission_date" in df_display.columns:
+                            df_display["submission_date"] = pd.to_datetime(df_display["submission_date"]).dt.strftime("%Y-%m-%d")
+                        if "total_with_admin" in df_display.columns:
+                            df_display["total_with_admin"] = df_display["total_with_admin"].apply(
+                                lambda x: f"£{x:,.0f}" if pd.notna(x) else ""
+                            )
+                        
+                        st.dataframe(df_display, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No quotes found for this customer.")
+            else:
+                st.info("No customers added yet.")
+        
+        except Exception as e:
+            st.error(f"Error loading customers: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+    
+    # ================= Tab 3: Create Requote =================
+    with tab3:
+        st.markdown("#### 🔄 Create Requote")
+        st.info("Select an existing quote to create a requote. The requote will have the same site location and customer info, but you can update the demand and reoptimize.")
+        
+        # Select quote to requote
+        try:
+            # Get recent submissions
+            recent_quotes_df = db.get_all_submissions(limit=50)
+            
+            if not recent_quotes_df.empty:
+                # Display selection interface
+                st.markdown("##### Select Quote to Requote")
+                
+                # Create a readable display
+                recent_quotes_df['display_text'] = (
+                    recent_quotes_df['id'].astype(str) + " - " +
+                    recent_quotes_df['reference_number'] + " - " +
+                    recent_quotes_df['client_name'] + " - " +
+                    recent_quotes_df['site_location']
+                )
+                
+                quote_options = recent_quotes_df[['id', 'display_text']].set_index('id')['display_text'].to_dict()
+                selected_requote_id = st.selectbox(
+                    "Select Quote",
+                    options=list(quote_options.keys()),
+                    format_func=lambda x: quote_options[x],
+                    key="selected_requote_id"
+                )
+                
+                if selected_requote_id:
+                    # Show current quote details
+                    original_quote = db.get_submission_by_id(selected_requote_id)
+                    
+                    if original_quote:
+                        st.markdown("##### Original Quote Details")
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.write(f"**Reference:** {original_quote['reference_number']}")
+                            st.write(f"**Client:** {original_quote['client_name']}")
+                        with col2:
+                            st.write(f"**Location:** {original_quote['site_location']}")
+                            st.write(f"**LPA:** {original_quote['target_lpa']}")
+                        with col3:
+                            st.write(f"**Total:** £{original_quote['total_with_admin']:,.0f}")
+                            st.write(f"**Date:** {original_quote['submission_date']}")
+                        
+                        # Show what the new reference will be
+                        new_ref = db.get_next_revision_number(original_quote['reference_number'])
+                        st.info(f"📝 New requote will have reference: **{new_ref}**")
+                        
+                        # Create requote button
+                        st.markdown("---")
+                        st.markdown("##### Create Requote")
+                        st.write("This will create a new quote as a separate record with the incremented reference number.")
+                        st.write("⚠️ **Note:** Site location and customer info will be copied. You can update demand later in the Optimiser.")
+                        
+                        if st.button("🔄 Create Requote", type="primary", key="create_requote_btn"):
+                            try:
+                                new_submission_id = db.create_requote_from_submission(selected_requote_id)
+                                st.success(f"✅ Requote created successfully!")
+                                st.success(f"📋 New Reference: {new_ref}")
+                                st.success(f"🆔 New Submission ID: {new_submission_id}")
+                                st.info("💡 You can now search for this quote and view/edit it in the Optimiser mode.")
+                            except Exception as e:
+                                st.error(f"Error creating requote: {e}")
+                                import traceback
+                                st.code(traceback.format_exc())
+            else:
+                st.info("No quotes available to requote.")
+        
+        except Exception as e:
+            st.error(f"Error loading quotes: {e}")
+            import traceback
+            st.code(traceback.format_exc())
     
     # Stop here - don't render the rest of the app
     st.stop()
