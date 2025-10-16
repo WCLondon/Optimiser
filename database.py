@@ -270,9 +270,47 @@ class SubmissionsDB:
                     email TEXT,
                     mobile_number TEXT,
                     created_date TIMESTAMP NOT NULL DEFAULT NOW(),
-                    updated_date TIMESTAMP NOT NULL DEFAULT NOW(),
-                    CONSTRAINT customers_unique_email_mobile UNIQUE NULLS NOT DISTINCT (email, mobile_number)
+                    updated_date TIMESTAMP NOT NULL DEFAULT NOW()
                 )
+            """))
+            
+            # Drop the old constraint if it exists (it was causing issues with NULL values)
+            conn.execute(text("""
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1 FROM pg_constraint 
+                        WHERE conname = 'customers_unique_email_mobile'
+                    ) THEN
+                        ALTER TABLE customers DROP CONSTRAINT customers_unique_email_mobile;
+                    END IF;
+                END $$;
+            """))
+            
+            # Add unique constraint for email when not NULL
+            conn.execute(text("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint 
+                        WHERE conname = 'customers_unique_email'
+                    ) THEN
+                        CREATE UNIQUE INDEX customers_unique_email ON customers(email) WHERE email IS NOT NULL;
+                    END IF;
+                END $$;
+            """))
+            
+            # Add unique constraint for mobile when not NULL
+            conn.execute(text("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint 
+                        WHERE conname = 'customers_unique_mobile'
+                    ) THEN
+                        CREATE UNIQUE INDEX customers_unique_mobile ON customers(mobile_number) WHERE mobile_number IS NOT NULL;
+                    END IF;
+                END $$;
             """))
             
             # Add new columns to existing customers table if they don't exist
