@@ -23,8 +23,6 @@ import json
 import re
 import time
 from datetime import datetime
-from io import BytesIO
-from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 
 import numpy as np
@@ -40,6 +38,9 @@ import folium
 
 # Database for submissions tracking
 from database import SubmissionsDB
+
+# Repository layer for reference/config tables
+import repo
 
 # ================= Config / constants =================
 ADMIN_FEE_GBP = 500.0
@@ -342,7 +343,7 @@ if st.session_state.app_mode == "Admin Dashboard":
         st.stop()
     
     # Admin is authenticated - show dashboard
-    st.markdown("### 📊 Submissions Database")
+    st.markdown("### 📊 Admin Dashboard")
     
     if db is None:
         st.error("Database is not available.")
@@ -353,7 +354,55 @@ if st.session_state.app_mode == "Admin Dashboard":
         st.session_state.admin_authenticated = False
         st.rerun()
     
+    # Check reference tables status
+    st.markdown("#### 📋 Reference Tables Status")
+    try:
+        tables_status = repo.check_required_tables_not_empty()
+        all_ok = all(tables_status.values())
+        
+        if all_ok:
+            st.success("✅ All required reference tables are populated.")
+        else:
+            st.error("❌ Some required reference tables are empty or missing:")
+            for table_name, is_ok in tables_status.items():
+                if not is_ok:
+                    st.error(f"  • {table_name} table is empty or missing")
+            st.info("💡 Please populate these tables in your Supabase database to enable the optimizer.")
+        
+        # Show table counts
+        with st.expander("📊 Reference Table Details", expanded=False):
+            col1, col2, col3 = st.columns(3)
+            table_names = list(tables_status.keys())
+            for idx, table_name in enumerate(table_names):
+                with [col1, col2, col3][idx % 3]:
+                    try:
+                        if table_name == "Banks":
+                            df = repo.fetch_banks()
+                        elif table_name == "Pricing":
+                            df = repo.fetch_pricing()
+                        elif table_name == "HabitatCatalog":
+                            df = repo.fetch_habitat_catalog()
+                        elif table_name == "Stock":
+                            df = repo.fetch_stock()
+                        elif table_name == "DistinctivenessLevels":
+                            df = repo.fetch_distinctiveness_levels()
+                        elif table_name == "SRM":
+                            df = repo.fetch_srm()
+                        else:
+                            df = pd.DataFrame()
+                        
+                        row_count = len(df)
+                        status_icon = "✅" if row_count > 0 else "❌"
+                        st.metric(f"{status_icon} {table_name}", f"{row_count} rows")
+                    except Exception as e:
+                        st.metric(f"❌ {table_name}", "Error")
+    except Exception as e:
+        st.error(f"Error checking reference tables: {e}")
+    
+    st.markdown("---")
+    
     # Get summary stats
+    st.markdown("### 📊 Submissions Database")
     try:
         stats = db.get_summary_stats()
         col1, col2, col3 = st.columns(3)
@@ -915,48 +964,47 @@ def select_contract_size(total_units: float, present: List[str]) -> str:
         if t in tiers: return t
     return sstr(next(iter(present), "small")).lower()
 
-# ================= Sidebar: backend =================
+# ================= Load Reference Tables from Supabase =================
+@st.cache_data(ttl=600)
+def load_backend() -> Dict[str, pd.DataFrame]:
+    """
+    Load all reference/config tables from Supabase Postgres.
+    Tables are cached for 10 minutes (600 seconds) to reduce database queries.
+    """
+    try:
+        return repo.fetch_all_reference_tables()
+    except Exception as e:
+        st.error(f"Failed to load reference tables from database: {e}")
+        st.stop()
+
+# Load backend tables from Supabase
+try:
+    backend = load_backend()
+except Exception as e:
+    st.error(f"❌ Cannot connect to database. Please check your database configuration.")
+    st.error(f"Error: {e}")
+    st.stop()
+
+# Validate that required tables are not empty
+if st.session_state.app_mode == "Optimiser":
+    # Validate reference tables before continuing
+    is_valid, errors = repo.validate_reference_tables()
+    if not is_valid:
+        st.error("❌ Required reference tables are missing or empty:")
+        for error in errors:
+            st.error(f"  • {error}")
+        st.info("💡 Please contact your administrator to populate the database tables.")
+        st.stop()
+
+# Configure quotes policy for stock availability
 with st.sidebar:
-    st.subheader("Backend")
-    uploaded = st.file_uploader("Upload backend workbook (.xlsx)", type=["xlsx"])
-    if not uploaded:
-        st.info("Or use an example backend in ./data", icon="ℹ️")
-    use_example = st.checkbox("Use example backend from ./data",
-                              value=bool(Path("data/HabitatBackend_WITH_STOCK.xlsx").exists()))
+    st.subheader("Stock Policy")
     quotes_hold_policy = st.selectbox(
         "Quotes policy for stock availability",
         ["Ignore quotes (default)", "Quotes hold 100%", "Quotes hold 50%"],
         index=0,
         help="How to treat 'quoted' units when computing quantity_available."
     )
-
-@st.cache_data
-def load_backend(xls_bytes) -> Dict[str, pd.DataFrame]:
-    """Load backend with caching to prevent reprocessing"""
-    x = pd.ExcelFile(BytesIO(xls_bytes))
-    backend = {
-        "Banks": pd.read_excel(x, "Banks"),
-        "Pricing": pd.read_excel(x, "Pricing"),
-        "HabitatCatalog": pd.read_excel(x, "HabitatCatalog"),
-        "Stock": pd.read_excel(x, "Stock"),
-        "DistinctivenessLevels": pd.read_excel(x, "DistinctivenessLevels"),
-        "SRM": pd.read_excel(x, "SRM"),
-        "TradingRules": pd.read_excel(x, "TradingRules") if "TradingRules" in x.sheet_names else pd.DataFrame(),
-    }
-    return backend
-
-backend = None
-if uploaded:
-    backend = load_backend(uploaded.getvalue())
-elif use_example:
-    ex = Path("data/HabitatBackend_WITH_STOCK.xlsx")
-    if ex.exists():
-        with ex.open("rb") as f:
-            backend = load_backend(f.read())
-
-if backend is None:
-    st.warning("Upload your backend workbook to continue.", icon="⚠️")
-    st.stop()
 
 # ================= BANK_KEY normalisation =================
 def make_bank_key_col(df: pd.DataFrame, banks_df: pd.DataFrame) -> pd.DataFrame:
