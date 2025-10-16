@@ -893,14 +893,15 @@ class SubmissionsDB:
                 trans.rollback()
                 raise
     
-    def populate_customers_from_submissions(self) -> int:
+    def populate_customers_from_submissions(self) -> tuple[int, list[str]]:
         """
         Populate customers table from existing submissions.
         Creates a customer record for each unique client_name in submissions
         that doesn't already have a customer record.
-        Returns the number of customers created.
+        Returns tuple of (number of customers created, list of error messages).
         """
         engine = self._get_connection()
+        errors = []
         
         with engine.connect() as conn:
             # Get distinct client names from all submissions
@@ -938,8 +939,9 @@ class SubmissionsDB:
                                 "client_name": client_name
                             })
                             trans.commit()
-                        except Exception:
+                        except Exception as e:
                             trans.rollback()
+                            errors.append(f"Failed to link existing customer '{client_name}': {str(e)}")
                         continue
                     
                     # Create customer record
@@ -970,16 +972,14 @@ class SubmissionsDB:
                         
                         trans.commit()
                         created_count += 1
-                    except Exception:
+                    except Exception as e:
                         trans.rollback()
-                        # Continue with next customer
-                        pass
+                        errors.append(f"Failed to create customer '{client_name}': {str(e)}")
                         
-                except Exception:
-                    # Continue with next customer
-                    pass
+                except Exception as e:
+                    errors.append(f"Error processing '{client_name}': {str(e)}")
             
-            return created_count
+            return created_count, errors
     
     # ================= Quote/Requote Methods =================
     

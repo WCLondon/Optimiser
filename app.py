@@ -851,11 +851,19 @@ if st.session_state.app_mode == "Quote Management":
             
             if st.button("Import Customers from Submissions", key="import_customers_btn"):
                 try:
-                    created_count = db.populate_customers_from_submissions()
+                    created_count, errors = db.populate_customers_from_submissions()
+                    
+                    if errors:
+                        st.warning(f"⚠️ Encountered {len(errors)} error(s) during import:")
+                        for error in errors[:5]:  # Show first 5 errors
+                            st.error(error)
+                        if len(errors) > 5:
+                            st.caption(f"... and {len(errors) - 5} more errors")
+                    
                     if created_count > 0:
                         st.success(f"✅ Successfully created {created_count} customer record(s) from existing submissions!")
                         st.rerun()
-                    else:
+                    elif not errors:
                         st.info("ℹ️ No new customers to import. All existing client names already have customer records.")
                         st.caption("💡 Tip: If you expect to see customers here, check that submissions have valid client_name values and that the customers table is accessible.")
                 except Exception as e:
