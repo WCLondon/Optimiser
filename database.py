@@ -287,26 +287,26 @@ class SubmissionsDB:
                 END $$;
             """))
             
-            # Add unique constraint for email when not NULL
+            # Add unique index for email when not NULL
             conn.execute(text("""
                 DO $$
                 BEGIN
                     IF NOT EXISTS (
-                        SELECT 1 FROM pg_constraint 
-                        WHERE conname = 'customers_unique_email'
+                        SELECT 1 FROM pg_indexes 
+                        WHERE indexname = 'customers_unique_email'
                     ) THEN
                         CREATE UNIQUE INDEX customers_unique_email ON customers(email) WHERE email IS NOT NULL;
                     END IF;
                 END $$;
             """))
             
-            # Add unique constraint for mobile when not NULL
+            # Add unique index for mobile when not NULL
             conn.execute(text("""
                 DO $$
                 BEGIN
                     IF NOT EXISTS (
-                        SELECT 1 FROM pg_constraint 
-                        WHERE conname = 'customers_unique_mobile'
+                        SELECT 1 FROM pg_indexes 
+                        WHERE indexname = 'customers_unique_mobile'
                     ) THEN
                         CREATE UNIQUE INDEX customers_unique_mobile ON customers(mobile_number) WHERE mobile_number IS NOT NULL;
                     END IF;
