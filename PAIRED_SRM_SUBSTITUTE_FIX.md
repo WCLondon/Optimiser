@@ -4,11 +4,13 @@
 When allocating demand for 'Individual trees - Urban Tree' to an adjacent bank, the optimiser correctly identified a cheaper substitute trade for 'Traditional orchard' in the adjacent bank. However, although a legal pairing with 'Mixed Scrub' (also in stock and cheaper) was possible, this pairing was not selected. The pairing would have reduced the overall SRM-adjusted price for that line item.
 
 ## Root Cause
-The bug had two components:
+The bug had three components:
 
-1. **Incorrect price lookup**: At line 2175 (now 2178), the code was looking up the price for the **demand habitat** (`dem_hab`, e.g., "Individual trees - Urban Tree") instead of the **supply habitat** (`d_stock["habitat_name"]`, e.g., "Traditional orchard"). When a substitute trade was used, the demand habitat may not have a price at that bank/tier, causing the price lookup to fail (`pi_demand = None`) and paired options to not be created.
+1. **Incorrect price lookup**: At line 2175 (now 2178), the code was looking up the price for the **demand habitat** (`dem_hab`, e.g., "Individual trees - Urban Tree") instead of the **supply habitat** (`d_stock["habitat_name"]`, e.g., "Traditional orchard"). When a substitute trade was used, the demand habitat may not have a price at that bank/tier, causing the lookup to fail (`pi_demand = None`) and paired options to not be created.
 
 2. **Incorrect companion filtering**: At line 2147 (now 2156), companion candidates were filtered to exclude the demand habitat (`!= dem_hab`) instead of the supply habitat. This meant that when a substitute was used, the supply habitat itself could be selected as its own companion, which doesn't make sense.
+
+3. **Incorrect price filtering**: At line 2236, paired options were only created if `blended_price < price_demand`. This comparison was flawed and prevented valid paired options from being created, even when they would be cheaper than single allocations once the SRM penalty was properly accounted for.
 
 ## The Fix
 
@@ -48,6 +50,29 @@ pi_demand = find_price_for_supply(bk, dem_hab, target_tier, d_broader, d_dist)
 # Get supply habitat price at this tier (not demand habitat - use actual supply)
 pi_demand = find_price_for_supply(bk, supply_hab, target_tier, d_broader, d_dist)
 ```
+
+### Change 3: Remove incorrect price filtering
+**Before** (line 2236):
+```python
+# Only add paired option if it's cheaper than normal allocation
+# (to avoid creating unnecessary options)
+if blended_price < price_demand:
+    options.append({
+        "type": "paired",
+        ...
+    })
+```
+
+**After** (line 2233):
+```python
+# Always add paired option and let optimizer choose the best allocation
+options.append({
+    "type": "paired",
+    ...
+})
+```
+
+This change ensures paired options are always created when a valid companion exists, allowing the optimizer's linear programming solver to evaluate all options and select the truly cheapest allocation.
 
 ## Impact
 

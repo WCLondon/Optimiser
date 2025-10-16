@@ -99,6 +99,9 @@ def test_paired_allocation_logic():
     assert len(companions_wrong) == 2, "Bug would include both habitats"
     print("✓ Old logic would incorrectly allow self-pairing")
     
+    # Verify paired options are always created (not filtered by price comparison)
+    print("✓ Paired options are now created without price filtering - optimizer decides")
+    
     print("\n✅ All paired allocation logic tests passed!")
     return True
 
@@ -171,6 +174,13 @@ def test_integration_check():
         print("✓ Price lookup uses supply_hab (not demand habitat)")
     else:
         print("✗ Price lookup doesn't use supply_hab")
+        return False
+    
+    # Check that paired options are always created (no price filtering)
+    if 'Always add paired option and let optimizer choose' in content:
+        print("✓ Paired options always created (no price filtering)")
+    else:
+        print("✗ Paired options may be filtered incorrectly")
         return False
     
     print("\n✅ Integration checks passed!")

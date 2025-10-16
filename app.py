@@ -2231,28 +2231,26 @@ def prepare_options(demand_df: pd.DataFrame,
                     if promoter_discount_type == "percentage" and promoter_discount_value:
                         blended_price = apply_percentage_discount(blended_price, promoter_discount_value)
                     
-                    # Only add paired option if it's cheaper than normal allocation
-                    # (to avoid creating unnecessary options)
-                    if blended_price < price_demand:
-                        options.append({
-                            "type": "paired",
-                            "demand_idx": di,
-                            "demand_habitat": dem_hab,  # Keep original demand habitat for matching
-                            "BANK_KEY": bk,
-                            "bank_name": sstr(d_stock.get("bank_name")),
-                            "bank_id": sstr(d_stock.get("bank_id")),
-                            "supply_habitat": f"{pi_demand[2]} + {pi_comp[2]}",  # Use pricing habitats
-                            "tier": target_tier,
-                            "proximity": target_tier,
-                            "unit_price": blended_price,
-                            "stock_use": {sstr(d_stock["stock_id"]): stock_use_demand, sstr(comp_row["stock_id"]): stock_use_companion},
-                            "price_source": "paired",
-                            "price_habitat": f"{pi_demand[2]} + {pi_comp[2]}",
-                            "paired_parts": [
-                                {"habitat": pi_demand[2], "unit_price": price_demand, "stock_use": stock_use_demand},
-                                {"habitat": pi_comp[2], "unit_price": price_companion, "stock_use": stock_use_companion},
-                            ],
-                        })
+                    # Always add paired option and let optimizer choose the best allocation
+                    options.append({
+                        "type": "paired",
+                        "demand_idx": di,
+                        "demand_habitat": dem_hab,  # Keep original demand habitat for matching
+                        "BANK_KEY": bk,
+                        "bank_name": sstr(d_stock.get("bank_name")),
+                        "bank_id": sstr(d_stock.get("bank_id")),
+                        "supply_habitat": f"{pi_demand[2]} + {pi_comp[2]}",  # Use pricing habitats
+                        "tier": target_tier,
+                        "proximity": target_tier,
+                        "unit_price": blended_price,
+                        "stock_use": {sstr(d_stock["stock_id"]): stock_use_demand, sstr(comp_row["stock_id"]): stock_use_companion},
+                        "price_source": "paired",
+                        "price_habitat": f"{pi_demand[2]} + {pi_comp[2]}",
+                        "paired_parts": [
+                            {"habitat": pi_demand[2], "unit_price": price_demand, "stock_use": stock_use_demand},
+                            {"habitat": pi_comp[2], "unit_price": price_companion, "stock_use": stock_use_companion},
+                        ],
+                    })
 
     return options, stock_caps, stock_bankkey
 
