@@ -3053,14 +3053,6 @@ with st.expander("💷 Pricing completeness (this contract size)", expanded=Fals
     except Exception as e:
         st.error(f"Pricing completeness error: {e}")
 
-# ================= Helpers for downloads =================
-def df_to_csv_bytes(df):
-    buf = BytesIO()
-    buf.write(df.to_csv(index=False).encode("utf-8"))
-    buf.seek(0)
-    return buf
-
-
 # ================= Run optimiser & compute results =================
 # ================= Run optimiser & compute results =================
 if run:
