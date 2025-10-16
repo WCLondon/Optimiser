@@ -694,22 +694,22 @@ if st.session_state.app_mode == "Quote Management":
                     params = {}
                     
                     if search_start_date:
-                        query += " AND submission_date >= :start_date"
+                        query += " AND submission_date >= %(start_date)s"
                         params["start_date"] = search_start_date.isoformat()
                     if search_end_date:
-                        query += " AND submission_date <= :end_date"
+                        query += " AND submission_date <= %(end_date)s"
                         params["end_date"] = search_end_date.isoformat()
                     if search_client:
-                        query += " AND client_name ILIKE :client_name"
+                        query += " AND client_name ILIKE %(client_name)s"
                         params["client_name"] = f"%{search_client}%"
                     if search_ref:
-                        query += " AND reference_number ILIKE :reference_number"
+                        query += " AND reference_number ILIKE %(reference_number)s"
                         params["reference_number"] = f"%{search_ref}%"
                     if search_lpa:
-                        query += " AND target_lpa ILIKE :lpa"
+                        query += " AND target_lpa ILIKE %(lpa)s"
                         params["lpa"] = f"%{search_lpa}%"
                     if search_location:
-                        query += " AND site_location ILIKE :location"
+                        query += " AND site_location ILIKE %(location)s"
                         params["location"] = f"%{search_location}%"
                     
                     query += " ORDER BY submission_date DESC LIMIT 100"
@@ -877,7 +877,7 @@ if st.session_state.app_mode == "Quote Management":
                     engine = db._get_connection()
                     with engine.connect() as conn:
                         customer_quotes_df = pd.read_sql_query(
-                            "SELECT * FROM submissions WHERE customer_id = :customer_id ORDER BY submission_date DESC",
+                            "SELECT * FROM submissions WHERE customer_id = %(customer_id)s ORDER BY submission_date DESC",
                             conn,
                             params={"customer_id": customer_id_select}
                         )

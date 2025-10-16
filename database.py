@@ -505,7 +505,7 @@ class SubmissionsDB:
         engine = self._get_connection()
         with engine.connect() as conn:
             df = pd.read_sql_query(
-                "SELECT * FROM allocation_details WHERE submission_id = :submission_id",
+                "SELECT * FROM allocation_details WHERE submission_id = %(submission_id)s",
                 conn,
                 params={"submission_id": submission_id}
             )
@@ -523,27 +523,27 @@ class SubmissionsDB:
         params = {}
         
         if start_date:
-            query += " AND submission_date >= :start_date"
+            query += " AND submission_date >= %(start_date)s"
             params["start_date"] = start_date
         
         if end_date:
-            query += " AND submission_date <= :end_date"
+            query += " AND submission_date <= %(end_date)s"
             params["end_date"] = end_date
         
         if client_name:
-            query += " AND client_name ILIKE :client_name"
+            query += " AND client_name ILIKE %(client_name)s"
             params["client_name"] = f"%{client_name}%"
         
         if lpa:
-            query += " AND target_lpa ILIKE :lpa"
+            query += " AND target_lpa ILIKE %(lpa)s"
             params["lpa"] = f"%{lpa}%"
         
         if nca:
-            query += " AND target_nca ILIKE :nca"
+            query += " AND target_nca ILIKE %(nca)s"
             params["nca"] = f"%{nca}%"
         
         if reference_number:
-            query += " AND reference_number ILIKE :reference_number"
+            query += " AND reference_number ILIKE %(reference_number)s"
             params["reference_number"] = f"%{reference_number}%"
         
         query += " ORDER BY submission_date DESC"
@@ -894,7 +894,7 @@ class SubmissionsDB:
         
         with engine.connect() as conn:
             df = pd.read_sql_query(
-                text("SELECT * FROM submissions WHERE reference_number LIKE :pattern ORDER BY reference_number"),
+                "SELECT * FROM submissions WHERE reference_number LIKE %(pattern)s ORDER BY reference_number",
                 conn,
                 params={"pattern": f"{base_ref}%"}
             )
