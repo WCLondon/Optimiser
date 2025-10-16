@@ -1577,12 +1577,16 @@ def enrich_banks_geography(banks_df: pd.DataFrame, force_refresh: bool = False) 
     """
     # Check if we have a cached version and it matches the current banks data
     if not force_refresh and st.session_state.get("enriched_banks_cache") is not None:
-        cached_df = st.session_state["enriched_banks_cache"]
-        # Verify the cache is still valid by checking if bank_ids match
-        if "bank_id" in banks_df.columns and "bank_id" in cached_df.columns:
-            if set(banks_df["bank_id"]) == set(cached_df["bank_id"]):
-                # Cache is valid, return it
-                return cached_df.copy()
+        try:
+            cached_df = st.session_state["enriched_banks_cache"]
+            # Verify the cache is still valid by checking if bank_ids match
+            if "bank_id" in banks_df.columns and "bank_id" in cached_df.columns:
+                if set(banks_df["bank_id"]) == set(cached_df["bank_id"]):
+                    # Cache is valid, return it
+                    return cached_df.copy()
+        except Exception as e:
+            # If cache validation fails, proceed with fresh resolution
+            st.sidebar.warning(f"Cache validation failed, refreshing banks: {e}")
     
     # Cache is invalid or force refresh requested, perform enrichment
     df = banks_df.copy()
@@ -1626,8 +1630,12 @@ def enrich_banks_geography(banks_df: pd.DataFrame, force_refresh: bool = False) 
     enriched_df = pd.DataFrame(rows)
     
     # Store in cache with timestamp
-    st.session_state["enriched_banks_cache"] = enriched_df.copy()
-    st.session_state["enriched_banks_timestamp"] = pd.Timestamp.now()
+    try:
+        st.session_state["enriched_banks_cache"] = enriched_df.copy()
+        st.session_state["enriched_banks_timestamp"] = pd.Timestamp.now()
+    except Exception as e:
+        # If caching fails, log but don't break the app
+        st.sidebar.warning(f"Failed to cache banks: {e}")
     
     return enriched_df
 
@@ -1691,14 +1699,19 @@ with st.sidebar:
     if st.button("🔄 Refresh Banks LPA/NCA", 
                  help="Manually refresh all banks' LPA/NCA data from ArcGIS APIs",
                  key="refresh_banks_btn"):
-        # Force refresh the banks enrichment
-        with st.spinner("Refreshing bank LPA/NCA data..."):
-            backend["Banks"] = enrich_banks_geography(backend["Banks"], force_refresh=True)
-            backend["Banks"] = make_bank_key_col(backend["Banks"], backend["Banks"])
-            # Re-normalize pricing with updated banks
-            backend["Pricing"] = normalise_pricing(backend["Pricing"])
-        st.success("✅ Banks refreshed!")
-        st.rerun()
+        try:
+            # Force refresh the banks enrichment
+            with st.spinner("Refreshing bank LPA/NCA data..."):
+                backend["Banks"] = enrich_banks_geography(backend["Banks"], force_refresh=True)
+                backend["Banks"] = make_bank_key_col(backend["Banks"], backend["Banks"])
+                # Re-normalize pricing with updated banks
+                backend["Pricing"] = normalise_pricing(backend["Pricing"])
+            st.success("✅ Banks refreshed!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Error refreshing banks: {e}")
+            import traceback
+            st.code(traceback.format_exc())
 
 # Check if we need to refresh the map after optimization (after backend is loaded)
 if st.session_state.get("needs_map_refresh", False):
