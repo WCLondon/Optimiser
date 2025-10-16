@@ -3745,9 +3745,6 @@ Our key advantages:
 <br><br>
 <strong>Your Quote - £{total_with_admin:,.0f} + VAT</strong>
 <br><br>
-{f"<strong>Discount Applied:</strong> Introducer/Promoter: {promoter_name}" if promoter_name and promoter_discount_type != 'no_discount' else ""}
-{f"<br>Discount Type: {'Tier Up (pricing uses one contract size tier higher for better rates)' if promoter_discount_type == 'tier_up' else f'{promoter_discount_value}% percentage discount on all items (excluding £500 admin fee)'}" if promoter_name and promoter_discount_type != 'no_discount' else ""}
-{"<br><br>" if promoter_name and promoter_discount_type != 'no_discount' else ""}
 See a detailed breakdown of the pricing below. I've attached a PDF outlining the BNG offset and condition discharge process. If you have any questions, please let us know—we're here to help.
 <br><br>
 
@@ -4029,6 +4026,56 @@ if (st.session_state.get("optimization_complete", False) and
             st.session_state.email_ref_number = form_ref_number
             st.session_state.email_location = form_location
             st.success("Email details updated!")
+            
+            # Save to database after updating email details
+            if not db:
+                st.error("❌ Database is not available.")
+            elif not form_client_name or form_client_name == "INSERT NAME":
+                st.warning("⚠️ Please enter a valid client name before saving.")
+            elif not form_ref_number or form_ref_number == "BNG00XXX":
+                st.warning("⚠️ Please enter a valid reference number before saving.")
+            elif not form_location or form_location == "INSERT LOCATION":
+                st.warning("⚠️ Please enter a valid location before saving.")
+            elif session_alloc_df.empty:
+                st.error("❌ No optimization results to save. Please run the optimizer first.")
+            else:
+                try:
+                    # Get the current username
+                    current_user = st.secrets.get("auth", {}).get("username", DEFAULT_USER)
+                    
+                    # Determine contract size from allocation data
+                    present_sizes = backend.get("Pricing", pd.DataFrame()).get("contract_size", pd.Series()).drop_duplicates().tolist() if backend else []
+                    total_units = session_demand_df["units_required"].sum() if not session_demand_df.empty else 0.0
+                    contract_size_val = select_contract_size(total_units, present_sizes) if present_sizes else "Unknown"
+                    
+                    submission_id = db.store_submission(
+                        client_name=form_client_name,
+                        reference_number=form_ref_number,
+                        site_location=form_location,
+                        target_lpa=st.session_state.get("target_lpa_name", ""),
+                        target_nca=st.session_state.get("target_nca_name", ""),
+                        target_lat=st.session_state.get("target_lat"),
+                        target_lon=st.session_state.get("target_lon"),
+                        lpa_neighbors=st.session_state.get("lpa_neighbors", []),
+                        nca_neighbors=st.session_state.get("nca_neighbors", []),
+                        demand_df=session_demand_df,
+                        allocation_df=session_alloc_df,
+                        contract_size=contract_size_val,
+                        total_cost=session_total_cost,
+                        admin_fee=ADMIN_FEE_GBP,
+                        manual_hedgerow_rows=st.session_state.get("manual_hedgerow_rows", []),
+                        manual_watercourse_rows=st.session_state.get("manual_watercourse_rows", []),
+                        username=current_user,
+                        promoter_name=st.session_state.get("selected_promoter"),
+                        promoter_discount_type=st.session_state.get("promoter_discount_type"),
+                        promoter_discount_value=st.session_state.get("promoter_discount_value")
+                    )
+                    st.success(f"✅ Quote saved to database! Submission ID: {submission_id}")
+                    st.info(f"📊 Client: {form_client_name} | Reference: {form_ref_number} | Total: £{session_total_cost + ADMIN_FEE_GBP:,.0f}")
+                except Exception as e:
+                    st.error(f"❌ Error saving to database: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
             # Don't call st.rerun() - let it naturally update
         
         # Use the session state values for generating the report
@@ -4131,61 +4178,6 @@ Wild Capital Team"""
             mime="message/rfc822",
             help="Download as .eml file - double-click to open in your email client with full HTML formatting"
         )
-        
-        # Save to database button
-        st.markdown("---")
-        st.markdown("**💾 Save to Database:**")
-        
-        if st.button("💾 Save Quote to Database", key="save_to_db_btn", help="Save this quote to the database for future reference"):
-            # Check if we have valid data
-            if not db:
-                st.error("❌ Database is not available.")
-            elif not client_name or client_name == "INSERT NAME":
-                st.warning("⚠️ Please enter a valid client name before saving.")
-            elif not ref_number or ref_number == "BNG00XXX":
-                st.warning("⚠️ Please enter a valid reference number before saving.")
-            elif not location or location == "INSERT LOCATION":
-                st.warning("⚠️ Please enter a valid location before saving.")
-            elif session_alloc_df.empty:
-                st.error("❌ No optimization results to save. Please run the optimizer first.")
-            else:
-                try:
-                    # Get the current username
-                    current_user = st.secrets.get("auth", {}).get("username", DEFAULT_USER)
-                    
-                    # Determine contract size from allocation data
-                    present_sizes = backend.get("Pricing", pd.DataFrame()).get("contract_size", pd.Series()).drop_duplicates().tolist() if backend else []
-                    total_units = session_demand_df["units_required"].sum() if not session_demand_df.empty else 0.0
-                    contract_size_val = select_contract_size(total_units, present_sizes) if present_sizes else "Unknown"
-                    
-                    submission_id = db.store_submission(
-                        client_name=client_name,
-                        reference_number=ref_number,
-                        site_location=location,
-                        target_lpa=st.session_state.get("target_lpa_name", ""),
-                        target_nca=st.session_state.get("target_nca_name", ""),
-                        target_lat=st.session_state.get("target_lat"),
-                        target_lon=st.session_state.get("target_lon"),
-                        lpa_neighbors=st.session_state.get("lpa_neighbors", []),
-                        nca_neighbors=st.session_state.get("nca_neighbors", []),
-                        demand_df=session_demand_df,
-                        allocation_df=session_alloc_df,
-                        contract_size=contract_size_val,
-                        total_cost=session_total_cost,
-                        admin_fee=ADMIN_FEE_GBP,
-                        manual_hedgerow_rows=st.session_state.get("manual_hedgerow_rows", []),
-                        manual_watercourse_rows=st.session_state.get("manual_watercourse_rows", []),
-                        username=current_user,
-                        promoter_name=st.session_state.get("selected_promoter"),
-                        promoter_discount_type=st.session_state.get("promoter_discount_type"),
-                        promoter_discount_value=st.session_state.get("promoter_discount_value")
-                    )
-                    st.success(f"✅ Quote saved to database! Submission ID: {submission_id}")
-                    st.info(f"📊 Client: {client_name} | Reference: {ref_number} | Total: £{session_total_cost + ADMIN_FEE_GBP:,.0f}")
-                except Exception as e:
-                    st.error(f"❌ Error saving to database: {e}")
-                    import traceback
-                    st.code(traceback.format_exc())
 
 # Debug section (temporary - can remove later)
 if st.checkbox("Show detailed debug info", value=False):
