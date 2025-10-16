@@ -2142,37 +2142,40 @@ def prepare_options(demand_df: pd.DataFrame,
             if demand_rows.empty:
                 continue
             
-            # Get "companion" candidates: any area habitat with positive stock
-            # These will be used to offset the SRM penalty
-            companion_candidates = stock_full[
-                (stock_full["BANK_KEY"] == bk) &
-                (stock_full["habitat_name"] != dem_hab) &
-                (~stock_full["habitat_name"].map(is_hedgerow)) &
-                (stock_full["quantity_available"].astype(float) > 0)
-            ].copy()
-            
-            if companion_candidates.empty:
-                continue
-            
-            # Process each demand habitat stock entry
+            # Process each demand habitat stock entry (includes substitutes from trading rules)
             for _, d_stock in demand_rows.iterrows():
                 cap_d = float(d_stock.get("quantity_available", 0) or 0.0)
                 if cap_d <= 0:
                     continue
                 
+                # Get supply habitat name (may be different from demand if it's a substitute)
+                supply_hab = sstr(d_stock["habitat_name"])
+                
+                # Get "companion" candidates: any area habitat with positive stock
+                # excluding the supply habitat itself to avoid self-pairing
+                companion_candidates = stock_full[
+                    (stock_full["BANK_KEY"] == bk) &
+                    (stock_full["habitat_name"] != supply_hab) &
+                    (~stock_full["habitat_name"].map(is_hedgerow)) &
+                    (stock_full["quantity_available"].astype(float) > 0)
+                ].copy()
+                
+                if companion_candidates.empty:
+                    continue
+                
                 # For each tier (adjacent and far), find the best companion
                 for target_tier in ["adjacent", "far"]:
-                    # Check if demand habitat is at this tier
+                    # Check if supply habitat is at this tier
                     tier_demand = tier_for_bank(
                         sstr(d_stock.get("lpa_name")), sstr(d_stock.get("nca_name")),
                         target_lpa, target_nca, lpa_neigh, nca_neigh, lpa_neigh_norm, nca_neigh_norm
                     )
-                    # Only create paired options for the actual tier of the demand
+                    # Only create paired options for the actual tier of the supply habitat
                     if tier_demand != target_tier:
                         continue
                     
-                    # Get demand habitat price at this tier
-                    pi_demand = find_price_for_supply(bk, dem_hab, target_tier, d_broader, d_dist)
+                    # Get supply habitat price at this tier (not demand habitat - use actual supply)
+                    pi_demand = find_price_for_supply(bk, supply_hab, target_tier, d_broader, d_dist)
                     if not pi_demand:
                         continue
                     price_demand = float(pi_demand[0])
