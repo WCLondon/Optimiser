@@ -1,6 +1,32 @@
-# BNG Optimiser - Standalone
+# BNG Optimiser
 
+A comprehensive system for optimizing Biodiversity Net Gain (BNG) unit allocation across multiple habitat banks.
+
+> **🆕 NEW: Attio App Integration Available!**  
+> This project now includes a complete Attio App migration with FastAPI backend and React frontend.  
+> See [ATTIO_APP_README.md](ATTIO_APP_README.md) for the new Attio App implementation.
+
+## Available Implementations
+
+### 1. Attio App (NEW - Recommended for Attio Users)
+A modern Attio App with REST API backend for native integration with Attio record pages.
+
+- **Frontend**: React widget using Attio App SDK
+- **Backend**: FastAPI server with async job processing
+- **Integration**: Direct integration with Attio Assert Record API
+- **Deployment**: Dockerized, ready for production
+
+📖 **Get Started**: [ATTIO_QUICKSTART.md](ATTIO_QUICKSTART.md)  
+📚 **Documentation**: [ATTIO_APP_README.md](ATTIO_APP_README.md)
+
+### 2. Streamlit App (Original - Standalone)
 A Streamlit application for optimizing Biodiversity Net Gain (BNG) unit allocation across multiple habitat banks.
+
+📖 **Continue reading below** for Streamlit app documentation.
+
+---
+
+# Streamlit App Documentation
 
 ## Features
 
