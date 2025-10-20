@@ -4126,18 +4126,31 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
     manual_area_cost = 0.0
     for row in manual_area_rows:
         habitat_lost = sstr(row.get("habitat_lost", ""))
-        habitat_name = sstr(row.get("habitat_name", ""))
         units = float(row.get("units", 0.0) or 0.0)
-        price_per_unit = float(row.get("price_per_unit", 0.0) or 0.0)
         is_paired = bool(row.get("paired", False))
         
-        if habitat_name and units > 0:
+        if units > 0:
             if is_paired:
-                # Paired entry - apply SRM multiplier
-                srm = float(row.get("srm_multiplier", 4/3))
-                effective_units = units * srm
-                offset_cost = effective_units * price_per_unit
-                manual_area_cost += offset_cost
+                # Paired entry - process both habitats separately
+                demand_habitat = sstr(row.get("demand_habitat", ""))
+                companion_habitat = sstr(row.get("companion_habitat", ""))
+                demand_bank = sstr(row.get("demand_bank", ""))
+                companion_bank = sstr(row.get("companion_bank", ""))
+                demand_price = float(row.get("demand_price", 0.0) or 0.0)
+                companion_price = float(row.get("companion_price", 0.0) or 0.0)
+                demand_stock = float(row.get("demand_stock_use", 0.5))
+                companion_stock = 1.0 - demand_stock
+                srm_tier = sstr(row.get("srm_tier", "adjacent"))
+                
+                # Calculate units for each habitat
+                demand_units = units * demand_stock
+                companion_units = units * companion_stock
+                
+                # Calculate costs
+                demand_cost = demand_units * demand_price
+                companion_cost = companion_units * companion_price
+                total_paired_cost = demand_cost + companion_cost
+                manual_area_cost += total_paired_cost
                 
                 # Determine distinctiveness for lost habitat
                 if habitat_lost == NET_GAIN_LABEL:
@@ -4152,78 +4165,106 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                         demand_distinctiveness = "Medium"
                         demand_habitat_display = habitat_lost if habitat_lost else "Not specified"
                 
-                # Determine distinctiveness for supplied habitat
-                if habitat_name == NET_GAIN_LABEL:
-                    supply_distinctiveness = "10% Net Gain"
-                    supply_habitat_display = "Any"
-                else:
-                    cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat_name]
-                    if not cat_match.empty:
-                        supply_distinctiveness = cat_match["distinctiveness_name"].iloc[0]
-                        supply_habitat_display = habitat_name
+                # Get spatial risk information
+                spatial_risk_offset_by = sstr(row.get("spatial_risk_offset_by", "None"))
+                spatial_risk_srm = sstr(row.get("spatial_risk_srm", ""))
+                
+                # Add entry for demand habitat
+                if demand_habitat:
+                    demand_cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == demand_habitat]
+                    if not demand_cat_match.empty:
+                        demand_supply_dist = demand_cat_match["distinctiveness_name"].iloc[0]
                     else:
-                        supply_distinctiveness = "Medium"
-                        supply_habitat_display = habitat_name
+                        demand_supply_dist = "Medium"
+                    
+                    # Build habitat display with spatial risk indicator
+                    demand_display = f"{demand_habitat} (Paired - {srm_tier}) from {demand_bank}"
+                    if spatial_risk_offset_by == "Demand Habitat":
+                        demand_display += f" [Offsets Spatial Risk: {spatial_risk_srm}]"
+                    
+                    row_data = {
+                        "Distinctiveness": demand_distinctiveness,
+                        "Habitats Lost": demand_habitat_display,
+                        "# Units": f"{units:.2f}",
+                        "Distinctiveness_Supply": demand_supply_dist,
+                        "Habitats Supplied": demand_display,
+                        "# Units_Supply": f"{demand_units:.2f}",
+                        "Price Per Unit": f"£{demand_price:,.0f}",
+                        "Offset Cost": f"£{demand_cost:,.0f}"
+                    }
+                    area_habitats.append(row_data)
                 
-                # Add paired indicator
-                srm_display = "4/3" if abs(srm - 4/3) < 0.01 else "2.0"
-                spatial_risk = " (Offsets Spatial Risk)" if row.get("spatial_risk_offset", False) else ""
-                supply_habitat_display += f" (Paired, SRM {srm_display}){spatial_risk}"
-                
-                row_data = {
-                    "Distinctiveness": demand_distinctiveness,
-                    "Habitats Lost": demand_habitat_display,
-                    "# Units": f"{units:.2f}",
-                    "Distinctiveness_Supply": supply_distinctiveness,
-                    "Habitats Supplied": supply_habitat_display,
-                    "# Units_Supply": f"{effective_units:.2f}",
-                    "Price Per Unit": f"£{price_per_unit:,.0f}",
-                    "Offset Cost": f"£{offset_cost:,.0f}"
-                }
-                area_habitats.append(row_data)
-                
+                # Add entry for companion habitat
+                if companion_habitat:
+                    companion_cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == companion_habitat]
+                    if not companion_cat_match.empty:
+                        companion_supply_dist = companion_cat_match["distinctiveness_name"].iloc[0]
+                    else:
+                        companion_supply_dist = "Medium"
+                    
+                    # Build habitat display with spatial risk indicator
+                    companion_display = f"{companion_habitat} (Paired - companion) from {companion_bank}"
+                    if spatial_risk_offset_by == "Companion Habitat":
+                        companion_display += f" [Offsets Spatial Risk: {spatial_risk_srm}]"
+                    
+                    row_data = {
+                        "Distinctiveness": demand_distinctiveness,
+                        "Habitats Lost": demand_habitat_display,
+                        "# Units": f"{units:.2f}",
+                        "Distinctiveness_Supply": companion_supply_dist,
+                        "Habitats Supplied": companion_display,
+                        "# Units_Supply": f"{companion_units:.2f}",
+                        "Price Per Unit": f"£{companion_price:,.0f}",
+                        "Offset Cost": f"£{companion_cost:,.0f}"
+                    }
+                    area_habitats.append(row_data)
+                    
             else:
-                # Simple non-paired entry
-                offset_cost = units * price_per_unit
-                manual_area_cost += offset_cost
+                # Simple non-paired entry (original logic)
+                habitat_name = sstr(row.get("habitat_name", ""))
+                price_per_unit = float(row.get("price_per_unit", 0.0) or 0.0)
                 
-                # Determine distinctiveness for lost habitat
-                if habitat_lost == NET_GAIN_LABEL:
-                    demand_distinctiveness = "10% Net Gain"
-                    demand_habitat_display = "Any"
-                else:
-                    cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat_lost]
-                    if not cat_match.empty:
-                        demand_distinctiveness = cat_match["distinctiveness_name"].iloc[0]
-                        demand_habitat_display = habitat_lost
+                if habitat_name:
+                    offset_cost = units * price_per_unit
+                    manual_area_cost += offset_cost
+                    
+                    # Determine distinctiveness for lost habitat
+                    if habitat_lost == NET_GAIN_LABEL:
+                        demand_distinctiveness = "10% Net Gain"
+                        demand_habitat_display = "Any"
                     else:
-                        demand_distinctiveness = "Medium"
-                        demand_habitat_display = habitat_lost if habitat_lost else "Not specified"
-                
-                # Determine distinctiveness for supplied habitat
-                if habitat_name == NET_GAIN_LABEL:
-                    supply_distinctiveness = "10% Net Gain"
-                    supply_habitat_display = "Any"
-                else:
-                    cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat_name]
-                    if not cat_match.empty:
-                        supply_distinctiveness = cat_match["distinctiveness_name"].iloc[0]
-                        supply_habitat_display = habitat_name
+                        cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat_lost]
+                        if not cat_match.empty:
+                            demand_distinctiveness = cat_match["distinctiveness_name"].iloc[0]
+                            demand_habitat_display = habitat_lost
+                        else:
+                            demand_distinctiveness = "Medium"
+                            demand_habitat_display = habitat_lost if habitat_lost else "Not specified"
+                    
+                    # Determine distinctiveness for supplied habitat
+                    if habitat_name == NET_GAIN_LABEL:
+                        supply_distinctiveness = "10% Net Gain"
+                        supply_habitat_display = "Any"
                     else:
-                        supply_distinctiveness = "Medium"
-                        supply_habitat_display = habitat_name
-                
-                row_data = {
-                    "Distinctiveness": demand_distinctiveness,
-                    "Habitats Lost": demand_habitat_display,
-                    "# Units": f"{units:.2f}",
-                    "Distinctiveness_Supply": supply_distinctiveness,
-                    "Habitats Supplied": supply_habitat_display,
-                    "# Units_Supply": f"{units:.2f}",
-                    "Price Per Unit": f"£{price_per_unit:,.0f}",
-                    "Offset Cost": f"£{offset_cost:,.0f}"
-                }
-                area_habitats.append(row_data)
+                        cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat_name]
+                        if not cat_match.empty:
+                            supply_distinctiveness = cat_match["distinctiveness_name"].iloc[0]
+                            supply_habitat_display = habitat_name
+                        else:
+                            supply_distinctiveness = "Medium"
+                            supply_habitat_display = habitat_name
+                    
+                    row_data = {
+                        "Distinctiveness": demand_distinctiveness,
+                        "Habitats Lost": demand_habitat_display,
+                        "# Units": f"{units:.2f}",
+                        "Distinctiveness_Supply": supply_distinctiveness,
+                        "Habitats Supplied": supply_habitat_display,
+                        "# Units_Supply": f"{units:.2f}",
+                        "Price Per Unit": f"£{price_per_unit:,.0f}",
+                        "Offset Cost": f"£{offset_cost:,.0f}"
+                    }
+                    area_habitats.append(row_data)
     
     # Update total cost to include manual entries
     total_cost_with_manual = total_cost + manual_hedgerow_cost + manual_watercourse_cost + manual_area_cost
@@ -4547,12 +4588,16 @@ if st.session_state.get("optimization_complete", False) and st.session_state.get
         manual_area_cost = 0.0
         for r in st.session_state.get("manual_area_rows", []):
             if r.get("paired", False):
-                # Paired entry - apply SRM multiplier
+                # Paired entry - use detailed calculation
                 units = float(r.get("units", 0.0) or 0.0)
-                price = float(r.get("price_per_unit", 0.0) or 0.0)
-                srm = float(r.get("srm_multiplier", 4/3))
-                effective_units = units * srm
-                manual_area_cost += effective_units * price
+                demand_stock = float(r.get("demand_stock_use", 0.5))
+                companion_stock = 1.0 - demand_stock
+                demand_price = float(r.get("demand_price", 0.0) or 0.0)
+                companion_price = float(r.get("companion_price", 0.0) or 0.0)
+                
+                demand_units = units * demand_stock
+                companion_units = units * companion_stock
+                manual_area_cost += (demand_units * demand_price) + (companion_units * companion_price)
             else:
                 # Simple non-paired entry
                 units = float(r.get("units", 0.0) or 0.0)
@@ -4652,8 +4697,8 @@ if st.session_state.get("optimization_complete", False):
             if is_paired:
                 st.markdown(f"**Entry {idx + 1}** (Paired Allocation)")
                 
-                # Row 1: Habitat Lost and Units
-                c1, c2, c3, c_del = st.columns([0.30, 0.30, 0.30, 0.10])
+                # First row: Habitat Lost and Paired checkbox
+                c1, c2, c_del = st.columns([0.45, 0.45, 0.10])
                 with c1:
                     if area_choices_with_ng:
                         default_idx = None
@@ -4666,21 +4711,10 @@ if st.session_state.get("optimization_complete", False):
                             help="Select area habitat lost"
                         )
                 with c2:
-                    if area_choices_with_ng:
-                        default_idx = None
-                        if row.get("habitat_name") and row["habitat_name"] in area_choices_with_ng:
-                            default_idx = area_choices_with_ng.index(row["habitat_name"])
-                        st.session_state.manual_area_rows[idx]["habitat_name"] = st.selectbox(
-                            "Habitat to Mitigate", area_choices_with_ng,
-                            index=default_idx,
-                            key=f"manual_area_hab_{row['id']}",
-                            help="Select area habitat to mitigate (primary paired habitat)"
-                        )
-                with c3:
                     st.session_state.manual_area_rows[idx]["units"] = st.number_input(
-                        "Units", min_value=0.0, step=0.01, value=float(row.get("units", 0.0)), 
+                        "Units Required", min_value=0.0, step=0.01, value=float(row.get("units", 0.0)), 
                         key=f"manual_area_units_{row['id']}",
-                        help="Total units required"
+                        help="Total units of habitat lost"
                     )
                 with c_del:
                     st.markdown("")  # Spacer
@@ -4688,46 +4722,148 @@ if st.session_state.get("optimization_complete", False):
                     if st.button("🗑️", key=f"del_manual_area_{row['id']}", help="Remove this entry"):
                         to_delete_area.append(row["id"])
                 
-                # Row 2: Price and SRM selection
-                c1, c2, c3 = st.columns([0.30, 0.35, 0.35])
+                # Second row: Demand Habitat details
+                st.markdown("**Demand Habitat:**")
+                c1, c2, c3 = st.columns([0.40, 0.30, 0.30])
                 with c1:
-                    st.session_state.manual_area_rows[idx]["price_per_unit"] = st.number_input(
-                        "Price/Unit (£)", min_value=0.0, step=1.0, value=float(row.get("price_per_unit", 0.0)),
-                        key=f"manual_area_price_{row['id']}",
-                        help="Price per unit for the habitat"
+                    if area_choices_with_ng:
+                        default_idx = None
+                        if row.get("demand_habitat") and row["demand_habitat"] in area_choices_with_ng:
+                            default_idx = area_choices_with_ng.index(row["demand_habitat"])
+                        st.session_state.manual_area_rows[idx]["demand_habitat"] = st.selectbox(
+                            "Habitat Type", area_choices_with_ng,
+                            index=default_idx,
+                            key=f"manual_area_demand_hab_{row['id']}",
+                            help="Primary habitat in paired allocation"
+                        )
+                with c2:
+                    if bank_list:
+                        default_idx = 0
+                        if row.get("demand_bank") and row["demand_bank"] in bank_list:
+                            default_idx = bank_list.index(row["demand_bank"])
+                        st.session_state.manual_area_rows[idx]["demand_bank"] = st.selectbox(
+                            "Bank", bank_list,
+                            index=default_idx,
+                            key=f"manual_area_demand_bank_{row['id']}",
+                            help="Bank providing demand habitat"
+                        )
+                    else:
+                        st.session_state.manual_area_rows[idx]["demand_bank"] = st.text_input(
+                            "Bank", value=row.get("demand_bank", ""),
+                            key=f"manual_area_demand_bank_{row['id']}"
+                        )
+                with c3:
+                    st.session_state.manual_area_rows[idx]["demand_price"] = st.number_input(
+                        "Price/Unit (£)", min_value=0.0, step=1.0, value=float(row.get("demand_price", 0.0)),
+                        key=f"manual_area_demand_price_{row['id']}",
+                        help="Price per unit for demand habitat"
+                    )
+                
+                # Third row: Companion Habitat details
+                st.markdown("**Companion Habitat:**")
+                c1, c2, c3 = st.columns([0.40, 0.30, 0.30])
+                with c1:
+                    if area_choices_with_ng:
+                        default_idx = None
+                        if row.get("companion_habitat") and row["companion_habitat"] in area_choices_with_ng:
+                            default_idx = area_choices_with_ng.index(row["companion_habitat"])
+                        st.session_state.manual_area_rows[idx]["companion_habitat"] = st.selectbox(
+                            "Habitat Type", area_choices_with_ng,
+                            index=default_idx,
+                            key=f"manual_area_companion_hab_{row['id']}",
+                            help="Companion habitat in paired allocation"
+                        )
+                with c2:
+                    if bank_list:
+                        default_idx = 0
+                        if row.get("companion_bank") and row["companion_bank"] in bank_list:
+                            default_idx = bank_list.index(row["companion_bank"])
+                        st.session_state.manual_area_rows[idx]["companion_bank"] = st.selectbox(
+                            "Bank", bank_list,
+                            index=default_idx,
+                            key=f"manual_area_companion_bank_{row['id']}",
+                            help="Bank providing companion habitat"
+                        )
+                    else:
+                        st.session_state.manual_area_rows[idx]["companion_bank"] = st.text_input(
+                            "Bank", value=row.get("companion_bank", ""),
+                            key=f"manual_area_companion_bank_{row['id']}"
+                        )
+                with c3:
+                    st.session_state.manual_area_rows[idx]["companion_price"] = st.number_input(
+                        "Price/Unit (£)", min_value=0.0, step=1.0, value=float(row.get("companion_price", 0.0)),
+                        key=f"manual_area_companion_price_{row['id']}",
+                        help="Price per unit for companion habitat"
+                    )
+                
+                # Fourth row: SRM selection and stock use ratios
+                c1, c2, c3 = st.columns([0.33, 0.33, 0.34])
+                with c1:
+                    tier_options = ["local", "adjacent", "far"]
+                    default_tier_idx = 1  # Default to adjacent
+                    if row.get("srm_tier") and row["srm_tier"] in tier_options:
+                        default_tier_idx = tier_options.index(row["srm_tier"])
+                    st.session_state.manual_area_rows[idx]["srm_tier"] = st.selectbox(
+                        "SRM Tier", tier_options,
+                        index=default_tier_idx,
+                        key=f"manual_area_srm_{row['id']}",
+                        help="Strategic Resource Multiplier tier: local (1.0), adjacent (1.33), far (2.0)"
                     )
                 with c2:
-                    srm_options = ["4/3 (Adjacent)", "2.0 (Far)"]
-                    default_srm_idx = 0  # Default to 4/3
-                    current_srm = row.get("srm_multiplier", 4/3)
-                    if abs(current_srm - 2.0) < 0.01:
-                        default_srm_idx = 1
-                    selected_srm = st.selectbox(
-                        "SRM Multiplier", srm_options,
-                        index=default_srm_idx,
-                        key=f"manual_area_srm_{row['id']}",
-                        help="Strategic Resource Multiplier: 4/3 for adjacent, 2.0 for far"
+                    st.session_state.manual_area_rows[idx]["demand_stock_use"] = st.number_input(
+                        "Demand Stock Use", min_value=0.0, max_value=1.0, step=0.01, 
+                        value=float(row.get("demand_stock_use", 0.5)),
+                        key=f"manual_area_demand_stock_{row['id']}",
+                        help="Proportion of stock from demand habitat (0.0 to 1.0)"
                     )
-                    # Store the numeric value
-                    st.session_state.manual_area_rows[idx]["srm_multiplier"] = 4/3 if "4/3" in selected_srm else 2.0
                 with c3:
-                    st.session_state.manual_area_rows[idx]["spatial_risk_offset"] = st.checkbox(
-                        "Offsets Spatial Risk", 
-                        value=bool(row.get("spatial_risk_offset", False)),
-                        key=f"manual_area_spatial_{row['id']}",
-                        help="Check if this habitat is offsetting the spatial risk in the paired allocation"
-                    )
+                    companion_stock = 1.0 - float(row.get("demand_stock_use", 0.5))
+                    st.metric("Companion Stock Use", f"{companion_stock:.2f}", help="Auto-calculated to sum to 1.0")
                 
                 # Display calculated values
+                srm_mult = {"local": 1.0, "adjacent": 4/3, "far": 2.0}.get(row.get("srm_tier", "adjacent"), 4/3)
                 units_req = float(row.get("units", 0.0))
-                price = float(row.get("price_per_unit", 0.0))
-                srm = float(row.get("srm_multiplier", 4/3))
-                effective_units = units_req * srm
-                total_cost = effective_units * price
+                demand_stock = float(row.get("demand_stock_use", 0.5))
+                companion_stock = 1.0 - demand_stock
+                demand_units = units_req * demand_stock
+                companion_units = units_req * companion_stock
+                demand_pr = float(row.get("demand_price", 0.0))
+                companion_pr = float(row.get("companion_price", 0.0))
+                total_cost = (demand_units * demand_pr) + (companion_units * companion_pr)
                 
                 st.info(
-                    f"**Calculation:** {units_req:.2f} units × SRM {srm:.2f} = {effective_units:.2f} effective units × £{price:.0f} = **£{total_cost:,.0f}**"
+                    f"**Calculation:** SRM = {srm_mult:.2f} | "
+                    f"Demand: {demand_units:.2f} units × £{demand_pr:.0f} = £{demand_units * demand_pr:,.0f} | "
+                    f"Companion: {companion_units:.2f} units × £{companion_pr:.0f} = £{companion_units * companion_pr:,.0f} | "
+                    f"**Total: £{total_cost:,.0f}**"
                 )
+                
+                # Fifth row: Spatial Risk Configuration
+                st.markdown("**Spatial Risk Configuration:**")
+                c1, c2 = st.columns([0.5, 0.5])
+                with c1:
+                    spatial_risk_options = ["None", "Demand Habitat", "Companion Habitat"]
+                    default_spatial_idx = 0
+                    current_spatial = row.get("spatial_risk_offset_by", "None")
+                    if current_spatial in spatial_risk_options:
+                        default_spatial_idx = spatial_risk_options.index(current_spatial)
+                    st.session_state.manual_area_rows[idx]["spatial_risk_offset_by"] = st.selectbox(
+                        "Which habitat offsets spatial risk?",
+                        spatial_risk_options,
+                        index=default_spatial_idx,
+                        key=f"manual_area_spatial_offset_{row['id']}",
+                        help="Select which habitat in the pair is offsetting the spatial risk"
+                    )
+                with c2:
+                    srm_value_options = ["4/3 (Adjacent)", "2.0 (Far)"]
+                    default_srm_value_idx = 0 if row.get("srm_tier", "adjacent") == "adjacent" else 1
+                    st.session_state.manual_area_rows[idx]["spatial_risk_srm"] = st.selectbox(
+                        "Spatial Risk SRM",
+                        srm_value_options,
+                        index=default_srm_value_idx,
+                        key=f"manual_area_spatial_srm_{row['id']}",
+                        help="The SRM value applied for spatial risk (4/3 or 2.0)"
+                    )
                 
                 # Paired checkbox toggle
                 c1, c2 = st.columns([0.5, 0.5])
