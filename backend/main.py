@@ -8,7 +8,7 @@ checking job status, and integrating with Attio's Assert Record API.
 import os
 import uuid
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from enum import Enum
 
@@ -108,7 +108,7 @@ async def root():
 async def health_check():
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
 
@@ -133,9 +133,9 @@ async def run_quote_endpoint(
         "progress": "Job queued",
         "result": None,
         "error": None,
-        "created_at": datetime.utcnow().isoformat(),
-        "updated_at": datetime.utcnow().isoformat(),
-        "request": request.dict()
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "request": request.model_dump()
     }
     
     # Start background task
@@ -156,13 +156,13 @@ async def process_quote_job(job_id: str, request: RunQuoteRequest):
         # Update status to running
         jobs_store[job_id]["status"] = JobStatus.RUNNING
         jobs_store[job_id]["progress"] = "Running optimization..."
-        jobs_store[job_id]["updated_at"] = datetime.utcnow().isoformat()
+        jobs_store[job_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
         
         # Prepare payload for run_quote
         payload = {
-            "demand": [d.dict() for d in request.demand],
+            "demand": [d.model_dump() for d in request.demand],
             "backend_data": request.backend_data or get_default_backend_data(),
-            "location": request.location.dict() if request.location else {},
+            "location": request.location.model_dump() if request.location else {},
             "contract_size": request.contract_size,
             "options": request.options or {}
         }
@@ -180,13 +180,13 @@ async def process_quote_job(job_id: str, request: RunQuoteRequest):
             jobs_store[job_id]["error"] = result.get("error", "Unknown error")
             jobs_store[job_id]["progress"] = "Optimization failed"
         
-        jobs_store[job_id]["updated_at"] = datetime.utcnow().isoformat()
+        jobs_store[job_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
         
     except Exception as e:
         jobs_store[job_id]["status"] = JobStatus.FAILED
         jobs_store[job_id]["error"] = str(e)
         jobs_store[job_id]["progress"] = "Job failed with exception"
-        jobs_store[job_id]["updated_at"] = datetime.utcnow().isoformat()
+        jobs_store[job_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
 
 
 @app.get("/status/{job_id}", response_model=JobStatusResponse)
@@ -274,7 +274,7 @@ def map_quote_to_attio_record(
                 "total_cost": quote_results.get("total_cost", 0),
                 "contract_size": quote_results.get("contract_size", ""),
                 "allocation_count": len(quote_results.get("allocations", [])),
-                "quote_date": datetime.utcnow().isoformat(),
+                "quote_date": datetime.now(timezone.utc).isoformat(),
             }
         }
     }
