@@ -1,0 +1,41 @@
+{
+  "name": "BNG Optimiser",
+  "description": "Biodiversity Net Gain unit allocation optimizer - run quotes directly from Attio records",
+  "version": "1.0.0",
+  "scopes": [
+    "records:read",
+    "records:write",
+    "object-configuration:read"
+  ],
+  "widgets": [
+    {
+      "id": "quote-widget",
+      "name": "Run BNG Quote",
+      "description": "Calculate optimal BNG unit allocation",
+      "type": "record",
+      "component": "QuoteWidget",
+      "settings": {
+        "backendUrl": {
+          "type": "string",
+          "label": "Backend API URL",
+          "description": "URL of the FastAPI backend (e.g., https://your-backend.com)",
+          "required": true
+        },
+        "enableIframeMode": {
+          "type": "boolean",
+          "label": "Enable iframe mode",
+          "description": "Use iframe widget instead of native SDK widget",
+          "default": false
+        }
+      }
+    }
+  ],
+  "routes": [
+    {
+      "path": "/save-quote",
+      "handler": "saveQuoteHandler",
+      "method": "POST",
+      "description": "Save quote results to Attio record"
+    }
+  ]
+}

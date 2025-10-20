@@ -49,3 +49,25 @@ test_data_serialization.py
 test_sanitize_function.py
 test_integration.py
 FIX_VERIFICATION.md
+
+# Attio App - Backend
+backend/.env
+backend/__pycache__/
+backend/*.pyc
+
+# Attio App - Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+
+# Docker
+.env
+docker-compose.override.yml
+
+# IDE - VSCode
+.vscode/
+
+# Logs
+*.log
+logs/

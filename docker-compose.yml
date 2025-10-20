@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - ATTIO_API_KEY=${ATTIO_API_KEY}
+      - ATTIO_API_URL=${ATTIO_API_URL:-https://api.attio.com/v2}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - db
+      - redis
+    restart: unless-stopped
+    volumes:
+      # Mount backend data directory if using local Excel files
+      - ./data:/app/data:ro
+    networks:
+      - optimiser-network
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-optimiser_db}
+      - POSTGRES_USER=${POSTGRES_USER:-optimiser}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - optimiser-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - optimiser-network
+
+  # Optional: pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_EMAIL:-admin@optimiser.local}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_PASSWORD:-admin}
+    ports:
+      - "5050:80"
+    depends_on:
+      - db
+    restart: unless-stopped
+    networks:
+      - optimiser-network
+
+volumes:
+  postgres-data:
+
+networks:
+  optimiser-network:
+    driver: bridge
