@@ -34,6 +34,8 @@ and updates all totals automatically.
 
 ## 3. Manual Area Habitat Entry Section
 
+### Simple (Non-Paired) Mode
+
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ 🌳 Manual Area Habitat Units                                                 │
@@ -47,44 +49,142 @@ and updates all totals automatically.
 │ │ Cropland     │ Grassland    │ 10.00    │ 100         │          │      │ │
 │ └──────────────┴──────────────┴──────────┴─────────────┴──────────┴──────┘ │
 │                                                                              │
-│ ┌──────────────┬──────────────┬──────────┬─────────────┬──────────┬──────┐ │
-│ │ [Dropdown]   │ [Dropdown]   │ [Number] │ [Number]    │ [☑]      │ 🗑️  │ │
-│ │ Arable       │ Woodland     │ 15.00    │ 150         │ Paired   │      │ │
-│ └──────────────┴──────────────┴──────────┴─────────────┴──────────┴──────┘ │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Paired Mode (When checkbox is ticked)
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 🌳 Manual Area Habitat Units                                                 │
+├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│ [➕ Add Area Habitat Entry]  [🧹 Clear Area Habitats]                      │
+│ Entry 1 (Paired Allocation)                                                 │
+│                                                                              │
+│ ┌──────────────────────────────┬──────────────────────────┬──────────────┐ │
+│ │ Habitat Lost                 │ Units Required           │              │ │
+│ ├──────────────────────────────┼──────────────────────────┼──────────────┤ │
+│ │ [Dropdown]                   │ [Number]                 │ 🗑️          │ │
+│ │ Cropland                     │ 15.00                    │              │ │
+│ └──────────────────────────────┴──────────────────────────┴──────────────┘ │
+│                                                                              │
+│ Demand Habitat:                                                              │
+│ ┌───────────────────────┬────────────────────┬──────────────────────────┐  │
+│ │ Habitat Type          │ Bank               │ Price/Unit (£)           │  │
+│ ├───────────────────────┼────────────────────┼──────────────────────────┤  │
+│ │ [Dropdown]            │ [Dropdown]         │ [Number]                 │  │
+│ │ Woodland - mixed      │ Bank A             │ 150                      │  │
+│ └───────────────────────┴────────────────────┴──────────────────────────┘  │
+│                                                                              │
+│ Companion Habitat:                                                           │
+│ ┌───────────────────────┬────────────────────┬──────────────────────────┐  │
+│ │ Habitat Type          │ Bank               │ Price/Unit (£)           │  │
+│ ├───────────────────────┼────────────────────┼──────────────────────────┤  │
+│ │ [Dropdown]            │ [Dropdown]         │ [Number]                 │  │
+│ │ Grassland             │ Bank B             │ 80                       │  │
+│ └───────────────────────┴────────────────────┴──────────────────────────┘  │
+│                                                                              │
+│ ┌───────────────────┬───────────────────────┬────────────────────────────┐ │
+│ │ SRM Tier          │ Demand Stock Use      │ Companion Stock Use        │ │
+│ ├───────────────────┼───────────────────────┼────────────────────────────┤ │
+│ │ [Dropdown]        │ [Number]              │ 0.40 (auto-calculated)     │ │
+│ │ adjacent          │ 0.60                  │                            │ │
+│ └───────────────────┴───────────────────────┴────────────────────────────┘ │
+│                                                                              │
+│ ℹ️ Calculation: SRM = 1.33 | Demand: 9.00 units × £150 = £1,350 |          │
+│    Companion: 6.00 units × £80 = £480 | Total: £1,830                       │
+│                                                                              │
+│ [✓] Paired Entry    (uncheck to switch to simple mode)                      │
+│ ───────────────────────────────────────────────────────────────────────────│
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## 4. Field Descriptions
 
-### Habitat Lost (Dropdown)
+### Simple (Non-Paired) Mode
+
+#### Habitat Lost (Dropdown)
 - Select the area habitat being lost/impacted
 - Populated from catalog's area habitats
 - Includes "Net Gain (10%)" option
 
-### Habitat to Mitigate (Dropdown)
+#### Habitat to Mitigate (Dropdown)
 - Select the area habitat to provide for mitigation
 - Populated from catalog's area habitats
 - Includes "Net Gain (10%)" option
 
-### Units (Number Input)
+#### Units (Number Input)
 - Number of habitat units required
 - Minimum: 0.0
 - Step: 0.01
 
-### Price/Unit (£) (Number Input)
+#### Price/Unit (£) (Number Input)
 - Price per unit in pounds
 - Minimum: 0.0
 - Step: 1.0
 
-### Paired (Checkbox)
-- Check to indicate paired habitat allocation
-- When checked, applies 4/3 SRM multiplier automatically
-- Effective units = units × (4/3)
-- Cost = effective_units × price_per_unit
-- Display shows "(Paired)" suffix in reports
+#### Paired (Checkbox)
+- Check to switch to paired mode with full habitat details
+- Unchecked = simple mode (single habitat)
+- Checked = paired mode (demand + companion habitats)
+
+### Paired Mode (When Checkbox is Ticked)
+
+#### Habitat Lost (Dropdown)
+- Same as simple mode - the habitat being impacted
+
+#### Units Required (Number Input)
+- Total units of habitat lost that need to be offset
+- This is split between demand and companion habitats
+
+#### Demand Habitat Section
+
+**Habitat Type (Dropdown)**
+- Primary habitat in the paired allocation
+- Selected from area habitats catalog
+
+**Bank (Dropdown)**
+- Bank providing the demand habitat
+- Populated from available banks in system
+
+**Price/Unit (£) (Number Input)**
+- Price per unit for the demand habitat
+- Specific to this bank and habitat
+
+#### Companion Habitat Section
+
+**Habitat Type (Dropdown)**
+- Secondary/companion habitat in the paired allocation
+- Selected from area habitats catalog
+- Works together with demand habitat for pairing
+
+**Bank (Dropdown)**
+- Bank providing the companion habitat
+- Can be same or different from demand bank
+
+**Price/Unit (£) (Number Input)**
+- Price per unit for the companion habitat
+- Specific to this bank and habitat
+
+#### SRM Tier (Dropdown)
+- Strategic Resource Multiplier tier selection
+- Options:
+  - **local** (SRM = 1.0): Same LPA/NCA
+  - **adjacent** (SRM = 1.33): Adjacent LPA/NCA
+  - **far** (SRM = 2.0): Far from target site
+- Determines how units are calculated for paired allocation
+
+#### Demand Stock Use (Number Input)
+- Proportion of total stock from demand habitat
+- Range: 0.0 to 1.0
+- Default: 0.5 (50/50 split)
+- Example: 0.6 means 60% from demand, 40% from companion
+
+#### Companion Stock Use (Metric - Auto-calculated)
+- Automatically calculated as 1.0 - Demand Stock Use
+- Ensures total equals 100%
+- Display only, not editable
 
 ### Remove Button (🗑️)
 - Removes the entire row
