@@ -824,6 +824,76 @@ if st.session_state.app_mode == "Quote Management":
                             if not allocations.empty:
                                 st.markdown("##### Allocation Details")
                                 st.dataframe(allocations, use_container_width=True, hide_index=True)
+                            
+                            # Add button to load quote into optimizer for editing
+                            st.markdown("---")
+                            st.markdown("##### 📝 Edit This Quote")
+                            st.info("Load this quote into the Optimizer to modify demand, add/remove habitats, and regenerate the report.")
+                            
+                            if st.button("🔄 Load Quote into Optimizer", key="load_quote_btn", type="primary"):
+                                try:
+                                    # Load location data
+                                    st.session_state["target_lpa"] = submission['target_lpa']
+                                    st.session_state["target_nca"] = submission['target_nca']
+                                    st.session_state["target_lat"] = submission.get('target_lat')
+                                    st.session_state["target_lon"] = submission.get('target_lon')
+                                    st.session_state["site_location"] = submission['site_location']
+                                    
+                                    # Load client info
+                                    st.session_state["email_client_name"] = submission['client_name']
+                                    st.session_state["email_ref_number"] = submission['reference_number']
+                                    st.session_state["email_location"] = submission['site_location']
+                                    
+                                    # Load demand habitats
+                                    demand_data = submission.get('demand_habitats')
+                                    if isinstance(demand_data, str):
+                                        demand_data = json.loads(demand_data)
+                                    
+                                    if demand_data:
+                                        # Load demand rows into session state
+                                        st.session_state["demand_rows"] = []
+                                        for idx, habitat_data in enumerate(demand_data):
+                                            st.session_state["demand_rows"].append({
+                                                "id": idx + 1,
+                                                "habitat_name": habitat_data.get("habitat_name", ""),
+                                                "units": float(habitat_data.get("units_required", 0.0) or habitat_data.get("units", 0.0))
+                                            })
+                                        st.session_state["_next_demand_id"] = len(demand_data) + 1
+                                    
+                                    # Load manual entries if they exist
+                                    if submission.get('manual_hedgerow_entries'):
+                                        manual_hedgerow = submission['manual_hedgerow_entries']
+                                        if isinstance(manual_hedgerow, str):
+                                            manual_hedgerow = json.loads(manual_hedgerow)
+                                        st.session_state["manual_hedgerow_rows"] = manual_hedgerow if manual_hedgerow else []
+                                    
+                                    if submission.get('manual_watercourse_entries'):
+                                        manual_watercourse = submission['manual_watercourse_entries']
+                                        if isinstance(manual_watercourse, str):
+                                            manual_watercourse = json.loads(manual_watercourse)
+                                        st.session_state["manual_watercourse_rows"] = manual_watercourse if manual_watercourse else []
+                                    
+                                    # Load promoter info if exists
+                                    if submission.get('promoter_name'):
+                                        st.session_state["selected_promoter"] = submission['promoter_name']
+                                        st.session_state["promoter_discount_type"] = submission.get('promoter_discount_type')
+                                        st.session_state["promoter_discount_value"] = submission.get('promoter_discount_value')
+                                    
+                                    # Load customer ID if exists
+                                    if submission.get('customer_id'):
+                                        st.session_state["selected_customer_id"] = submission['customer_id']
+                                    
+                                    # Set mode to Optimiser
+                                    st.session_state["mode"] = "Optimiser"
+                                    
+                                    st.success("✅ Quote loaded successfully! Switching to Optimizer mode...")
+                                    st.info("💡 You can now modify demand, run optimization, add/remove habitats, and download a new email report.")
+                                    st.rerun()
+                                    
+                                except Exception as e:
+                                    st.error(f"Error loading quote: {e}")
+                                    import traceback
+                                    st.code(traceback.format_exc())
                         else:
                             st.error("Quote not found.")
             
