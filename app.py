@@ -891,9 +891,8 @@ if st.session_state.app_mode == "Quote Management":
                                     if submission.get('customer_id'):
                                         st.session_state["selected_customer_id"] = submission['customer_id']
                                     
-                                    # Set mode to Optimiser by updating both the session state AND the widget state
+                                    # Set mode to Optimiser (the radio button will pick this up on next rerun via line 343)
                                     st.session_state.app_mode = "Optimiser"
-                                    st.session_state.mode_selector = "Optimiser"  # This updates the radio button widget directly
                                     
                                     st.success("✅ Quote loaded successfully! Switching to Optimizer mode...")
                                     st.info("💡 You can now modify demand, run optimization, add/remove habitats, and download a new email report.")
