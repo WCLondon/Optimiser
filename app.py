@@ -847,6 +847,23 @@ if st.session_state.app_mode == "Quote Management":
                                     st.session_state["target_lon"] = submission.get('target_lon')
                                     st.session_state["site_location"] = submission['site_location']
                                     
+                                    # Also set the dropdown selection variables for LPA/NCA
+                                    st.session_state["selected_lpa_dropdown"] = submission['target_lpa']
+                                    st.session_state["selected_nca_dropdown"] = submission['target_nca']
+                                    st.session_state["use_lpa_nca_dropdown"] = True
+                                    st.session_state["target_lpa_name"] = submission['target_lpa']
+                                    st.session_state["target_nca_name"] = submission['target_nca']
+                                    
+                                    # Initialize neighbors and geometry states (will be empty until user clicks Apply LPA/NCA if needed)
+                                    if "lpa_neighbors" not in st.session_state or not st.session_state["lpa_neighbors"]:
+                                        st.session_state["lpa_neighbors"] = []
+                                    if "nca_neighbors" not in st.session_state or not st.session_state["nca_neighbors"]:
+                                        st.session_state["nca_neighbors"] = []
+                                    if "lpa_neighbors_norm" not in st.session_state or not st.session_state["lpa_neighbors_norm"]:
+                                        st.session_state["lpa_neighbors_norm"] = []
+                                    if "nca_neighbors_norm" not in st.session_state or not st.session_state["nca_neighbors_norm"]:
+                                        st.session_state["nca_neighbors_norm"] = []
+                                    
                                     # Load client info
                                     st.session_state["email_client_name"] = submission['client_name']
                                     st.session_state["email_ref_number"] = submission['reference_number']
