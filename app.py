@@ -855,14 +855,41 @@ if st.session_state.app_mode == "Quote Management":
                                     st.session_state["target_nca_name"] = submission['target_nca']
                                     
                                     # Initialize neighbors and geometry states (will be empty until user clicks Apply LPA/NCA if needed)
-                                    if "lpa_neighbors" not in st.session_state or not st.session_state["lpa_neighbors"]:
-                                        st.session_state["lpa_neighbors"] = []
-                                    if "nca_neighbors" not in st.session_state or not st.session_state["nca_neighbors"]:
-                                        st.session_state["nca_neighbors"] = []
-                                    if "lpa_neighbors_norm" not in st.session_state or not st.session_state["lpa_neighbors_norm"]:
-                                        st.session_state["lpa_neighbors_norm"] = []
-                                    if "nca_neighbors_norm" not in st.session_state or not st.session_state["nca_neighbors_norm"]:
-                                        st.session_state["nca_neighbors_norm"] = []
+                                    st.session_state["lpa_neighbors"] = []
+                                    st.session_state["nca_neighbors"] = []
+                                    st.session_state["lpa_neighbors_norm"] = []
+                                    st.session_state["nca_neighbors_norm"] = []
+                                    
+                                    # Initialize map and geometry states to prevent errors during optimization
+                                    st.session_state["lpa_geojson"] = None
+                                    st.session_state["nca_geojson"] = None
+                                    st.session_state["bank_geo_cache"] = {}
+                                    st.session_state["bank_catchment_geo"] = {}
+                                    st.session_state["optimization_complete"] = False
+                                    st.session_state["last_alloc_df"] = None
+                                    
+                                    # Try to fetch LPA/NCA geometry if we have coordinates
+                                    if st.session_state["target_lat"] and st.session_state["target_lon"]:
+                                        try:
+                                            lat = st.session_state["target_lat"]
+                                            lon = st.session_state["target_lon"]
+                                            lpa_feat = arcgis_point_query(LPA_URL, lat, lon, "LAD24NM")
+                                            nca_feat = arcgis_point_query(NCA_URL, lat, lon, "NCA_Name")
+                                            lpa_geom_esri = lpa_feat.get("geometry")
+                                            nca_geom_esri = nca_feat.get("geometry")
+                                            st.session_state["lpa_geojson"] = esri_polygon_to_geojson(lpa_geom_esri)
+                                            st.session_state["nca_geojson"] = esri_polygon_to_geojson(nca_geom_esri)
+                                            
+                                            # Optionally fetch neighbors for better tier calculations
+                                            lpa_nei = [n for n in layer_intersect_names(LPA_URL, lpa_geom_esri, "LAD24NM") if n != submission['target_lpa']]
+                                            nca_nei = [n for n in layer_intersect_names(NCA_URL, nca_geom_esri, "NCA_Name") if n != submission['target_nca']]
+                                            st.session_state["lpa_neighbors"] = lpa_nei
+                                            st.session_state["nca_neighbors"] = nca_nei
+                                            st.session_state["lpa_neighbors_norm"] = [norm_name(n) for n in lpa_nei]
+                                            st.session_state["nca_neighbors_norm"] = [norm_name(n) for n in nca_nei]
+                                        except Exception as geo_error:
+                                            # If fetching geometry fails, that's OK - optimizer will work with 'far' tier
+                                            st.warning(f"Could not fetch location geometry (optimization will use 'far' tier): {geo_error}")
                                     
                                     # Load client info
                                     st.session_state["email_client_name"] = submission['client_name']
