@@ -884,7 +884,7 @@ if st.session_state.app_mode == "Quote Management":
                                         st.session_state["selected_customer_id"] = submission['customer_id']
                                     
                                     # Set mode to Optimiser
-                                    st.session_state["mode"] = "Optimiser"
+                                    st.session_state["app_mode"] = "Optimiser"
                                     
                                     st.success("✅ Quote loaded successfully! Switching to Optimizer mode...")
                                     st.info("💡 You can now modify demand, run optimization, add/remove habitats, and download a new email report.")
