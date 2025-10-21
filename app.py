@@ -779,8 +779,16 @@ if st.session_state.app_mode == "Quote Management":
                     quote_ids = results_df["id"].tolist()
                     selected_quote_id = st.selectbox("Select Quote ID to View", quote_ids, key="selected_quote_view")
                     
+                    # Use session state to persist the view details state
+                    if "viewing_quote_id" not in st.session_state:
+                        st.session_state.viewing_quote_id = None
+                    
                     if st.button("View Details", key="view_quote_details"):
-                        submission = db.get_submission_by_id(selected_quote_id)
+                        st.session_state.viewing_quote_id = selected_quote_id
+                    
+                    # Show details if we have a quote to view
+                    if st.session_state.viewing_quote_id is not None:
+                        submission = db.get_submission_by_id(st.session_state.viewing_quote_id)
                         
                         if submission:
                             col1, col2 = st.columns(2)
