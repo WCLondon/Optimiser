@@ -1070,7 +1070,7 @@ class SubmissionsDB:
         """
         engine = self._get_connection()
         
-        with engine.connect() as conn:
+        with engine.begin() as conn:
             # Get original submission
             result = conn.execute(
                 text("SELECT * FROM submissions WHERE id = :id"),
@@ -1096,84 +1096,77 @@ class SubmissionsDB:
             else:
                 demand_habitats_json = original_dict["demand_habitats"]
             
-            trans = conn.begin()
-            try:
-                # Insert new submission
-                result = conn.execute(text("""
-                    INSERT INTO submissions (
-                        submission_date, client_name, reference_number, site_location,
-                        target_lpa, target_nca, target_lat, target_lon,
-                        lpa_neighbors, nca_neighbors, demand_habitats,
-                        contract_size, total_cost, admin_fee, total_with_admin,
-                        num_banks_selected, banks_used,
-                        manual_hedgerow_entries, manual_watercourse_entries,
-                        allocation_results, username,
-                        promoter_name, promoter_discount_type, promoter_discount_value,
-                        customer_id
-                    ) VALUES (
-                        :submission_date, :client_name, :reference_number, :site_location,
-                        :target_lpa, :target_nca, :target_lat, :target_lon,
-                        :lpa_neighbors, :nca_neighbors, :demand_habitats,
-                        :contract_size, :total_cost, :admin_fee, :total_with_admin,
-                        :num_banks_selected, :banks_used,
-                        :manual_hedgerow_entries, :manual_watercourse_entries,
-                        :allocation_results, :username,
-                        :promoter_name, :promoter_discount_type, :promoter_discount_value,
-                        :customer_id
-                    ) RETURNING id
-                """), {
-                    "submission_date": submission_date,
-                    "client_name": original_dict["client_name"],
-                    "reference_number": new_reference,
-                    "site_location": original_dict["site_location"],
-                    "target_lpa": original_dict["target_lpa"],
-                    "target_nca": original_dict["target_nca"],
-                    "target_lat": original_dict["target_lat"],
-                    "target_lon": original_dict["target_lon"],
-                    "lpa_neighbors": json.dumps(original_dict["lpa_neighbors"]) if isinstance(original_dict["lpa_neighbors"], list) else original_dict["lpa_neighbors"],
-                    "nca_neighbors": json.dumps(original_dict["nca_neighbors"]) if isinstance(original_dict["nca_neighbors"], list) else original_dict["nca_neighbors"],
-                    "demand_habitats": json.dumps(demand_habitats_json) if isinstance(demand_habitats_json, list) else demand_habitats_json,
-                    "contract_size": original_dict["contract_size"],
-                    "total_cost": original_dict["total_cost"],
-                    "admin_fee": original_dict["admin_fee"],
-                    "total_with_admin": original_dict["total_with_admin"],
-                    "num_banks_selected": original_dict["num_banks_selected"],
-                    "banks_used": json.dumps(original_dict["banks_used"]) if isinstance(original_dict["banks_used"], list) else original_dict["banks_used"],
-                    "manual_hedgerow_entries": json.dumps(original_dict["manual_hedgerow_entries"]) if isinstance(original_dict["manual_hedgerow_entries"], list) else original_dict["manual_hedgerow_entries"],
-                    "manual_watercourse_entries": json.dumps(original_dict["manual_watercourse_entries"]) if isinstance(original_dict["manual_watercourse_entries"], list) else original_dict["manual_watercourse_entries"],
-                    "allocation_results": json.dumps(original_dict["allocation_results"]) if isinstance(original_dict["allocation_results"], list) else original_dict["allocation_results"],
-                    "username": original_dict["username"],
-                    "promoter_name": original_dict.get("promoter_name"),
-                    "promoter_discount_type": original_dict.get("promoter_discount_type"),
-                    "promoter_discount_value": original_dict.get("promoter_discount_value"),
-                    "customer_id": original_dict.get("customer_id")
-                })
-                
-                new_submission_id = result.fetchone()[0]
-                
-                # Copy allocation details
-                conn.execute(text("""
-                    INSERT INTO allocation_details (
-                        submission_id, bank_key, bank_name,
-                        demand_habitat, supply_habitat, allocation_type,
-                        tier, units_supplied, unit_price, cost
-                    )
-                    SELECT :new_submission_id, bank_key, bank_name,
-                           demand_habitat, supply_habitat, allocation_type,
-                           tier, units_supplied, unit_price, cost
-                    FROM allocation_details
-                    WHERE submission_id = :original_submission_id
-                """), {
-                    "new_submission_id": new_submission_id,
-                    "original_submission_id": submission_id
-                })
-                
-                trans.commit()
-                return new_submission_id
-                
-            except Exception as e:
-                trans.rollback()
-                raise
+            # Insert new submission
+            result = conn.execute(text("""
+                INSERT INTO submissions (
+                    submission_date, client_name, reference_number, site_location,
+                    target_lpa, target_nca, target_lat, target_lon,
+                    lpa_neighbors, nca_neighbors, demand_habitats,
+                    contract_size, total_cost, admin_fee, total_with_admin,
+                    num_banks_selected, banks_used,
+                    manual_hedgerow_entries, manual_watercourse_entries,
+                    allocation_results, username,
+                    promoter_name, promoter_discount_type, promoter_discount_value,
+                    customer_id
+                ) VALUES (
+                    :submission_date, :client_name, :reference_number, :site_location,
+                    :target_lpa, :target_nca, :target_lat, :target_lon,
+                    :lpa_neighbors, :nca_neighbors, :demand_habitats,
+                    :contract_size, :total_cost, :admin_fee, :total_with_admin,
+                    :num_banks_selected, :banks_used,
+                    :manual_hedgerow_entries, :manual_watercourse_entries,
+                    :allocation_results, :username,
+                    :promoter_name, :promoter_discount_type, :promoter_discount_value,
+                    :customer_id
+                ) RETURNING id
+            """), {
+                "submission_date": submission_date,
+                "client_name": original_dict["client_name"],
+                "reference_number": new_reference,
+                "site_location": original_dict["site_location"],
+                "target_lpa": original_dict["target_lpa"],
+                "target_nca": original_dict["target_nca"],
+                "target_lat": original_dict["target_lat"],
+                "target_lon": original_dict["target_lon"],
+                "lpa_neighbors": json.dumps(original_dict["lpa_neighbors"]) if isinstance(original_dict["lpa_neighbors"], list) else original_dict["lpa_neighbors"],
+                "nca_neighbors": json.dumps(original_dict["nca_neighbors"]) if isinstance(original_dict["nca_neighbors"], list) else original_dict["nca_neighbors"],
+                "demand_habitats": json.dumps(demand_habitats_json) if isinstance(demand_habitats_json, list) else demand_habitats_json,
+                "contract_size": original_dict["contract_size"],
+                "total_cost": original_dict["total_cost"],
+                "admin_fee": original_dict["admin_fee"],
+                "total_with_admin": original_dict["total_with_admin"],
+                "num_banks_selected": original_dict["num_banks_selected"],
+                "banks_used": json.dumps(original_dict["banks_used"]) if isinstance(original_dict["banks_used"], list) else original_dict["banks_used"],
+                "manual_hedgerow_entries": json.dumps(original_dict["manual_hedgerow_entries"]) if isinstance(original_dict["manual_hedgerow_entries"], list) else original_dict["manual_hedgerow_entries"],
+                "manual_watercourse_entries": json.dumps(original_dict["manual_watercourse_entries"]) if isinstance(original_dict["manual_watercourse_entries"], list) else original_dict["manual_watercourse_entries"],
+                "allocation_results": json.dumps(original_dict["allocation_results"]) if isinstance(original_dict["allocation_results"], list) else original_dict["allocation_results"],
+                "username": original_dict["username"],
+                "promoter_name": original_dict.get("promoter_name"),
+                "promoter_discount_type": original_dict.get("promoter_discount_type"),
+                "promoter_discount_value": original_dict.get("promoter_discount_value"),
+                "customer_id": original_dict.get("customer_id")
+            })
+            
+            new_submission_id = result.fetchone()[0]
+            
+            # Copy allocation details
+            conn.execute(text("""
+                INSERT INTO allocation_details (
+                    submission_id, bank_key, bank_name,
+                    demand_habitat, supply_habitat, allocation_type,
+                    tier, units_supplied, unit_price, cost
+                )
+                SELECT :new_submission_id, bank_key, bank_name,
+                       demand_habitat, supply_habitat, allocation_type,
+                       tier, units_supplied, unit_price, cost
+                FROM allocation_details
+                WHERE submission_id = :original_submission_id
+            """), {
+                "new_submission_id": new_submission_id,
+                "original_submission_id": submission_id
+            })
+            
+            return new_submission_id
     
     def db_healthcheck(self) -> bool:
         """

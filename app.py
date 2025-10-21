@@ -5090,17 +5090,35 @@ if st.session_state.get("optimization_complete", False):
                 st.rerun()
 
 # Add this to your optimization results section (after the downloads):
-if (st.session_state.get("optimization_complete", False) and 
-    isinstance(st.session_state.get("last_alloc_df"), pd.DataFrame) and 
-    not st.session_state["last_alloc_df"].empty):
+# Allow client report generation if optimization was run OR if there are manual entries
+has_optimizer_results = (st.session_state.get("optimization_complete", False) and 
+                         isinstance(st.session_state.get("last_alloc_df"), pd.DataFrame) and 
+                         not st.session_state["last_alloc_df"].empty)
+
+has_manual_entries = (st.session_state.get("optimization_complete", False) and
+                     (len(st.session_state.get("manual_hedgerow_rows", [])) > 0 or
+                      len(st.session_state.get("manual_watercourse_rows", [])) > 0 or
+                      len(st.session_state.get("manual_area_rows", [])) > 0))
+
+if has_optimizer_results or has_manual_entries:
     
     # Get data from session state
-    session_alloc_df = st.session_state["last_alloc_df"].copy()
+    session_alloc_df = None
+    if isinstance(st.session_state.get("last_alloc_df"), pd.DataFrame):
+        session_alloc_df = st.session_state["last_alloc_df"].copy()
+        
+        # Filter out removed rows if _row_id column exists
+        if "_row_id" in session_alloc_df.columns:
+            removed_ids = st.session_state.get("removed_allocation_rows", [])
+            session_alloc_df = session_alloc_df[~session_alloc_df["_row_id"].isin(removed_ids)]
     
-    # Filter out removed rows if _row_id column exists
-    if "_row_id" in session_alloc_df.columns:
-        removed_ids = st.session_state.get("removed_allocation_rows", [])
-        session_alloc_df = session_alloc_df[~session_alloc_df["_row_id"].isin(removed_ids)]
+    # If session_alloc_df is empty or None, create an empty dataframe with proper structure
+    if session_alloc_df is None or session_alloc_df.empty:
+        session_alloc_df = pd.DataFrame(columns=[
+            "demand_habitat", "BANK_KEY", "bank_name", "bank_id", "supply_habitat",
+            "allocation_type", "tier", "units_supplied", "unit_price", "cost",
+            "price_source", "price_habitat"
+        ])
     
     # Reconstruct demand_df from session state
     session_demand_df = pd.DataFrame(
@@ -5109,7 +5127,7 @@ if (st.session_state.get("optimization_complete", False) and
     )
     
     # Calculate total cost from session data (includes removed rows filtering)
-    session_total_cost = session_alloc_df["cost"].sum()
+    session_total_cost = session_alloc_df["cost"].sum() if not session_alloc_df.empty else 0.0
     
     st.markdown("---")
     st.markdown("#### 📧 Client Report Generation")
