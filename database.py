@@ -278,7 +278,7 @@ class SubmissionsDB:
                         ) VALUES (
                             NEW.id,
                             DATE(NEW.submission_date),
-                            NEW.client_name,
+                            NULL,
                             NEW.reference_number,
                             jsonb_build_object(
                                 'line_1', COALESCE(NEW.site_location, ''),
@@ -381,7 +381,7 @@ class SubmissionsDB:
                     SELECT 
                         id,
                         DATE(submission_date),
-                        client_name,
+                        NULL,
                         reference_number,
                         jsonb_build_object(
                             'line_1', COALESCE(site_location, ''),
