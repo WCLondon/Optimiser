@@ -90,7 +90,8 @@ class SubmissionsDB:
         engine = self._get_connection()
         
         # Use raw SQL for schema creation to ensure idempotency
-        with engine.connect() as conn:
+        # Use begin() for automatic transaction management
+        with engine.begin() as conn:
             # Main submissions table
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS submissions (
