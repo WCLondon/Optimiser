@@ -9,7 +9,7 @@ A Streamlit application for optimizing Biodiversity Net Gain (BNG) unit allocati
 - **Multi-bank Support**: Search across multiple habitat banks for best pricing and availability
 - **Habitat Matching**: Intelligent matching of demand and supply habitats following trading rules
 - **Pricing Tiers**: Automatic tier calculation (local/adjacent/far) based on geographic proximity
-- **Manual Entries**: Add hedgerow and watercourse units manually to supplement optimization results
+- **Manual Quote Adjustments**: Remove optimizer-generated allocations and add manual entries for area, hedgerow, and watercourse habitats with paired habitat support
 - **Client Reports**: Generate professional client-facing reports and email templates
 
 ### Database & Admin Features
@@ -22,7 +22,7 @@ A Streamlit application for optimizing Biodiversity Net Gain (BNG) unit allocati
 - **JSONB Storage**: Efficient native JSON storage for complex data
 - **Connection Pooling**: Managed database connections for optimal performance
 
-See [DATABASE_FEATURE.md](DATABASE_FEATURE.md) for database feature documentation and [POSTGRESQL_MIGRATION.md](POSTGRESQL_MIGRATION.md) for migration guide.
+See [DATABASE_FEATURE.md](DATABASE_FEATURE.md) for database feature documentation, [POSTGRESQL_MIGRATION.md](POSTGRESQL_MIGRATION.md) for migration guide, and [MANUAL_QUOTE_ADJUSTMENT_GUIDE.md](MANUAL_QUOTE_ADJUSTMENT_GUIDE.md) for the manual quote adjustment feature.
 
 
 ## Requirements

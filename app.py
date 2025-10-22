@@ -97,8 +97,12 @@ def init_session_state():
         "optimization_complete": False,
         "manual_hedgerow_rows": [],
         "manual_watercourse_rows": [],
+        "manual_area_rows": [],
         "_next_manual_hedgerow_id": 1,
         "_next_manual_watercourse_id": 1,
+        "_next_manual_area_id": 1,
+        "removed_allocation_rows": [],
+        "bank_list_for_manual": [],  # Cache of bank names for manual entry
         "email_client_name": "INSERT NAME",
         "email_ref_number": "BNG00XXX",
         "email_location": "INSERT LOCATION",
@@ -158,8 +162,11 @@ def reset_quote():
         st.session_state["optimization_complete"] = False
         st.session_state["manual_hedgerow_rows"] = []
         st.session_state["manual_watercourse_rows"] = []
+        st.session_state["manual_area_rows"] = []
         st.session_state["_next_manual_hedgerow_id"] = 1
         st.session_state["_next_manual_watercourse_id"] = 1
+        st.session_state["_next_manual_area_id"] = 1
+        st.session_state["removed_allocation_rows"] = []
         st.session_state["email_client_name"] = "INSERT NAME"
         st.session_state["email_ref_number"] = "BNG00XXX"
         st.session_state["email_location"] = "INSERT LOCATION"
@@ -260,6 +267,20 @@ def get_watercourse_habitats(catalog_df: pd.DataFrame) -> List[str]:
         # Fallback to text matching if column doesn't exist
         all_habitats = [sstr(x) for x in catalog_df["habitat_name"].dropna().unique().tolist()]
         return sorted([h for h in all_habitats if is_watercourse(h)])
+
+def get_area_habitats(catalog_df: pd.DataFrame) -> List[str]:
+    """Get list of area habitats from catalog using UmbrellaType column"""
+    if "UmbrellaType" in catalog_df.columns:
+        # Use the UmbrellaType column to filter - area habitats are those that are not hedgerow or watercourse
+        area_df = catalog_df[
+            (catalog_df["UmbrellaType"].astype(str).str.strip().str.lower() != "hedgerow") &
+            (catalog_df["UmbrellaType"].astype(str).str.strip().str.lower() != "watercourse")
+        ]
+        return sorted([sstr(x) for x in area_df["habitat_name"].dropna().unique().tolist()])
+    else:
+        # Fallback to filtering out hedgerow and watercourse habitats
+        all_habitats = [sstr(x) for x in catalog_df["habitat_name"].dropna().unique().tolist()]
+        return sorted([h for h in all_habitats if not is_hedgerow(h) and not is_watercourse(h)])
 
 # ================= Login =================
 DEFAULT_USER = "WC0323"
@@ -758,8 +779,16 @@ if st.session_state.app_mode == "Quote Management":
                     quote_ids = results_df["id"].tolist()
                     selected_quote_id = st.selectbox("Select Quote ID to View", quote_ids, key="selected_quote_view")
                     
+                    # Use session state to persist the view details state
+                    if "viewing_quote_id" not in st.session_state:
+                        st.session_state.viewing_quote_id = None
+                    
                     if st.button("View Details", key="view_quote_details"):
-                        submission = db.get_submission_by_id(selected_quote_id)
+                        st.session_state.viewing_quote_id = selected_quote_id
+                    
+                    # Show details if we have a quote to view
+                    if st.session_state.viewing_quote_id is not None:
+                        submission = db.get_submission_by_id(st.session_state.viewing_quote_id)
                         
                         if submission:
                             col1, col2 = st.columns(2)
@@ -803,6 +832,122 @@ if st.session_state.app_mode == "Quote Management":
                             if not allocations.empty:
                                 st.markdown("##### Allocation Details")
                                 st.dataframe(allocations, use_container_width=True, hide_index=True)
+                            
+                            # Add button to load quote into optimizer for editing
+                            st.markdown("---")
+                            st.markdown("##### 📝 Edit This Quote")
+                            st.info("Load this quote into the Optimizer to modify demand, add/remove habitats, and regenerate the report.")
+                            
+                            if st.button("🔄 Load Quote into Optimizer", key="load_quote_btn", type="primary"):
+                                try:
+                                    # Load location data
+                                    st.session_state["target_lpa"] = submission['target_lpa']
+                                    st.session_state["target_nca"] = submission['target_nca']
+                                    st.session_state["target_lat"] = submission.get('target_lat')
+                                    st.session_state["target_lon"] = submission.get('target_lon')
+                                    st.session_state["site_location"] = submission['site_location']
+                                    
+                                    # Also set the dropdown selection variables for LPA/NCA
+                                    st.session_state["selected_lpa_dropdown"] = submission['target_lpa']
+                                    st.session_state["selected_nca_dropdown"] = submission['target_nca']
+                                    st.session_state["use_lpa_nca_dropdown"] = True
+                                    st.session_state["target_lpa_name"] = submission['target_lpa']
+                                    st.session_state["target_nca_name"] = submission['target_nca']
+                                    
+                                    # Initialize neighbors and geometry states (will be empty until user clicks Apply LPA/NCA if needed)
+                                    st.session_state["lpa_neighbors"] = []
+                                    st.session_state["nca_neighbors"] = []
+                                    st.session_state["lpa_neighbors_norm"] = []
+                                    st.session_state["nca_neighbors_norm"] = []
+                                    
+                                    # Initialize map and geometry states to prevent errors during optimization
+                                    st.session_state["lpa_geojson"] = None
+                                    st.session_state["nca_geojson"] = None
+                                    st.session_state["bank_geo_cache"] = {}
+                                    st.session_state["bank_catchment_geo"] = {}
+                                    st.session_state["optimization_complete"] = False
+                                    st.session_state["last_alloc_df"] = None
+                                    
+                                    # Try to fetch LPA/NCA geometry if we have coordinates
+                                    if st.session_state["target_lat"] and st.session_state["target_lon"]:
+                                        try:
+                                            lat = st.session_state["target_lat"]
+                                            lon = st.session_state["target_lon"]
+                                            lpa_feat = arcgis_point_query(LPA_URL, lat, lon, "LAD24NM")
+                                            nca_feat = arcgis_point_query(NCA_URL, lat, lon, "NCA_Name")
+                                            lpa_geom_esri = lpa_feat.get("geometry")
+                                            nca_geom_esri = nca_feat.get("geometry")
+                                            st.session_state["lpa_geojson"] = esri_polygon_to_geojson(lpa_geom_esri)
+                                            st.session_state["nca_geojson"] = esri_polygon_to_geojson(nca_geom_esri)
+                                            
+                                            # Optionally fetch neighbors for better tier calculations
+                                            lpa_nei = [n for n in layer_intersect_names(LPA_URL, lpa_geom_esri, "LAD24NM") if n != submission['target_lpa']]
+                                            nca_nei = [n for n in layer_intersect_names(NCA_URL, nca_geom_esri, "NCA_Name") if n != submission['target_nca']]
+                                            st.session_state["lpa_neighbors"] = lpa_nei
+                                            st.session_state["nca_neighbors"] = nca_nei
+                                            st.session_state["lpa_neighbors_norm"] = [norm_name(n) for n in lpa_nei]
+                                            st.session_state["nca_neighbors_norm"] = [norm_name(n) for n in nca_nei]
+                                        except Exception as geo_error:
+                                            # If fetching geometry fails, that's OK - optimizer will work with 'far' tier
+                                            st.warning(f"Could not fetch location geometry (optimization will use 'far' tier): {geo_error}")
+                                    
+                                    # Load client info
+                                    st.session_state["email_client_name"] = submission['client_name']
+                                    st.session_state["email_ref_number"] = submission['reference_number']
+                                    st.session_state["email_location"] = submission['site_location']
+                                    
+                                    # Load demand habitats
+                                    demand_data = submission.get('demand_habitats')
+                                    if isinstance(demand_data, str):
+                                        demand_data = json.loads(demand_data)
+                                    
+                                    if demand_data:
+                                        # Load demand rows into session state
+                                        st.session_state["demand_rows"] = []
+                                        for idx, habitat_data in enumerate(demand_data):
+                                            st.session_state["demand_rows"].append({
+                                                "id": idx + 1,
+                                                "habitat_name": habitat_data.get("habitat_name", ""),
+                                                "units": float(habitat_data.get("units_required", 0.0) or habitat_data.get("units", 0.0))
+                                            })
+                                        st.session_state["_next_demand_id"] = len(demand_data) + 1
+                                    
+                                    # Load manual entries if they exist
+                                    if submission.get('manual_hedgerow_entries'):
+                                        manual_hedgerow = submission['manual_hedgerow_entries']
+                                        if isinstance(manual_hedgerow, str):
+                                            manual_hedgerow = json.loads(manual_hedgerow)
+                                        st.session_state["manual_hedgerow_rows"] = manual_hedgerow if manual_hedgerow else []
+                                    
+                                    if submission.get('manual_watercourse_entries'):
+                                        manual_watercourse = submission['manual_watercourse_entries']
+                                        if isinstance(manual_watercourse, str):
+                                            manual_watercourse = json.loads(manual_watercourse)
+                                        st.session_state["manual_watercourse_rows"] = manual_watercourse if manual_watercourse else []
+                                    
+                                    # Load promoter info if exists
+                                    if submission.get('promoter_name'):
+                                        st.session_state["selected_promoter"] = submission['promoter_name']
+                                        st.session_state["promoter_discount_type"] = submission.get('promoter_discount_type')
+                                        st.session_state["promoter_discount_value"] = submission.get('promoter_discount_value')
+                                    
+                                    # Load customer ID if exists
+                                    if submission.get('customer_id'):
+                                        st.session_state["selected_customer_id"] = submission['customer_id']
+                                    
+                                    # Set mode to Optimiser (the radio button will pick this up on next rerun via line 343)
+                                    st.session_state.app_mode = "Optimiser"
+                                    
+                                    st.success("✅ Quote loaded successfully! Switching to Optimizer mode...")
+                                    st.info("💡 You can now modify demand, run optimization, add/remove habitats, and download a new email report.")
+                                    
+                                    # Use st.rerun() to refresh the page with the new mode
+                                    st.rerun()
+                                    
+                                except Exception as e:
+                                    st.error(f"Error loading quote: {e}")
+                                    import traceback
+                                    st.code(traceback.format_exc())
                         else:
                             st.error("Quote not found.")
             
@@ -3714,7 +3859,10 @@ if run:
                     catchments_failed.append(bkey)
         
         # NOW save results and set completion flag
-        st.session_state["last_alloc_df"] = alloc_df.copy()
+        # Add row identifiers for removal tracking
+        alloc_df_with_ids = alloc_df.copy()
+        alloc_df_with_ids["_row_id"] = range(len(alloc_df_with_ids))
+        st.session_state["last_alloc_df"] = alloc_df_with_ids
         st.session_state["optimization_complete"] = True
         
         # Show what we loaded
@@ -3849,6 +3997,8 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                                        client_name: str, ref_number: str, location: str,
                                        manual_hedgerow_rows: List[dict] = None,
                                        manual_watercourse_rows: List[dict] = None,
+                                       manual_area_rows: List[dict] = None,
+                                       removed_allocation_rows: List[int] = None,
                                        promoter_name: str = None,
                                        promoter_discount_type: str = None,
                                        promoter_discount_value: float = None) -> Tuple[pd.DataFrame, str]:
@@ -3858,6 +4008,16 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
         manual_hedgerow_rows = []
     if manual_watercourse_rows is None:
         manual_watercourse_rows = []
+    if manual_area_rows is None:
+        manual_area_rows = []
+    if removed_allocation_rows is None:
+        removed_allocation_rows = []
+    
+    # Filter out removed allocation rows
+    if "_row_id" not in alloc_df.columns:
+        alloc_df = alloc_df.copy()
+        alloc_df["_row_id"] = range(len(alloc_df))
+    alloc_df = alloc_df[~alloc_df["_row_id"].isin(removed_allocation_rows)]
     
     # Separate by habitat types
     area_habitats = []
@@ -4086,8 +4246,152 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
             }
             watercourse_habitats.append(row_data)
     
+    # Process manual area habitat entries
+    manual_area_cost = 0.0
+    for row in manual_area_rows:
+        habitat_lost = sstr(row.get("habitat_lost", ""))
+        units = float(row.get("units", 0.0) or 0.0)
+        is_paired = bool(row.get("paired", False))
+        
+        if units > 0:
+            if is_paired:
+                # Paired entry - process both habitats separately
+                demand_habitat = sstr(row.get("demand_habitat", ""))
+                companion_habitat = sstr(row.get("companion_habitat", ""))
+                demand_bank = sstr(row.get("demand_bank", ""))
+                companion_bank = sstr(row.get("companion_bank", ""))
+                demand_price = float(row.get("demand_price", 0.0) or 0.0)
+                companion_price = float(row.get("companion_price", 0.0) or 0.0)
+                demand_stock = float(row.get("demand_stock_use", 0.5))
+                companion_stock = 1.0 - demand_stock
+                srm_tier = sstr(row.get("srm_tier", "adjacent"))
+                
+                # Calculate units for each habitat
+                demand_units = units * demand_stock
+                companion_units = units * companion_stock
+                
+                # Calculate costs
+                demand_cost = demand_units * demand_price
+                companion_cost = companion_units * companion_price
+                total_paired_cost = demand_cost + companion_cost
+                manual_area_cost += total_paired_cost
+                
+                # Determine distinctiveness for lost habitat
+                if habitat_lost == NET_GAIN_LABEL:
+                    demand_distinctiveness = "10% Net Gain"
+                    demand_habitat_display = "Any"
+                else:
+                    cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat_lost]
+                    if not cat_match.empty:
+                        demand_distinctiveness = cat_match["distinctiveness_name"].iloc[0]
+                        demand_habitat_display = habitat_lost
+                    else:
+                        demand_distinctiveness = "Medium"
+                        demand_habitat_display = habitat_lost if habitat_lost else "Not specified"
+                
+                # Get spatial risk information
+                spatial_risk_offset_by = sstr(row.get("spatial_risk_offset_by", "None"))
+                spatial_risk_srm = sstr(row.get("spatial_risk_srm", ""))
+                
+                # Add entry for demand habitat
+                if demand_habitat:
+                    demand_cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == demand_habitat]
+                    if not demand_cat_match.empty:
+                        demand_supply_dist = demand_cat_match["distinctiveness_name"].iloc[0]
+                    else:
+                        demand_supply_dist = "Medium"
+                    
+                    # Build habitat display with spatial risk indicator
+                    demand_display = f"{demand_habitat} (Paired - {srm_tier}) from {demand_bank}"
+                    if spatial_risk_offset_by == "Demand Habitat":
+                        demand_display += f" [Offsets Spatial Risk: {spatial_risk_srm}]"
+                    
+                    row_data = {
+                        "Distinctiveness": demand_distinctiveness,
+                        "Habitats Lost": demand_habitat_display,
+                        "# Units": f"{units:.2f}",
+                        "Distinctiveness_Supply": demand_supply_dist,
+                        "Habitats Supplied": demand_display,
+                        "# Units_Supply": f"{demand_units:.2f}",
+                        "Price Per Unit": f"£{demand_price:,.0f}",
+                        "Offset Cost": f"£{demand_cost:,.0f}"
+                    }
+                    area_habitats.append(row_data)
+                
+                # Add entry for companion habitat
+                if companion_habitat:
+                    companion_cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == companion_habitat]
+                    if not companion_cat_match.empty:
+                        companion_supply_dist = companion_cat_match["distinctiveness_name"].iloc[0]
+                    else:
+                        companion_supply_dist = "Medium"
+                    
+                    # Build habitat display with spatial risk indicator
+                    companion_display = f"{companion_habitat} (Paired - companion) from {companion_bank}"
+                    if spatial_risk_offset_by == "Companion Habitat":
+                        companion_display += f" [Offsets Spatial Risk: {spatial_risk_srm}]"
+                    
+                    row_data = {
+                        "Distinctiveness": demand_distinctiveness,
+                        "Habitats Lost": demand_habitat_display,
+                        "# Units": f"{units:.2f}",
+                        "Distinctiveness_Supply": companion_supply_dist,
+                        "Habitats Supplied": companion_display,
+                        "# Units_Supply": f"{companion_units:.2f}",
+                        "Price Per Unit": f"£{companion_price:,.0f}",
+                        "Offset Cost": f"£{companion_cost:,.0f}"
+                    }
+                    area_habitats.append(row_data)
+                    
+            else:
+                # Simple non-paired entry (original logic)
+                habitat_name = sstr(row.get("habitat_name", ""))
+                price_per_unit = float(row.get("price_per_unit", 0.0) or 0.0)
+                
+                if habitat_name:
+                    offset_cost = units * price_per_unit
+                    manual_area_cost += offset_cost
+                    
+                    # Determine distinctiveness for lost habitat
+                    if habitat_lost == NET_GAIN_LABEL:
+                        demand_distinctiveness = "10% Net Gain"
+                        demand_habitat_display = "Any"
+                    else:
+                        cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat_lost]
+                        if not cat_match.empty:
+                            demand_distinctiveness = cat_match["distinctiveness_name"].iloc[0]
+                            demand_habitat_display = habitat_lost
+                        else:
+                            demand_distinctiveness = "Medium"
+                            demand_habitat_display = habitat_lost if habitat_lost else "Not specified"
+                    
+                    # Determine distinctiveness for supplied habitat
+                    if habitat_name == NET_GAIN_LABEL:
+                        supply_distinctiveness = "10% Net Gain"
+                        supply_habitat_display = "Any"
+                    else:
+                        cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat_name]
+                        if not cat_match.empty:
+                            supply_distinctiveness = cat_match["distinctiveness_name"].iloc[0]
+                            supply_habitat_display = habitat_name
+                        else:
+                            supply_distinctiveness = "Medium"
+                            supply_habitat_display = habitat_name
+                    
+                    row_data = {
+                        "Distinctiveness": demand_distinctiveness,
+                        "Habitats Lost": demand_habitat_display,
+                        "# Units": f"{units:.2f}",
+                        "Distinctiveness_Supply": supply_distinctiveness,
+                        "Habitats Supplied": supply_habitat_display,
+                        "# Units_Supply": f"{units:.2f}",
+                        "Price Per Unit": f"£{price_per_unit:,.0f}",
+                        "Offset Cost": f"£{offset_cost:,.0f}"
+                    }
+                    area_habitats.append(row_data)
+    
     # Update total cost to include manual entries
-    total_cost_with_manual = total_cost + manual_hedgerow_cost + manual_watercourse_cost
+    total_cost_with_manual = total_cost + manual_hedgerow_cost + manual_watercourse_cost + manual_area_cost
     total_with_admin = total_cost_with_manual + admin_fee
     
     # Bundle Low + 10% Net Gain rows together for each habitat type
@@ -4389,9 +4693,42 @@ if st.session_state.get("optimization_complete", False) and st.session_state.get
     st.markdown("---")
     st.markdown("### 📊 Optimization Results")
     
-    # Show summary at top
+    # Show summary at top - recalculate with removed rows and manual entries
     if st.session_state.get("contract_size") and st.session_state.get("total_cost") is not None:
-        total_cost = st.session_state["total_cost"]
+        # Calculate allocation cost after removing rows
+        alloc_df_temp = st.session_state["last_alloc_df"].copy()
+        if "_row_id" not in alloc_df_temp.columns:
+            alloc_df_temp["_row_id"] = range(len(alloc_df_temp))
+        removed_ids = st.session_state.get("removed_allocation_rows", [])
+        active_alloc_df = alloc_df_temp[~alloc_df_temp["_row_id"].isin(removed_ids)]
+        allocation_cost = active_alloc_df["cost"].sum() if not active_alloc_df.empty else 0.0
+        
+        # Calculate manual entries costs
+        manual_hedge_cost = sum(float(r.get("units", 0.0) or 0.0) * float(r.get("price_per_unit", 0.0) or 0.0) 
+                               for r in st.session_state.get("manual_hedgerow_rows", []))
+        manual_water_cost = sum(float(r.get("units", 0.0) or 0.0) * float(r.get("price_per_unit", 0.0) or 0.0) 
+                               for r in st.session_state.get("manual_watercourse_rows", []))
+        # For area habitats, apply proper paired calculation or simple calculation
+        manual_area_cost = 0.0
+        for r in st.session_state.get("manual_area_rows", []):
+            if r.get("paired", False):
+                # Paired entry - use detailed calculation
+                units = float(r.get("units", 0.0) or 0.0)
+                demand_stock = float(r.get("demand_stock_use", 0.5))
+                companion_stock = 1.0 - demand_stock
+                demand_price = float(r.get("demand_price", 0.0) or 0.0)
+                companion_price = float(r.get("companion_price", 0.0) or 0.0)
+                
+                demand_units = units * demand_stock
+                companion_units = units * companion_stock
+                manual_area_cost += (demand_units * demand_price) + (companion_units * companion_price)
+            else:
+                # Simple non-paired entry
+                units = float(r.get("units", 0.0) or 0.0)
+                price = float(r.get("price_per_unit", 0.0) or 0.0)
+                manual_area_cost += units * price
+        
+        total_cost = allocation_cost + manual_hedge_cost + manual_water_cost + manual_area_cost
         total_with_admin = total_cost + ADMIN_FEE_GBP
         st.success(
             f"Contract size = **{st.session_state['contract_size']}**. "
@@ -4401,10 +4738,34 @@ if st.session_state.get("optimization_complete", False) and st.session_state.get
     
     # Show allocation detail in expander
     with st.expander("📋 Allocation detail", expanded=True):
-        alloc_df = st.session_state["last_alloc_df"]
-        st.dataframe(alloc_df, use_container_width=True)
-        if "price_source" in alloc_df.columns:
-            st.caption("Note: `price_source='group-proxy'` or `any-low-proxy` indicate proxy pricing rules.")
+        alloc_df = st.session_state["last_alloc_df"].copy()
+        
+        # Add row identifiers if not already present
+        if "_row_id" not in alloc_df.columns:
+            alloc_df["_row_id"] = range(len(alloc_df))
+        
+        # Filter out removed rows
+        removed_ids = st.session_state.get("removed_allocation_rows", [])
+        display_df = alloc_df[~alloc_df["_row_id"].isin(removed_ids)]
+        
+        if not display_df.empty:
+            # Display the dataframe with remove buttons for each row
+            for idx, row in display_df.iterrows():
+                col1, col2 = st.columns([0.95, 0.05])
+                with col1:
+                    # Create a single-row dataframe for display
+                    single_row_df = pd.DataFrame([row.drop("_row_id")])
+                    st.dataframe(single_row_df, use_container_width=True, hide_index=True)
+                with col2:
+                    if st.button("❌", key=f"remove_alloc_{row['_row_id']}", help="Remove this line"):
+                        if "_row_id" in row:
+                            st.session_state["removed_allocation_rows"].append(row["_row_id"])
+                            st.rerun()
+            
+            if "price_source" in alloc_df.columns:
+                st.caption("Note: `price_source='group-proxy'` or `any-low-proxy` indicate proxy pricing rules.")
+        else:
+            st.info("All allocation rows have been removed. Add manual entries below or run optimization again.")
     
     # Show Site/Habitat totals in expander
     if st.session_state.get("site_hab_totals") is not None:
@@ -4426,16 +4787,289 @@ if st.session_state.get("optimization_complete", False) and st.session_state.get
         with st.expander("💰 Order summary (with admin fee)", expanded=True):
             st.dataframe(st.session_state["summary_df"], hide_index=True, use_container_width=True)
 
-# ========== MANUAL HEDGEROW/WATERCOURSE ENTRIES (PERSISTENT) ==========
+# ========== MANUAL AREA/HEDGEROW/WATERCOURSE ENTRIES (PERSISTENT) ==========
 # This section persists across reruns because it's outside the "if run:" block
 if st.session_state.get("optimization_complete", False):
     st.markdown("---")
-    st.markdown("#### ➕ Manual Additions (Hedgerow & Watercourse)")
-    st.info("Add additional hedgerow or watercourse units to your quote. These will be included in the final client report.")
+    st.markdown("#### ➕ Manual Additions (Area, Hedgerow & Watercourse)")
+    st.info("Add additional area, hedgerow or watercourse units to your quote. These will be included in the final client report.")
     
     # Get available habitats
+    area_choices = get_area_habitats(backend["HabitatCatalog"])
     hedgerow_choices = get_hedgerow_habitats(backend["HabitatCatalog"])
     watercourse_choices = get_watercourse_habitats(backend["HabitatCatalog"])
+    
+    # Get list of banks for manual entry
+    if "Banks" in backend and not backend["Banks"].empty:
+        bank_list = sorted(backend["Banks"]["BANK_KEY"].dropna().unique().tolist())
+        st.session_state["bank_list_for_manual"] = bank_list
+    else:
+        bank_list = st.session_state.get("bank_list_for_manual", [])
+    
+    # Area Habitats Section
+    with st.container(border=True):
+        st.markdown("**🌳 Manual Area Habitat Units**")
+        
+        # Add Net Gain option to area choices
+        area_choices_with_ng = area_choices + [NET_GAIN_LABEL] if area_choices else [NET_GAIN_LABEL]
+        
+        to_delete_area = []
+        for idx, row in enumerate(st.session_state.manual_area_rows):
+            is_paired = bool(row.get("paired", False))
+            
+            # Check if paired - show expanded fields
+            if is_paired:
+                st.markdown(f"**Entry {idx + 1}** (Paired Allocation)")
+                
+                # First row: Habitat Lost and Paired checkbox
+                c1, c2, c_del = st.columns([0.45, 0.45, 0.10])
+                with c1:
+                    if area_choices_with_ng:
+                        default_idx = None
+                        if row.get("habitat_lost") and row["habitat_lost"] in area_choices_with_ng:
+                            default_idx = area_choices_with_ng.index(row["habitat_lost"])
+                        st.session_state.manual_area_rows[idx]["habitat_lost"] = st.selectbox(
+                            "Habitat Lost", area_choices_with_ng,
+                            index=default_idx,
+                            key=f"manual_area_lost_{row['id']}",
+                            help="Select area habitat lost"
+                        )
+                with c2:
+                    st.session_state.manual_area_rows[idx]["units"] = st.number_input(
+                        "Units Required", min_value=0.0, step=0.01, value=float(row.get("units", 0.0)), 
+                        key=f"manual_area_units_{row['id']}",
+                        help="Total units of habitat lost"
+                    )
+                with c_del:
+                    st.markdown("")  # Spacer
+                    st.markdown("")  # Spacer
+                    if st.button("🗑️", key=f"del_manual_area_{row['id']}", help="Remove this entry"):
+                        to_delete_area.append(row["id"])
+                
+                # Second row: Demand Habitat details
+                st.markdown("**Demand Habitat:**")
+                c1, c2, c3 = st.columns([0.40, 0.30, 0.30])
+                with c1:
+                    if area_choices_with_ng:
+                        default_idx = None
+                        if row.get("demand_habitat") and row["demand_habitat"] in area_choices_with_ng:
+                            default_idx = area_choices_with_ng.index(row["demand_habitat"])
+                        st.session_state.manual_area_rows[idx]["demand_habitat"] = st.selectbox(
+                            "Habitat Type", area_choices_with_ng,
+                            index=default_idx,
+                            key=f"manual_area_demand_hab_{row['id']}",
+                            help="Primary habitat in paired allocation"
+                        )
+                with c2:
+                    if bank_list:
+                        default_idx = 0
+                        if row.get("demand_bank") and row["demand_bank"] in bank_list:
+                            default_idx = bank_list.index(row["demand_bank"])
+                        st.session_state.manual_area_rows[idx]["demand_bank"] = st.selectbox(
+                            "Bank", bank_list,
+                            index=default_idx,
+                            key=f"manual_area_demand_bank_{row['id']}",
+                            help="Bank providing demand habitat"
+                        )
+                    else:
+                        st.session_state.manual_area_rows[idx]["demand_bank"] = st.text_input(
+                            "Bank", value=row.get("demand_bank", ""),
+                            key=f"manual_area_demand_bank_{row['id']}"
+                        )
+                with c3:
+                    st.session_state.manual_area_rows[idx]["demand_price"] = st.number_input(
+                        "Price/Unit (£)", min_value=0.0, step=1.0, value=float(row.get("demand_price", 0.0)),
+                        key=f"manual_area_demand_price_{row['id']}",
+                        help="Price per unit for demand habitat"
+                    )
+                
+                # Third row: Companion Habitat details
+                st.markdown("**Companion Habitat:**")
+                c1, c2, c3 = st.columns([0.40, 0.30, 0.30])
+                with c1:
+                    if area_choices_with_ng:
+                        default_idx = None
+                        if row.get("companion_habitat") and row["companion_habitat"] in area_choices_with_ng:
+                            default_idx = area_choices_with_ng.index(row["companion_habitat"])
+                        st.session_state.manual_area_rows[idx]["companion_habitat"] = st.selectbox(
+                            "Habitat Type", area_choices_with_ng,
+                            index=default_idx,
+                            key=f"manual_area_companion_hab_{row['id']}",
+                            help="Companion habitat in paired allocation"
+                        )
+                with c2:
+                    if bank_list:
+                        default_idx = 0
+                        if row.get("companion_bank") and row["companion_bank"] in bank_list:
+                            default_idx = bank_list.index(row["companion_bank"])
+                        st.session_state.manual_area_rows[idx]["companion_bank"] = st.selectbox(
+                            "Bank", bank_list,
+                            index=default_idx,
+                            key=f"manual_area_companion_bank_{row['id']}",
+                            help="Bank providing companion habitat"
+                        )
+                    else:
+                        st.session_state.manual_area_rows[idx]["companion_bank"] = st.text_input(
+                            "Bank", value=row.get("companion_bank", ""),
+                            key=f"manual_area_companion_bank_{row['id']}"
+                        )
+                with c3:
+                    st.session_state.manual_area_rows[idx]["companion_price"] = st.number_input(
+                        "Price/Unit (£)", min_value=0.0, step=1.0, value=float(row.get("companion_price", 0.0)),
+                        key=f"manual_area_companion_price_{row['id']}",
+                        help="Price per unit for companion habitat"
+                    )
+                
+                # Fourth row: SRM selection and stock use ratios
+                c1, c2, c3 = st.columns([0.33, 0.33, 0.34])
+                with c1:
+                    tier_options = ["local", "adjacent", "far"]
+                    default_tier_idx = 1  # Default to adjacent
+                    if row.get("srm_tier") and row["srm_tier"] in tier_options:
+                        default_tier_idx = tier_options.index(row["srm_tier"])
+                    st.session_state.manual_area_rows[idx]["srm_tier"] = st.selectbox(
+                        "SRM Tier", tier_options,
+                        index=default_tier_idx,
+                        key=f"manual_area_srm_{row['id']}",
+                        help="Strategic Resource Multiplier tier: local (1.0), adjacent (1.33), far (2.0)"
+                    )
+                with c2:
+                    st.session_state.manual_area_rows[idx]["demand_stock_use"] = st.number_input(
+                        "Demand Stock Use", min_value=0.0, max_value=1.0, step=0.01, 
+                        value=float(row.get("demand_stock_use", 0.5)),
+                        key=f"manual_area_demand_stock_{row['id']}",
+                        help="Proportion of stock from demand habitat (0.0 to 1.0)"
+                    )
+                with c3:
+                    companion_stock = 1.0 - float(row.get("demand_stock_use", 0.5))
+                    st.metric("Companion Stock Use", f"{companion_stock:.2f}", help="Auto-calculated to sum to 1.0")
+                
+                # Display calculated values
+                srm_mult = {"local": 1.0, "adjacent": 4/3, "far": 2.0}.get(row.get("srm_tier", "adjacent"), 4/3)
+                units_req = float(row.get("units", 0.0))
+                demand_stock = float(row.get("demand_stock_use", 0.5))
+                companion_stock = 1.0 - demand_stock
+                demand_units = units_req * demand_stock
+                companion_units = units_req * companion_stock
+                demand_pr = float(row.get("demand_price", 0.0))
+                companion_pr = float(row.get("companion_price", 0.0))
+                total_cost = (demand_units * demand_pr) + (companion_units * companion_pr)
+                
+                st.info(
+                    f"**Calculation:** SRM = {srm_mult:.2f} | "
+                    f"Demand: {demand_units:.2f} units × £{demand_pr:.0f} = £{demand_units * demand_pr:,.0f} | "
+                    f"Companion: {companion_units:.2f} units × £{companion_pr:.0f} = £{companion_units * companion_pr:,.0f} | "
+                    f"**Total: £{total_cost:,.0f}**"
+                )
+                
+                # Fifth row: Spatial Risk Configuration
+                st.markdown("**Spatial Risk Configuration:**")
+                c1, c2 = st.columns([0.5, 0.5])
+                with c1:
+                    spatial_risk_options = ["None", "Demand Habitat", "Companion Habitat"]
+                    default_spatial_idx = 0
+                    current_spatial = row.get("spatial_risk_offset_by", "None")
+                    if current_spatial in spatial_risk_options:
+                        default_spatial_idx = spatial_risk_options.index(current_spatial)
+                    st.session_state.manual_area_rows[idx]["spatial_risk_offset_by"] = st.selectbox(
+                        "Which habitat offsets spatial risk?",
+                        spatial_risk_options,
+                        index=default_spatial_idx,
+                        key=f"manual_area_spatial_offset_{row['id']}",
+                        help="Select which habitat in the pair is offsetting the spatial risk"
+                    )
+                with c2:
+                    srm_value_options = ["4/3 (Adjacent)", "2.0 (Far)"]
+                    default_srm_value_idx = 0 if row.get("srm_tier", "adjacent") == "adjacent" else 1
+                    st.session_state.manual_area_rows[idx]["spatial_risk_srm"] = st.selectbox(
+                        "Spatial Risk SRM",
+                        srm_value_options,
+                        index=default_srm_value_idx,
+                        key=f"manual_area_spatial_srm_{row['id']}",
+                        help="The SRM value applied for spatial risk (4/3 or 2.0)"
+                    )
+                
+                # Paired checkbox toggle
+                c1, c2 = st.columns([0.5, 0.5])
+                with c1:
+                    st.session_state.manual_area_rows[idx]["paired"] = st.checkbox(
+                        "✓ Paired Entry", value=True,
+                        key=f"manual_area_paired_{row['id']}",
+                        help="Uncheck to switch to simple entry mode"
+                    )
+                
+                st.markdown("---")
+                
+            else:
+                # Simple non-paired entry (original layout)
+                c1, c2, c3, c4, c5, c6 = st.columns([0.25, 0.25, 0.13, 0.13, 0.14, 0.10])
+                with c1:
+                    if area_choices_with_ng:
+                        default_idx = None
+                        if row.get("habitat_lost") and row["habitat_lost"] in area_choices_with_ng:
+                            default_idx = area_choices_with_ng.index(row["habitat_lost"])
+                        st.session_state.manual_area_rows[idx]["habitat_lost"] = st.selectbox(
+                            "Habitat Lost", area_choices_with_ng,
+                            index=default_idx,
+                            key=f"manual_area_lost_{row['id']}",
+                            help="Select area habitat lost"
+                        )
+                    else:
+                        st.warning("No area habitats available in catalog")
+                with c2:
+                    if area_choices_with_ng:
+                        default_idx = None
+                        if row.get("habitat_name") and row["habitat_name"] in area_choices_with_ng:
+                            default_idx = area_choices_with_ng.index(row["habitat_name"])
+                        st.session_state.manual_area_rows[idx]["habitat_name"] = st.selectbox(
+                            "Habitat to Mitigate", area_choices_with_ng,
+                            index=default_idx,
+                            key=f"manual_area_hab_{row['id']}",
+                            help="Select area habitat to mitigate"
+                        )
+                    else:
+                        st.warning("No area habitats available")
+                with c3:
+                    st.session_state.manual_area_rows[idx]["units"] = st.number_input(
+                        "Units", min_value=0.0, step=0.01, value=float(row.get("units", 0.0)), 
+                        key=f"manual_area_units_{row['id']}"
+                    )
+                with c4:
+                    st.session_state.manual_area_rows[idx]["price_per_unit"] = st.number_input(
+                        "Price/Unit (£)", min_value=0.0, step=1.0, value=float(row.get("price_per_unit", 0.0)),
+                        key=f"manual_area_price_{row['id']}"
+                    )
+                with c5:
+                    st.session_state.manual_area_rows[idx]["paired"] = st.checkbox(
+                        "Paired", value=False,
+                        key=f"manual_area_paired_{row['id']}",
+                        help="Check to switch to paired entry mode with full details"
+                    )
+                with c6:
+                    if st.button("🗑️", key=f"del_manual_area_{row['id']}", help="Remove this row"):
+                        to_delete_area.append(row["id"])
+        
+        if to_delete_area:
+            st.session_state.manual_area_rows = [r for r in st.session_state.manual_area_rows if r["id"] not in to_delete_area]
+            st.rerun()
+        
+        col1, col2 = st.columns([0.5, 0.5])
+        with col1:
+            if st.button("➕ Add Area Habitat Entry", key="add_manual_area_btn"):
+                st.session_state.manual_area_rows.append({
+                    "id": st.session_state._next_manual_area_id,
+                    "habitat_lost": "",
+                    "habitat_name": "",
+                    "units": 0.0,
+                    "price_per_unit": 0.0,
+                    "paired": False
+                })
+                st.session_state._next_manual_area_id += 1
+                st.rerun()
+        with col2:
+            if st.button("🧹 Clear Area Habitats", key="clear_manual_area_btn"):
+                st.session_state.manual_area_rows = []
+                st.rerun()
     
     # Hedgerow Section
     with st.container(border=True):
@@ -4580,12 +5214,35 @@ if st.session_state.get("optimization_complete", False):
                 st.rerun()
 
 # Add this to your optimization results section (after the downloads):
-if (st.session_state.get("optimization_complete", False) and 
-    isinstance(st.session_state.get("last_alloc_df"), pd.DataFrame) and 
-    not st.session_state["last_alloc_df"].empty):
+# Allow client report generation if optimization was run OR if there are manual entries
+has_optimizer_results = (st.session_state.get("optimization_complete", False) and 
+                         isinstance(st.session_state.get("last_alloc_df"), pd.DataFrame) and 
+                         not st.session_state["last_alloc_df"].empty)
+
+has_manual_entries = (st.session_state.get("optimization_complete", False) and
+                     (len(st.session_state.get("manual_hedgerow_rows", [])) > 0 or
+                      len(st.session_state.get("manual_watercourse_rows", [])) > 0 or
+                      len(st.session_state.get("manual_area_rows", [])) > 0))
+
+if has_optimizer_results or has_manual_entries:
     
     # Get data from session state
-    session_alloc_df = st.session_state["last_alloc_df"]
+    session_alloc_df = None
+    if isinstance(st.session_state.get("last_alloc_df"), pd.DataFrame):
+        session_alloc_df = st.session_state["last_alloc_df"].copy()
+        
+        # Filter out removed rows if _row_id column exists
+        if "_row_id" in session_alloc_df.columns:
+            removed_ids = st.session_state.get("removed_allocation_rows", [])
+            session_alloc_df = session_alloc_df[~session_alloc_df["_row_id"].isin(removed_ids)]
+    
+    # If session_alloc_df is empty or None, create an empty dataframe with proper structure
+    if session_alloc_df is None or session_alloc_df.empty:
+        session_alloc_df = pd.DataFrame(columns=[
+            "demand_habitat", "BANK_KEY", "bank_name", "bank_id", "supply_habitat",
+            "allocation_type", "tier", "units_supplied", "unit_price", "cost",
+            "price_source", "price_habitat"
+        ])
     
     # Reconstruct demand_df from session state
     session_demand_df = pd.DataFrame(
@@ -4593,8 +5250,8 @@ if (st.session_state.get("optimization_complete", False) and
          for r in st.session_state.demand_rows if sstr(r["habitat_name"]) and float(r.get("units", 0.0) or 0.0) > 0]
     )
     
-    # Calculate total cost from session data
-    session_total_cost = session_alloc_df["cost"].sum()
+    # Calculate total cost from session data (includes removed rows filtering)
+    session_total_cost = session_alloc_df["cost"].sum() if not session_alloc_df.empty else 0.0
     
     st.markdown("---")
     st.markdown("#### 📧 Client Report Generation")
@@ -4738,6 +5395,7 @@ if (st.session_state.get("optimization_complete", False) and
                         admin_fee=ADMIN_FEE_GBP,
                         manual_hedgerow_rows=st.session_state.get("manual_hedgerow_rows", []),
                         manual_watercourse_rows=st.session_state.get("manual_watercourse_rows", []),
+                        manual_area_habitat_rows=st.session_state.get("manual_area_habitat_rows", []),
                         username=current_user,
                         promoter_name=st.session_state.get("selected_promoter"),
                         promoter_discount_type=st.session_state.get("promoter_discount_type"),
@@ -4763,6 +5421,8 @@ if (st.session_state.get("optimization_complete", False) and
             client_name, ref_number, location,
             st.session_state.manual_hedgerow_rows,
             st.session_state.manual_watercourse_rows,
+            st.session_state.manual_area_rows,
+            st.session_state.get("removed_allocation_rows", []),
             st.session_state.get("selected_promoter"),
             st.session_state.get("promoter_discount_type"),
             st.session_state.get("promoter_discount_value")

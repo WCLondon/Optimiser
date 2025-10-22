@@ -90,8 +90,10 @@ class SubmissionsDB:
         engine = self._get_connection()
         
         # Use raw SQL for schema creation to ensure idempotency
-        with engine.connect() as conn:
-            # Main submissions table
+        # Each DDL operation in its own transaction to prevent cascading failures
+        
+        # Main submissions table
+        with engine.begin() as conn:
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS submissions (
                     id SERIAL PRIMARY KEY,
@@ -124,6 +126,7 @@ class SubmissionsDB:
                     -- Manual entries
                     manual_hedgerow_entries JSONB,
                     manual_watercourse_entries JSONB,
+                    manual_area_habitat_entries JSONB,
                     
                     -- Full allocation results (JSON)
                     allocation_results JSONB,
@@ -137,8 +140,9 @@ class SubmissionsDB:
                     promoter_discount_value FLOAT
                 )
             """))
-            
-            # Create indexes for submissions table
+        
+        # Create indexes for submissions table
+        with engine.begin() as conn:
             conn.execute(text("""
                 CREATE INDEX IF NOT EXISTS idx_submissions_date 
                 ON submissions(submission_date DESC)
@@ -155,10 +159,11 @@ class SubmissionsDB:
                 CREATE INDEX IF NOT EXISTS idx_submissions_nca 
                 ON submissions(target_nca)
             """))
-            
-            # Migrate submissions table to support 'no_discount' option
-            # Drop and recreate the constraint if it exists with old values
-            try:
+        
+        # Migrate submissions table to support 'no_discount' option
+        # Drop and recreate the constraint if it exists with old values
+        try:
+            with engine.begin() as conn:
                 conn.execute(text("""
                     DO $$
                     BEGIN
@@ -179,11 +184,241 @@ class SubmissionsDB:
                             NULL;
                     END $$;
                 """))
-            except Exception:
-                # Table might not exist yet or constraint already correct
-                pass
-            
-            # Allocations detail table (normalized)
+        except Exception:
+            # Table might not exist yet or constraint already correct
+            pass
+        
+        # Add manual_area_habitat_entries column if it doesn't exist
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'submissions' 
+                            AND column_name = 'manual_area_habitat_entries'
+                        ) THEN
+                            ALTER TABLE submissions ADD COLUMN manual_area_habitat_entries JSONB;
+                        END IF;
+                    END $$;
+                """))
+        except Exception:
+            # Column might already exist
+            pass
+        
+        # Drop the old view if it exists (replaced with physical table)
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("DROP VIEW IF EXISTS submissions_attio CASCADE;"))
+        except Exception:
+            pass
+        
+        # Create Attio-compatible physical table for StackSync integration
+        # Physical table is required for PostgreSQL logical replication (realtime sync)
+        # Converts JSONB to TEXT and adjusts types to match Attio schema
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS submissions_attio (
+                        id INTEGER PRIMARY KEY,
+                        submission_date DATE,
+                        client_name TEXT,
+                        reference_number TEXT,
+                        site_location JSONB,
+                        target_lpa TEXT,
+                        target_nca TEXT,
+                        target_lat TEXT,
+                        target_lon TEXT,
+                        demand_habitats TEXT,
+                        contract_size TEXT,
+                        total_cost FLOAT,
+                        total_with_admin FLOAT,
+                        num_banks_selected INTEGER,
+                        banks_selected TEXT,
+                        watercourse_entries TEXT,
+                        allocation_results TEXT,
+                        promoter TEXT,
+                        discount_type TEXT,
+                        discount_value FLOAT
+                    );
+                """))
+        except Exception:
+            # Table might already exist
+            pass
+        
+        # Create trigger function to automatically sync submissions to submissions_attio
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    CREATE OR REPLACE FUNCTION sync_to_attio() 
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        INSERT INTO submissions_attio (
+                            id,
+                            submission_date,
+                            client_name,
+                            reference_number,
+                            site_location,
+                            target_lpa,
+                            target_nca,
+                            target_lat,
+                            target_lon,
+                            demand_habitats,
+                            contract_size,
+                            total_cost,
+                            total_with_admin,
+                            num_banks_selected,
+                            banks_selected,
+                            watercourse_entries,
+                            allocation_results,
+                            promoter,
+                            discount_type,
+                            discount_value
+                        ) VALUES (
+                            NEW.id,
+                            DATE(NEW.submission_date),
+                            NEW.client_name,
+                            NEW.reference_number,
+                            jsonb_build_object(
+                                'line_1', COALESCE(NEW.site_location, ''),
+                                'line_2', '',
+                                'line_3', '',
+                                'line_4', '',
+                                'locality', '',
+                                'region', '',
+                                'postcode', '',
+                                'country_code', 'GB',
+                                'latitude', NEW.target_lat,
+                                'longitude', NEW.target_lon
+                            ),
+                            NEW.target_lpa,
+                            NEW.target_nca,
+                            CAST(NEW.target_lat AS TEXT),
+                            CAST(NEW.target_lon AS TEXT),
+                            COALESCE(NEW.demand_habitats::TEXT, ''),
+                            NEW.contract_size,
+                            NEW.total_cost,
+                            NEW.total_with_admin,
+                            NEW.num_banks_selected,
+                            COALESCE(NEW.banks_used::TEXT, ''),
+                            COALESCE(NEW.manual_watercourse_entries::TEXT, ''),
+                            COALESCE(NEW.allocation_results::TEXT, ''),
+                            COALESCE(NEW.promoter_name, ''),
+                            NEW.promoter_discount_type,
+                            NEW.promoter_discount_value
+                        )
+                        ON CONFLICT (id) DO UPDATE SET
+                            submission_date = EXCLUDED.submission_date,
+                            client_name = EXCLUDED.client_name,
+                            reference_number = EXCLUDED.reference_number,
+                            site_location = EXCLUDED.site_location,
+                            target_lpa = EXCLUDED.target_lpa,
+                            target_nca = EXCLUDED.target_nca,
+                            target_lat = EXCLUDED.target_lat,
+                            target_lon = EXCLUDED.target_lon,
+                            demand_habitats = EXCLUDED.demand_habitats,
+                            contract_size = EXCLUDED.contract_size,
+                            total_cost = EXCLUDED.total_cost,
+                            total_with_admin = EXCLUDED.total_with_admin,
+                            num_banks_selected = EXCLUDED.num_banks_selected,
+                            banks_selected = EXCLUDED.banks_selected,
+                            watercourse_entries = EXCLUDED.watercourse_entries,
+                            allocation_results = EXCLUDED.allocation_results,
+                            promoter = EXCLUDED.promoter,
+                            discount_type = EXCLUDED.discount_type,
+                            discount_value = EXCLUDED.discount_value;
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql;
+                """))
+        except Exception:
+            pass
+        
+        # Create trigger on submissions table to automatically sync to submissions_attio
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    DROP TRIGGER IF EXISTS submissions_to_attio_trigger ON submissions;
+                    CREATE TRIGGER submissions_to_attio_trigger
+                    AFTER INSERT OR UPDATE ON submissions
+                    FOR EACH ROW EXECUTE FUNCTION sync_to_attio();
+                """))
+        except Exception:
+            pass
+        
+        # Create trigger for delete operations
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    CREATE OR REPLACE FUNCTION delete_from_attio() 
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        DELETE FROM submissions_attio WHERE id = OLD.id;
+                        RETURN OLD;
+                    END;
+                    $$ LANGUAGE plpgsql;
+                    
+                    DROP TRIGGER IF EXISTS submissions_to_attio_delete_trigger ON submissions;
+                    CREATE TRIGGER submissions_to_attio_delete_trigger
+                    AFTER DELETE ON submissions
+                    FOR EACH ROW EXECUTE FUNCTION delete_from_attio();
+                """))
+        except Exception:
+            pass
+        
+        # Backfill existing submissions into submissions_attio table
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    INSERT INTO submissions_attio (
+                        id, submission_date, client_name, reference_number,
+                        site_location, target_lpa, target_nca, target_lat, target_lon,
+                        demand_habitats, contract_size, total_cost, total_with_admin,
+                        num_banks_selected, banks_selected, watercourse_entries,
+                        allocation_results, promoter, discount_type, discount_value
+                    )
+                    SELECT 
+                        id,
+                        DATE(submission_date),
+                        client_name,
+                        reference_number,
+                        jsonb_build_object(
+                            'line_1', COALESCE(site_location, ''),
+                            'line_2', '',
+                            'line_3', '',
+                            'line_4', '',
+                            'locality', '',
+                            'region', '',
+                            'postcode', '',
+                            'country_code', 'GB',
+                            'latitude', target_lat,
+                            'longitude', target_lon
+                        ),
+                        target_lpa,
+                        target_nca,
+                        CAST(target_lat AS TEXT),
+                        CAST(target_lon AS TEXT),
+                        COALESCE(demand_habitats::TEXT, ''),
+                        contract_size,
+                        total_cost,
+                        total_with_admin,
+                        num_banks_selected,
+                        COALESCE(banks_used::TEXT, ''),
+                        COALESCE(manual_watercourse_entries::TEXT, ''),
+                        COALESCE(allocation_results::TEXT, ''),
+                        COALESCE(promoter_name, ''),
+                        promoter_discount_type,
+                        promoter_discount_value
+                    FROM submissions
+                    ON CONFLICT (id) DO NOTHING;
+                """))
+        except Exception:
+            # Backfill may fail if data already exists or other issues
+            pass
+        
+        # Allocations detail table (normalized)
+        with engine.begin() as conn:
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS allocation_details (
                     id SERIAL PRIMARY KEY,
@@ -399,6 +634,7 @@ class SubmissionsDB:
                         admin_fee: float,
                         manual_hedgerow_rows: List[Dict],
                         manual_watercourse_rows: List[Dict],
+                        manual_area_habitat_rows: Optional[List[Dict]] = None,
                         username: str = "",
                         promoter_name: Optional[str] = None,
                         promoter_discount_type: Optional[str] = None,
@@ -437,6 +673,7 @@ class SubmissionsDB:
         # Sanitize manual entries
         manual_hedgerow_rows_clean = sanitize_for_db(manual_hedgerow_rows)
         manual_watercourse_rows_clean = sanitize_for_db(manual_watercourse_rows)
+        manual_area_habitat_rows_clean = sanitize_for_db(manual_area_habitat_rows) if manual_area_habitat_rows else []
         
         # Sanitize numeric fields
         target_lat_clean = float(target_lat) if target_lat is not None else None
@@ -457,7 +694,7 @@ class SubmissionsDB:
                         lpa_neighbors, nca_neighbors, demand_habitats,
                         contract_size, total_cost, admin_fee, total_with_admin,
                         num_banks_selected, banks_used,
-                        manual_hedgerow_entries, manual_watercourse_entries,
+                        manual_hedgerow_entries, manual_watercourse_entries, manual_area_habitat_entries,
                         allocation_results, username,
                         promoter_name, promoter_discount_type, promoter_discount_value,
                         customer_id
@@ -467,7 +704,7 @@ class SubmissionsDB:
                         :lpa_neighbors, :nca_neighbors, :demand_habitats,
                         :contract_size, :total_cost, :admin_fee, :total_with_admin,
                         :num_banks_selected, :banks_used,
-                        :manual_hedgerow_entries, :manual_watercourse_entries,
+                        :manual_hedgerow_entries, :manual_watercourse_entries, :manual_area_habitat_entries,
                         :allocation_results, :username,
                         :promoter_name, :promoter_discount_type, :promoter_discount_value,
                         :customer_id
@@ -492,6 +729,7 @@ class SubmissionsDB:
                     "banks_used": banks_used_json,  # JSONB
                     "manual_hedgerow_entries": json.dumps(manual_hedgerow_rows_clean),  # JSONB
                     "manual_watercourse_entries": json.dumps(manual_watercourse_rows_clean),  # JSONB
+                    "manual_area_habitat_entries": json.dumps(manual_area_habitat_rows_clean),  # JSONB
                     "allocation_results": json.dumps(allocation_results_json),  # JSONB
                     "username": username,
                     "promoter_name": promoter_name,
@@ -1070,7 +1308,7 @@ class SubmissionsDB:
         """
         engine = self._get_connection()
         
-        with engine.connect() as conn:
+        with engine.begin() as conn:
             # Get original submission
             result = conn.execute(
                 text("SELECT * FROM submissions WHERE id = :id"),
@@ -1096,84 +1334,77 @@ class SubmissionsDB:
             else:
                 demand_habitats_json = original_dict["demand_habitats"]
             
-            trans = conn.begin()
-            try:
-                # Insert new submission
-                result = conn.execute(text("""
-                    INSERT INTO submissions (
-                        submission_date, client_name, reference_number, site_location,
-                        target_lpa, target_nca, target_lat, target_lon,
-                        lpa_neighbors, nca_neighbors, demand_habitats,
-                        contract_size, total_cost, admin_fee, total_with_admin,
-                        num_banks_selected, banks_used,
-                        manual_hedgerow_entries, manual_watercourse_entries,
-                        allocation_results, username,
-                        promoter_name, promoter_discount_type, promoter_discount_value,
-                        customer_id
-                    ) VALUES (
-                        :submission_date, :client_name, :reference_number, :site_location,
-                        :target_lpa, :target_nca, :target_lat, :target_lon,
-                        :lpa_neighbors, :nca_neighbors, :demand_habitats,
-                        :contract_size, :total_cost, :admin_fee, :total_with_admin,
-                        :num_banks_selected, :banks_used,
-                        :manual_hedgerow_entries, :manual_watercourse_entries,
-                        :allocation_results, :username,
-                        :promoter_name, :promoter_discount_type, :promoter_discount_value,
-                        :customer_id
-                    ) RETURNING id
-                """), {
-                    "submission_date": submission_date,
-                    "client_name": original_dict["client_name"],
-                    "reference_number": new_reference,
-                    "site_location": original_dict["site_location"],
-                    "target_lpa": original_dict["target_lpa"],
-                    "target_nca": original_dict["target_nca"],
-                    "target_lat": original_dict["target_lat"],
-                    "target_lon": original_dict["target_lon"],
-                    "lpa_neighbors": json.dumps(original_dict["lpa_neighbors"]) if isinstance(original_dict["lpa_neighbors"], list) else original_dict["lpa_neighbors"],
-                    "nca_neighbors": json.dumps(original_dict["nca_neighbors"]) if isinstance(original_dict["nca_neighbors"], list) else original_dict["nca_neighbors"],
-                    "demand_habitats": json.dumps(demand_habitats_json) if isinstance(demand_habitats_json, list) else demand_habitats_json,
-                    "contract_size": original_dict["contract_size"],
-                    "total_cost": original_dict["total_cost"],
-                    "admin_fee": original_dict["admin_fee"],
-                    "total_with_admin": original_dict["total_with_admin"],
-                    "num_banks_selected": original_dict["num_banks_selected"],
-                    "banks_used": json.dumps(original_dict["banks_used"]) if isinstance(original_dict["banks_used"], list) else original_dict["banks_used"],
-                    "manual_hedgerow_entries": json.dumps(original_dict["manual_hedgerow_entries"]) if isinstance(original_dict["manual_hedgerow_entries"], list) else original_dict["manual_hedgerow_entries"],
-                    "manual_watercourse_entries": json.dumps(original_dict["manual_watercourse_entries"]) if isinstance(original_dict["manual_watercourse_entries"], list) else original_dict["manual_watercourse_entries"],
-                    "allocation_results": json.dumps(original_dict["allocation_results"]) if isinstance(original_dict["allocation_results"], list) else original_dict["allocation_results"],
-                    "username": original_dict["username"],
-                    "promoter_name": original_dict.get("promoter_name"),
-                    "promoter_discount_type": original_dict.get("promoter_discount_type"),
-                    "promoter_discount_value": original_dict.get("promoter_discount_value"),
-                    "customer_id": original_dict.get("customer_id")
-                })
-                
-                new_submission_id = result.fetchone()[0]
-                
-                # Copy allocation details
-                conn.execute(text("""
-                    INSERT INTO allocation_details (
-                        submission_id, bank_key, bank_name,
-                        demand_habitat, supply_habitat, allocation_type,
-                        tier, units_supplied, unit_price, cost
-                    )
-                    SELECT :new_submission_id, bank_key, bank_name,
-                           demand_habitat, supply_habitat, allocation_type,
-                           tier, units_supplied, unit_price, cost
-                    FROM allocation_details
-                    WHERE submission_id = :original_submission_id
-                """), {
-                    "new_submission_id": new_submission_id,
-                    "original_submission_id": submission_id
-                })
-                
-                trans.commit()
-                return new_submission_id
-                
-            except Exception as e:
-                trans.rollback()
-                raise
+            # Insert new submission
+            result = conn.execute(text("""
+                INSERT INTO submissions (
+                    submission_date, client_name, reference_number, site_location,
+                    target_lpa, target_nca, target_lat, target_lon,
+                    lpa_neighbors, nca_neighbors, demand_habitats,
+                    contract_size, total_cost, admin_fee, total_with_admin,
+                    num_banks_selected, banks_used,
+                    manual_hedgerow_entries, manual_watercourse_entries,
+                    allocation_results, username,
+                    promoter_name, promoter_discount_type, promoter_discount_value,
+                    customer_id
+                ) VALUES (
+                    :submission_date, :client_name, :reference_number, :site_location,
+                    :target_lpa, :target_nca, :target_lat, :target_lon,
+                    :lpa_neighbors, :nca_neighbors, :demand_habitats,
+                    :contract_size, :total_cost, :admin_fee, :total_with_admin,
+                    :num_banks_selected, :banks_used,
+                    :manual_hedgerow_entries, :manual_watercourse_entries,
+                    :allocation_results, :username,
+                    :promoter_name, :promoter_discount_type, :promoter_discount_value,
+                    :customer_id
+                ) RETURNING id
+            """), {
+                "submission_date": submission_date,
+                "client_name": original_dict["client_name"],
+                "reference_number": new_reference,
+                "site_location": original_dict["site_location"],
+                "target_lpa": original_dict["target_lpa"],
+                "target_nca": original_dict["target_nca"],
+                "target_lat": original_dict["target_lat"],
+                "target_lon": original_dict["target_lon"],
+                "lpa_neighbors": json.dumps(original_dict["lpa_neighbors"]) if isinstance(original_dict["lpa_neighbors"], list) else original_dict["lpa_neighbors"],
+                "nca_neighbors": json.dumps(original_dict["nca_neighbors"]) if isinstance(original_dict["nca_neighbors"], list) else original_dict["nca_neighbors"],
+                "demand_habitats": json.dumps(demand_habitats_json) if isinstance(demand_habitats_json, list) else demand_habitats_json,
+                "contract_size": original_dict["contract_size"],
+                "total_cost": original_dict["total_cost"],
+                "admin_fee": original_dict["admin_fee"],
+                "total_with_admin": original_dict["total_with_admin"],
+                "num_banks_selected": original_dict["num_banks_selected"],
+                "banks_used": json.dumps(original_dict["banks_used"]) if isinstance(original_dict["banks_used"], list) else original_dict["banks_used"],
+                "manual_hedgerow_entries": json.dumps(original_dict["manual_hedgerow_entries"]) if isinstance(original_dict["manual_hedgerow_entries"], list) else original_dict["manual_hedgerow_entries"],
+                "manual_watercourse_entries": json.dumps(original_dict["manual_watercourse_entries"]) if isinstance(original_dict["manual_watercourse_entries"], list) else original_dict["manual_watercourse_entries"],
+                "allocation_results": json.dumps(original_dict["allocation_results"]) if isinstance(original_dict["allocation_results"], list) else original_dict["allocation_results"],
+                "username": original_dict["username"],
+                "promoter_name": original_dict.get("promoter_name"),
+                "promoter_discount_type": original_dict.get("promoter_discount_type"),
+                "promoter_discount_value": original_dict.get("promoter_discount_value"),
+                "customer_id": original_dict.get("customer_id")
+            })
+            
+            new_submission_id = result.fetchone()[0]
+            
+            # Copy allocation details
+            conn.execute(text("""
+                INSERT INTO allocation_details (
+                    submission_id, bank_key, bank_name,
+                    demand_habitat, supply_habitat, allocation_type,
+                    tier, units_supplied, unit_price, cost
+                )
+                SELECT :new_submission_id, bank_key, bank_name,
+                       demand_habitat, supply_habitat, allocation_type,
+                       tier, units_supplied, unit_price, cost
+                FROM allocation_details
+                WHERE submission_id = :original_submission_id
+            """), {
+                "new_submission_id": new_submission_id,
+                "original_submission_id": submission_id
+            })
+            
+            return new_submission_id
     
     def db_healthcheck(self) -> bool:
         """
