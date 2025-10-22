@@ -214,11 +214,11 @@ class SubmissionsDB:
             try:
                 conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS submissions_attio (
-                        id TEXT PRIMARY KEY,
+                        id INTEGER PRIMARY KEY,
                         submission_date DATE,
                         client_name TEXT,
                         reference_number TEXT,
-                        site_location TEXT,
+                        site_location JSONB,
                         target_lpa TEXT,
                         target_nca TEXT,
                         target_lat TEXT,
@@ -233,8 +233,7 @@ class SubmissionsDB:
                         allocation_results TEXT,
                         promoter TEXT,
                         discount_type TEXT,
-                        discount_value FLOAT,
-                        created_at TIMESTAMP
+                        discount_value FLOAT
                     );
                 """))
             except Exception:
@@ -267,14 +266,24 @@ class SubmissionsDB:
                             allocation_results,
                             promoter,
                             discount_type,
-                            discount_value,
-                            created_at
+                            discount_value
                         ) VALUES (
-                            NEW.id::TEXT,
+                            NEW.id,
                             DATE(NEW.submission_date),
                             NEW.client_name,
                             NEW.reference_number,
-                            NEW.site_location,
+                            jsonb_build_object(
+                                'line_1', COALESCE(NEW.site_location, ''),
+                                'line_2', '',
+                                'line_3', '',
+                                'line_4', '',
+                                'locality', '',
+                                'region', '',
+                                'postcode', '',
+                                'country_code', 'GB',
+                                'latitude', NEW.target_lat,
+                                'longitude', NEW.target_lon
+                            ),
                             NEW.target_lpa,
                             NEW.target_nca,
                             CAST(NEW.target_lat AS TEXT),
@@ -289,8 +298,7 @@ class SubmissionsDB:
                             COALESCE(NEW.allocation_results::TEXT, ''),
                             COALESCE(NEW.promoter_name, ''),
                             NEW.promoter_discount_type,
-                            NEW.promoter_discount_value,
-                            NEW.submission_date
+                            NEW.promoter_discount_value
                         )
                         ON CONFLICT (id) DO UPDATE SET
                             submission_date = EXCLUDED.submission_date,
@@ -311,8 +319,7 @@ class SubmissionsDB:
                             allocation_results = EXCLUDED.allocation_results,
                             promoter = EXCLUDED.promoter,
                             discount_type = EXCLUDED.discount_type,
-                            discount_value = EXCLUDED.discount_value,
-                            created_at = EXCLUDED.created_at;
+                            discount_value = EXCLUDED.discount_value;
                         RETURN NEW;
                     END;
                     $$ LANGUAGE plpgsql;
@@ -337,7 +344,7 @@ class SubmissionsDB:
                     CREATE OR REPLACE FUNCTION delete_from_attio() 
                     RETURNS TRIGGER AS $$
                     BEGIN
-                        DELETE FROM submissions_attio WHERE id = OLD.id::TEXT;
+                        DELETE FROM submissions_attio WHERE id = OLD.id;
                         RETURN OLD;
                     END;
                     $$ LANGUAGE plpgsql;
@@ -358,14 +365,25 @@ class SubmissionsDB:
                         site_location, target_lpa, target_nca, target_lat, target_lon,
                         demand_habitats, contract_size, total_cost, total_with_admin,
                         num_banks_selected, banks_selected, watercourse_entries,
-                        allocation_results, promoter, discount_type, discount_value, created_at
+                        allocation_results, promoter, discount_type, discount_value
                     )
                     SELECT 
-                        id::TEXT,
+                        id,
                         DATE(submission_date),
                         client_name,
                         reference_number,
-                        site_location,
+                        jsonb_build_object(
+                            'line_1', COALESCE(site_location, ''),
+                            'line_2', '',
+                            'line_3', '',
+                            'line_4', '',
+                            'locality', '',
+                            'region', '',
+                            'postcode', '',
+                            'country_code', 'GB',
+                            'latitude', target_lat,
+                            'longitude', target_lon
+                        ),
                         target_lpa,
                         target_nca,
                         CAST(target_lat AS TEXT),
@@ -380,8 +398,7 @@ class SubmissionsDB:
                         COALESCE(allocation_results::TEXT, ''),
                         COALESCE(promoter_name, ''),
                         promoter_discount_type,
-                        promoter_discount_value,
-                        submission_date
+                        promoter_discount_value
                     FROM submissions
                     ON CONFLICT (id) DO NOTHING;
                 """))
