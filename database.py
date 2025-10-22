@@ -90,9 +90,10 @@ class SubmissionsDB:
         engine = self._get_connection()
         
         # Use raw SQL for schema creation to ensure idempotency
-        # Use begin() for automatic transaction management
+        # Each DDL operation in its own transaction to prevent cascading failures
+        
+        # Main submissions table
         with engine.begin() as conn:
-            # Main submissions table
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS submissions (
                     id SERIAL PRIMARY KEY,
@@ -139,8 +140,9 @@ class SubmissionsDB:
                     promoter_discount_value FLOAT
                 )
             """))
-            
-            # Create indexes for submissions table
+        
+        # Create indexes for submissions table
+        with engine.begin() as conn:
             conn.execute(text("""
                 CREATE INDEX IF NOT EXISTS idx_submissions_date 
                 ON submissions(submission_date DESC)
@@ -157,10 +159,11 @@ class SubmissionsDB:
                 CREATE INDEX IF NOT EXISTS idx_submissions_nca 
                 ON submissions(target_nca)
             """))
-            
-            # Migrate submissions table to support 'no_discount' option
-            # Drop and recreate the constraint if it exists with old values
-            try:
+        
+        # Migrate submissions table to support 'no_discount' option
+        # Drop and recreate the constraint if it exists with old values
+        try:
+            with engine.begin() as conn:
                 conn.execute(text("""
                     DO $$
                     BEGIN
@@ -181,12 +184,13 @@ class SubmissionsDB:
                             NULL;
                     END $$;
                 """))
-            except Exception:
-                # Table might not exist yet or constraint already correct
-                pass
-            
-            # Add manual_area_habitat_entries column if it doesn't exist
-            try:
+        except Exception:
+            # Table might not exist yet or constraint already correct
+            pass
+        
+        # Add manual_area_habitat_entries column if it doesn't exist
+        try:
+            with engine.begin() as conn:
                 conn.execute(text("""
                     DO $$
                     BEGIN
@@ -199,20 +203,22 @@ class SubmissionsDB:
                         END IF;
                     END $$;
                 """))
-            except Exception:
-                # Column might already exist
-                pass
-            
-            # Drop the old view if it exists (replaced with physical table)
-            try:
+        except Exception:
+            # Column might already exist
+            pass
+        
+        # Drop the old view if it exists (replaced with physical table)
+        try:
+            with engine.begin() as conn:
                 conn.execute(text("DROP VIEW IF EXISTS submissions_attio CASCADE;"))
-            except Exception:
-                pass
-            
-            # Create Attio-compatible physical table for StackSync integration
-            # Physical table is required for PostgreSQL logical replication (realtime sync)
-            # Converts JSONB to TEXT and adjusts types to match Attio schema
-            try:
+        except Exception:
+            pass
+        
+        # Create Attio-compatible physical table for StackSync integration
+        # Physical table is required for PostgreSQL logical replication (realtime sync)
+        # Converts JSONB to TEXT and adjusts types to match Attio schema
+        try:
+            with engine.begin() as conn:
                 conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS submissions_attio (
                         id INTEGER PRIMARY KEY,
@@ -237,12 +243,13 @@ class SubmissionsDB:
                         discount_value FLOAT
                     );
                 """))
-            except Exception:
-                # Table might already exist
-                pass
-            
-            # Create trigger function to automatically sync submissions to submissions_attio
-            try:
+        except Exception:
+            # Table might already exist
+            pass
+        
+        # Create trigger function to automatically sync submissions to submissions_attio
+        try:
+            with engine.begin() as conn:
                 conn.execute(text("""
                     CREATE OR REPLACE FUNCTION sync_to_attio() 
                     RETURNS TRIGGER AS $$
@@ -325,22 +332,24 @@ class SubmissionsDB:
                     END;
                     $$ LANGUAGE plpgsql;
                 """))
-            except Exception:
-                pass
-            
-            # Create trigger on submissions table to automatically sync to submissions_attio
-            try:
+        except Exception:
+            pass
+        
+        # Create trigger on submissions table to automatically sync to submissions_attio
+        try:
+            with engine.begin() as conn:
                 conn.execute(text("""
                     DROP TRIGGER IF EXISTS submissions_to_attio_trigger ON submissions;
                     CREATE TRIGGER submissions_to_attio_trigger
                     AFTER INSERT OR UPDATE ON submissions
                     FOR EACH ROW EXECUTE FUNCTION sync_to_attio();
                 """))
-            except Exception:
-                pass
-            
-            # Create trigger for delete operations
-            try:
+        except Exception:
+            pass
+        
+        # Create trigger for delete operations
+        try:
+            with engine.begin() as conn:
                 conn.execute(text("""
                     CREATE OR REPLACE FUNCTION delete_from_attio() 
                     RETURNS TRIGGER AS $$
@@ -355,11 +364,12 @@ class SubmissionsDB:
                     AFTER DELETE ON submissions
                     FOR EACH ROW EXECUTE FUNCTION delete_from_attio();
                 """))
-            except Exception:
-                pass
-            
-            # Backfill existing submissions into submissions_attio table
-            try:
+        except Exception:
+            pass
+        
+        # Backfill existing submissions into submissions_attio table
+        try:
+            with engine.begin() as conn:
                 conn.execute(text("""
                     INSERT INTO submissions_attio (
                         id, submission_date, client_name, reference_number,
@@ -403,11 +413,12 @@ class SubmissionsDB:
                     FROM submissions
                     ON CONFLICT (id) DO NOTHING;
                 """))
-            except Exception:
-                # Backfill may fail if data already exists or other issues
-                pass
-            
-            # Allocations detail table (normalized)
+        except Exception:
+            # Backfill may fail if data already exists or other issues
+            pass
+        
+        # Allocations detail table (normalized)
+        with engine.begin() as conn:
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS allocation_details (
                     id SERIAL PRIMARY KEY,
