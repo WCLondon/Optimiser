@@ -202,37 +202,191 @@ class SubmissionsDB:
                 # Column might already exist
                 pass
             
-            # Create Attio-compatible view for StackSync integration
+            # Drop the old view if it exists (replaced with physical table)
+            try:
+                conn.execute(text("DROP VIEW IF EXISTS submissions_attio CASCADE;"))
+            except Exception:
+                pass
+            
+            # Create Attio-compatible physical table for StackSync integration
+            # Physical table is required for PostgreSQL logical replication (realtime sync)
             # Converts JSONB to TEXT and adjusts types to match Attio schema
             try:
                 conn.execute(text("""
-                    CREATE OR REPLACE VIEW submissions_attio AS
+                    CREATE TABLE IF NOT EXISTS submissions_attio (
+                        id TEXT PRIMARY KEY,
+                        submission_date DATE,
+                        client_name TEXT,
+                        reference_number TEXT,
+                        site_location TEXT,
+                        target_lpa TEXT,
+                        target_nca TEXT,
+                        target_lat TEXT,
+                        target_lon TEXT,
+                        demand_habitats TEXT,
+                        contract_size TEXT,
+                        total_cost FLOAT,
+                        total_with_admin FLOAT,
+                        num_banks_selected INTEGER,
+                        banks_selected TEXT,
+                        watercourse_entries TEXT,
+                        allocation_results TEXT,
+                        promoter TEXT,
+                        discount_type TEXT,
+                        discount_value FLOAT,
+                        created_at TIMESTAMP
+                    );
+                """))
+            except Exception:
+                # Table might already exist
+                pass
+            
+            # Create trigger function to automatically sync submissions to submissions_attio
+            try:
+                conn.execute(text("""
+                    CREATE OR REPLACE FUNCTION sync_to_attio() 
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        INSERT INTO submissions_attio (
+                            id,
+                            submission_date,
+                            client_name,
+                            reference_number,
+                            site_location,
+                            target_lpa,
+                            target_nca,
+                            target_lat,
+                            target_lon,
+                            demand_habitats,
+                            contract_size,
+                            total_cost,
+                            total_with_admin,
+                            num_banks_selected,
+                            banks_selected,
+                            watercourse_entries,
+                            allocation_results,
+                            promoter,
+                            discount_type,
+                            discount_value,
+                            created_at
+                        ) VALUES (
+                            NEW.id::TEXT,
+                            DATE(NEW.submission_date),
+                            NEW.client_name,
+                            NEW.reference_number,
+                            NEW.site_location,
+                            NEW.target_lpa,
+                            NEW.target_nca,
+                            CAST(NEW.target_lat AS TEXT),
+                            CAST(NEW.target_lon AS TEXT),
+                            COALESCE(NEW.demand_habitats::TEXT, ''),
+                            NEW.contract_size,
+                            NEW.total_cost,
+                            NEW.total_with_admin,
+                            NEW.num_banks_selected,
+                            COALESCE(NEW.banks_used::TEXT, ''),
+                            COALESCE(NEW.manual_watercourse_entries::TEXT, ''),
+                            COALESCE(NEW.allocation_results::TEXT, ''),
+                            COALESCE(NEW.promoter_name, ''),
+                            NEW.promoter_discount_type,
+                            NEW.promoter_discount_value,
+                            NEW.submission_date
+                        )
+                        ON CONFLICT (id) DO UPDATE SET
+                            submission_date = EXCLUDED.submission_date,
+                            client_name = EXCLUDED.client_name,
+                            reference_number = EXCLUDED.reference_number,
+                            site_location = EXCLUDED.site_location,
+                            target_lpa = EXCLUDED.target_lpa,
+                            target_nca = EXCLUDED.target_nca,
+                            target_lat = EXCLUDED.target_lat,
+                            target_lon = EXCLUDED.target_lon,
+                            demand_habitats = EXCLUDED.demand_habitats,
+                            contract_size = EXCLUDED.contract_size,
+                            total_cost = EXCLUDED.total_cost,
+                            total_with_admin = EXCLUDED.total_with_admin,
+                            num_banks_selected = EXCLUDED.num_banks_selected,
+                            banks_selected = EXCLUDED.banks_selected,
+                            watercourse_entries = EXCLUDED.watercourse_entries,
+                            allocation_results = EXCLUDED.allocation_results,
+                            promoter = EXCLUDED.promoter,
+                            discount_type = EXCLUDED.discount_type,
+                            discount_value = EXCLUDED.discount_value,
+                            created_at = EXCLUDED.created_at;
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql;
+                """))
+            except Exception:
+                pass
+            
+            # Create trigger on submissions table to automatically sync to submissions_attio
+            try:
+                conn.execute(text("""
+                    DROP TRIGGER IF EXISTS submissions_to_attio_trigger ON submissions;
+                    CREATE TRIGGER submissions_to_attio_trigger
+                    AFTER INSERT OR UPDATE ON submissions
+                    FOR EACH ROW EXECUTE FUNCTION sync_to_attio();
+                """))
+            except Exception:
+                pass
+            
+            # Create trigger for delete operations
+            try:
+                conn.execute(text("""
+                    CREATE OR REPLACE FUNCTION delete_from_attio() 
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        DELETE FROM submissions_attio WHERE id = OLD.id::TEXT;
+                        RETURN OLD;
+                    END;
+                    $$ LANGUAGE plpgsql;
+                    
+                    DROP TRIGGER IF EXISTS submissions_to_attio_delete_trigger ON submissions;
+                    CREATE TRIGGER submissions_to_attio_delete_trigger
+                    AFTER DELETE ON submissions
+                    FOR EACH ROW EXECUTE FUNCTION delete_from_attio();
+                """))
+            except Exception:
+                pass
+            
+            # Backfill existing submissions into submissions_attio table
+            try:
+                conn.execute(text("""
+                    INSERT INTO submissions_attio (
+                        id, submission_date, client_name, reference_number,
+                        site_location, target_lpa, target_nca, target_lat, target_lon,
+                        demand_habitats, contract_size, total_cost, total_with_admin,
+                        num_banks_selected, banks_selected, watercourse_entries,
+                        allocation_results, promoter, discount_type, discount_value, created_at
+                    )
                     SELECT 
-                        id::TEXT AS "Record ID",
-                        DATE(submission_date) AS submission_date,
-                        client_name AS client_name,
+                        id::TEXT,
+                        DATE(submission_date),
+                        client_name,
                         reference_number,
                         site_location,
                         target_lpa,
                         target_nca,
-                        CAST(target_lat AS TEXT) AS target_lat,
-                        CAST(target_lon AS TEXT) AS target_lon,
-                        COALESCE(demand_habitats::TEXT, '') AS "demand habitats",
+                        CAST(target_lat AS TEXT),
+                        CAST(target_lon AS TEXT),
+                        COALESCE(demand_habitats::TEXT, ''),
                         contract_size,
                         total_cost,
                         total_with_admin,
-                        num_banks_selected AS "Number of Banks selected",
-                        COALESCE(banks_used::TEXT, '') AS "Banks Selected",
-                        COALESCE(manual_watercourse_entries::TEXT, '') AS "Watercourse Entries",
-                        COALESCE(allocation_results::TEXT, '') AS "allocation results",
-                        COALESCE(promoter_name, '') AS "Promoter",
-                        promoter_discount_type AS "discount type",
-                        promoter_discount_value AS "discount value",
-                        submission_date AS "Created at"
-                    FROM submissions;
+                        num_banks_selected,
+                        COALESCE(banks_used::TEXT, ''),
+                        COALESCE(manual_watercourse_entries::TEXT, ''),
+                        COALESCE(allocation_results::TEXT, ''),
+                        COALESCE(promoter_name, ''),
+                        promoter_discount_type,
+                        promoter_discount_value,
+                        submission_date
+                    FROM submissions
+                    ON CONFLICT (id) DO NOTHING;
                 """))
             except Exception:
-                # View might already exist or there's a schema issue
+                # Backfill may fail if data already exists or other issues
                 pass
             
             # Allocations detail table (normalized)
