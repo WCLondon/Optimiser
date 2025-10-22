@@ -124,6 +124,7 @@ class SubmissionsDB:
                     -- Manual entries
                     manual_hedgerow_entries JSONB,
                     manual_watercourse_entries JSONB,
+                    manual_area_habitat_entries JSONB,
                     
                     -- Full allocation results (JSON)
                     allocation_results JSONB,
@@ -181,6 +182,57 @@ class SubmissionsDB:
                 """))
             except Exception:
                 # Table might not exist yet or constraint already correct
+                pass
+            
+            # Add manual_area_habitat_entries column if it doesn't exist
+            try:
+                conn.execute(text("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'submissions' 
+                            AND column_name = 'manual_area_habitat_entries'
+                        ) THEN
+                            ALTER TABLE submissions ADD COLUMN manual_area_habitat_entries JSONB;
+                        END IF;
+                    END $$;
+                """))
+            except Exception:
+                # Column might already exist
+                pass
+            
+            # Create Attio-compatible view for StackSync integration
+            # Converts JSONB to TEXT and adjusts types to match Attio schema
+            try:
+                conn.execute(text("""
+                    CREATE OR REPLACE VIEW submissions_attio AS
+                    SELECT 
+                        id::TEXT AS "Record ID",
+                        DATE(submission_date) AS submission_date,
+                        client_name AS client_name,
+                        reference_number,
+                        site_location,
+                        target_lpa,
+                        target_nca,
+                        CAST(target_lat AS TEXT) AS target_lat,
+                        CAST(target_lon AS TEXT) AS target_lon,
+                        COALESCE(demand_habitats::TEXT, '') AS "demand habitats",
+                        contract_size,
+                        total_cost,
+                        total_with_admin,
+                        num_banks_selected AS "Number of Banks selected",
+                        COALESCE(banks_used::TEXT, '') AS "Banks Selected",
+                        COALESCE(manual_watercourse_entries::TEXT, '') AS "Watercourse Entries",
+                        COALESCE(allocation_results::TEXT, '') AS "allocation results",
+                        COALESCE(promoter_name, '') AS "Promoter",
+                        promoter_discount_type AS "discount type",
+                        promoter_discount_value AS "discount value",
+                        submission_date AS "Created at"
+                    FROM submissions;
+                """))
+            except Exception:
+                # View might already exist or there's a schema issue
                 pass
             
             # Allocations detail table (normalized)
@@ -399,6 +451,7 @@ class SubmissionsDB:
                         admin_fee: float,
                         manual_hedgerow_rows: List[Dict],
                         manual_watercourse_rows: List[Dict],
+                        manual_area_habitat_rows: Optional[List[Dict]] = None,
                         username: str = "",
                         promoter_name: Optional[str] = None,
                         promoter_discount_type: Optional[str] = None,
@@ -437,6 +490,7 @@ class SubmissionsDB:
         # Sanitize manual entries
         manual_hedgerow_rows_clean = sanitize_for_db(manual_hedgerow_rows)
         manual_watercourse_rows_clean = sanitize_for_db(manual_watercourse_rows)
+        manual_area_habitat_rows_clean = sanitize_for_db(manual_area_habitat_rows) if manual_area_habitat_rows else []
         
         # Sanitize numeric fields
         target_lat_clean = float(target_lat) if target_lat is not None else None
@@ -457,7 +511,7 @@ class SubmissionsDB:
                         lpa_neighbors, nca_neighbors, demand_habitats,
                         contract_size, total_cost, admin_fee, total_with_admin,
                         num_banks_selected, banks_used,
-                        manual_hedgerow_entries, manual_watercourse_entries,
+                        manual_hedgerow_entries, manual_watercourse_entries, manual_area_habitat_entries,
                         allocation_results, username,
                         promoter_name, promoter_discount_type, promoter_discount_value,
                         customer_id
@@ -467,7 +521,7 @@ class SubmissionsDB:
                         :lpa_neighbors, :nca_neighbors, :demand_habitats,
                         :contract_size, :total_cost, :admin_fee, :total_with_admin,
                         :num_banks_selected, :banks_used,
-                        :manual_hedgerow_entries, :manual_watercourse_entries,
+                        :manual_hedgerow_entries, :manual_watercourse_entries, :manual_area_habitat_entries,
                         :allocation_results, :username,
                         :promoter_name, :promoter_discount_type, :promoter_discount_value,
                         :customer_id
@@ -492,6 +546,7 @@ class SubmissionsDB:
                     "banks_used": banks_used_json,  # JSONB
                     "manual_hedgerow_entries": json.dumps(manual_hedgerow_rows_clean),  # JSONB
                     "manual_watercourse_entries": json.dumps(manual_watercourse_rows_clean),  # JSONB
+                    "manual_area_habitat_entries": json.dumps(manual_area_habitat_rows_clean),  # JSONB
                     "allocation_results": json.dumps(allocation_results_json),  # JSONB
                     "username": username,
                     "promoter_name": promoter_name,

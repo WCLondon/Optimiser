@@ -5395,6 +5395,7 @@ if has_optimizer_results or has_manual_entries:
                         admin_fee=ADMIN_FEE_GBP,
                         manual_hedgerow_rows=st.session_state.get("manual_hedgerow_rows", []),
                         manual_watercourse_rows=st.session_state.get("manual_watercourse_rows", []),
+                        manual_area_habitat_rows=st.session_state.get("manual_area_habitat_rows", []),
                         username=current_user,
                         promoter_name=st.session_state.get("selected_promoter"),
                         promoter_discount_type=st.session_state.get("promoter_discount_type"),
