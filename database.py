@@ -224,6 +224,8 @@ class SubmissionsDB:
                         id INTEGER PRIMARY KEY,
                         submission_date DATE,
                         client_name TEXT,
+                        email TEXT,
+                        mobile_number TEXT,
                         reference_number TEXT,
                         site_location JSONB,
                         target_lpa TEXT,
@@ -247,17 +249,53 @@ class SubmissionsDB:
             # Table might already exist
             pass
         
+        # Add email and mobile_number columns to existing submissions_attio table if they don't exist
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'submissions_attio' AND column_name = 'email'
+                        ) THEN
+                            ALTER TABLE submissions_attio ADD COLUMN email TEXT;
+                        END IF;
+                        
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'submissions_attio' AND column_name = 'mobile_number'
+                        ) THEN
+                            ALTER TABLE submissions_attio ADD COLUMN mobile_number TEXT;
+                        END IF;
+                    END $$;
+                """))
+        except Exception:
+            # Columns might already exist or table might not exist yet
+            pass
+        
         # Create trigger function to automatically sync submissions to submissions_attio
         try:
             with engine.begin() as conn:
                 conn.execute(text("""
                     CREATE OR REPLACE FUNCTION sync_to_attio() 
                     RETURNS TRIGGER AS $$
+                    DECLARE
+                        customer_email TEXT;
+                        customer_mobile TEXT;
                     BEGIN
+                        -- Fetch email and mobile from customers table if customer_id exists
+                        IF NEW.customer_id IS NOT NULL THEN
+                            SELECT email, mobile_number INTO customer_email, customer_mobile
+                            FROM customers WHERE id = NEW.customer_id;
+                        END IF;
+                        
                         INSERT INTO submissions_attio (
                             id,
                             submission_date,
                             client_name,
+                            email,
+                            mobile_number,
                             reference_number,
                             site_location,
                             target_lpa,
@@ -279,6 +317,8 @@ class SubmissionsDB:
                             NEW.id,
                             DATE(NEW.submission_date),
                             NEW.client_name,
+                            customer_email,
+                            customer_mobile,
                             NEW.reference_number,
                             jsonb_build_object(
                                 'line_1', COALESCE(NEW.site_location, ''),
@@ -311,6 +351,8 @@ class SubmissionsDB:
                         ON CONFLICT (id) DO UPDATE SET
                             submission_date = EXCLUDED.submission_date,
                             client_name = EXCLUDED.client_name,
+                            email = EXCLUDED.email,
+                            mobile_number = EXCLUDED.mobile_number,
                             reference_number = EXCLUDED.reference_number,
                             site_location = EXCLUDED.site_location,
                             target_lpa = EXCLUDED.target_lpa,
@@ -372,19 +414,21 @@ class SubmissionsDB:
             with engine.begin() as conn:
                 conn.execute(text("""
                     INSERT INTO submissions_attio (
-                        id, submission_date, client_name, reference_number,
+                        id, submission_date, client_name, email, mobile_number, reference_number,
                         site_location, target_lpa, target_nca, target_lat, target_lon,
                         demand_habitats, contract_size, total_cost, total_with_admin,
                         num_banks_selected, banks_selected, watercourse_entries,
                         allocation_results, promoter, discount_type, discount_value
                     )
                     SELECT 
-                        id,
-                        DATE(submission_date),
-                        client_name,
-                        reference_number,
+                        s.id,
+                        DATE(s.submission_date),
+                        s.client_name,
+                        c.email,
+                        c.mobile_number,
+                        s.reference_number,
                         jsonb_build_object(
-                            'line_1', COALESCE(site_location, ''),
+                            'line_1', COALESCE(s.site_location, ''),
                             'line_2', '',
                             'line_3', '',
                             'line_4', '',
@@ -392,25 +436,26 @@ class SubmissionsDB:
                             'region', '',
                             'postcode', '',
                             'country_code', 'GB',
-                            'latitude', target_lat,
-                            'longitude', target_lon
+                            'latitude', s.target_lat,
+                            'longitude', s.target_lon
                         ),
-                        target_lpa,
-                        target_nca,
-                        CAST(target_lat AS TEXT),
-                        CAST(target_lon AS TEXT),
-                        COALESCE(demand_habitats::TEXT, ''),
-                        contract_size,
-                        total_cost,
-                        total_with_admin,
-                        num_banks_selected,
-                        COALESCE(banks_used::TEXT, ''),
-                        COALESCE(manual_watercourse_entries::TEXT, ''),
-                        COALESCE(allocation_results::TEXT, ''),
-                        COALESCE(promoter_name, ''),
-                        promoter_discount_type,
-                        promoter_discount_value
-                    FROM submissions
+                        s.target_lpa,
+                        s.target_nca,
+                        CAST(s.target_lat AS TEXT),
+                        CAST(s.target_lon AS TEXT),
+                        COALESCE(s.demand_habitats::TEXT, ''),
+                        s.contract_size,
+                        s.total_cost,
+                        s.total_with_admin,
+                        s.num_banks_selected,
+                        COALESCE(s.banks_used::TEXT, ''),
+                        COALESCE(s.manual_watercourse_entries::TEXT, ''),
+                        COALESCE(s.allocation_results::TEXT, ''),
+                        COALESCE(s.promoter_name, ''),
+                        s.promoter_discount_type,
+                        s.promoter_discount_value
+                    FROM submissions s
+                    LEFT JOIN customers c ON s.customer_id = c.id
                     ON CONFLICT (id) DO NOTHING;
                 """))
         except Exception:
