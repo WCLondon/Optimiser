@@ -249,6 +249,31 @@ class SubmissionsDB:
             # Table might already exist
             pass
         
+        # Add email and mobile_number columns to existing submissions_attio table if they don't exist
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'submissions_attio' AND column_name = 'email'
+                        ) THEN
+                            ALTER TABLE submissions_attio ADD COLUMN email TEXT;
+                        END IF;
+                        
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'submissions_attio' AND column_name = 'mobile_number'
+                        ) THEN
+                            ALTER TABLE submissions_attio ADD COLUMN mobile_number TEXT;
+                        END IF;
+                    END $$;
+                """))
+        except Exception:
+            # Columns might already exist or table might not exist yet
+            pass
+        
         # Create trigger function to automatically sync submissions to submissions_attio
         try:
             with engine.begin() as conn:
