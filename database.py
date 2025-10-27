@@ -540,7 +540,7 @@ class SubmissionsDB:
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS customers (
                     id SERIAL PRIMARY KEY,
-                    client_name TEXT NOT NULL,
+                    client_name TEXT,
                     title TEXT,
                     first_name TEXT,
                     last_name TEXT,
@@ -552,6 +552,21 @@ class SubmissionsDB:
                     created_date TIMESTAMP NOT NULL DEFAULT NOW(),
                     updated_date TIMESTAMP NOT NULL DEFAULT NOW()
                 )
+            """))
+            
+            # Remove NOT NULL constraint from client_name to allow Attio reverse sync
+            conn.execute(text("""
+                DO $$
+                BEGIN
+                    ALTER TABLE customers ALTER COLUMN client_name DROP NOT NULL;
+                EXCEPTION
+                    WHEN undefined_column THEN
+                        -- Column doesn't exist yet, ignore
+                        NULL;
+                    WHEN others THEN
+                        -- Constraint already removed or other issue, continue
+                        NULL;
+                END $$;
             """))
             
             # Drop the old constraint if it exists (it was causing issues with NULL values)
@@ -662,14 +677,49 @@ class SubmissionsDB:
                 CREATE OR REPLACE FUNCTION sync_customer_attio_fields() 
                 RETURNS TRIGGER AS $$
                 BEGIN
+                    -- Auto-populate client_name if null (for Attio reverse sync)
+                    IF NEW.client_name IS NULL THEN
+                        -- Try to build from first_name and last_name
+                        IF NEW.first_name IS NOT NULL OR NEW.last_name IS NOT NULL THEN
+                            NEW.client_name = TRIM(COALESCE(NEW.first_name, '') || ' ' || COALESCE(NEW.last_name, ''));
+                        -- Try to extract from personal_name JSONB if it exists
+                        ELSIF NEW.personal_name IS NOT NULL THEN
+                            NEW.client_name = COALESCE(
+                                NEW.personal_name->>'full_name',
+                                TRIM(COALESCE(NEW.personal_name->>'first_name', '') || ' ' || COALESCE(NEW.personal_name->>'last_name', '')),
+                                'Unknown'
+                            );
+                        ELSE
+                            NEW.client_name = 'Unknown';
+                        END IF;
+                    END IF;
+                    
                     -- Sync personal_name from first_name and last_name
                     -- Attio requires at least one of: first_name, last_name, or full_name
                     IF NEW.first_name IS NOT NULL OR NEW.last_name IS NOT NULL THEN
-                        NEW.personal_name = jsonb_build_object(
-                            'first_name', COALESCE(NEW.first_name, ''),
-                            'last_name', COALESCE(NEW.last_name, ''),
-                            'full_name', TRIM(COALESCE(NEW.first_name, '') || ' ' || COALESCE(NEW.last_name, ''))
-                        );
+                        DECLARE
+                            full_name_value TEXT;
+                        BEGIN
+                            full_name_value = TRIM(COALESCE(NEW.first_name, '') || ' ' || COALESCE(NEW.last_name, ''));
+                            -- Ensure full_name is never just empty string
+                            IF full_name_value = '' THEN
+                                full_name_value = COALESCE(NEW.first_name, NEW.last_name, 'Unknown');
+                            END IF;
+                            
+                            NEW.personal_name = jsonb_build_object(
+                                'first_name', COALESCE(NEW.first_name, ''),
+                                'last_name', COALESCE(NEW.last_name, ''),
+                                'full_name', full_name_value
+                            );
+                        END;
+                    ELSIF NEW.personal_name IS NOT NULL THEN
+                        -- Sync back from personal_name to TEXT fields if they're null
+                        IF NEW.first_name IS NULL THEN
+                            NEW.first_name = NEW.personal_name->>'first_name';
+                        END IF;
+                        IF NEW.last_name IS NULL THEN
+                            NEW.last_name = NEW.personal_name->>'last_name';
+                        END IF;
                     END IF;
                     
                     -- Sync email_addresses from email
@@ -680,6 +730,11 @@ class SubmissionsDB:
                                 'email_address', NEW.email
                             )
                         );
+                    ELSIF NEW.email_addresses IS NOT NULL AND jsonb_array_length(NEW.email_addresses) > 0 THEN
+                        -- Sync back from email_addresses to email if email is null
+                        IF NEW.email IS NULL OR NEW.email = '' THEN
+                            NEW.email = NEW.email_addresses->0->>'email_address';
+                        END IF;
                     ELSE
                         NEW.email_addresses = '[]'::jsonb;
                     END IF;
@@ -693,6 +748,11 @@ class SubmissionsDB:
                                 'country_code', 'GB'
                             )
                         );
+                    ELSIF NEW.phone_numbers IS NOT NULL AND jsonb_array_length(NEW.phone_numbers) > 0 THEN
+                        -- Sync back from phone_numbers to mobile_number if mobile_number is null
+                        IF NEW.mobile_number IS NULL OR NEW.mobile_number = '' THEN
+                            NEW.mobile_number = NEW.phone_numbers->0->>'original_phone_number';
+                        END IF;
                     ELSE
                         NEW.phone_numbers = '[]'::jsonb;
                     END IF;
@@ -700,6 +760,13 @@ class SubmissionsDB:
                     -- Sync companies from company_name
                     IF NEW.company_name IS NOT NULL AND NEW.company_name != '' THEN
                         NEW.companies = jsonb_build_array(NEW.company_name);
+                    ELSIF NEW.companies IS NOT NULL AND jsonb_array_length(NEW.companies) > 0 THEN
+                        -- Sync back from companies to company_name if company_name is null
+                        IF NEW.company_name IS NULL OR NEW.company_name = '' THEN
+                            NEW.company_name = NEW.companies->0::text;
+                            -- Remove quotes if present
+                            NEW.company_name = TRIM(BOTH '"' FROM NEW.company_name);
+                        END IF;
                     ELSE
                         NEW.companies = '[]'::jsonb;
                     END IF;
