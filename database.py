@@ -618,6 +618,137 @@ class SubmissionsDB:
                 END $$;
             """))
             
+            # Add Attio-compatible columns for syncing
+            # These columns store data in the format Attio expects
+            conn.execute(text("""
+                DO $$
+                BEGIN
+                    -- Add name as JSONB object {first_name, last_name}
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name = 'customers' AND column_name = 'name'
+                    ) THEN
+                        ALTER TABLE customers ADD COLUMN name JSONB;
+                    END IF;
+                    
+                    -- Add email_addresses as JSONB array
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name = 'customers' AND column_name = 'email_addresses'
+                    ) THEN
+                        ALTER TABLE customers ADD COLUMN email_addresses JSONB;
+                    END IF;
+                    
+                    -- Add phone_numbers as JSONB array
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name = 'customers' AND column_name = 'phone_numbers'
+                    ) THEN
+                        ALTER TABLE customers ADD COLUMN phone_numbers JSONB;
+                    END IF;
+                    
+                    -- Add companies as JSONB array
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name = 'customers' AND column_name = 'companies'
+                    ) THEN
+                        ALTER TABLE customers ADD COLUMN companies JSONB;
+                    END IF;
+                END $$;
+            """))
+            
+            # Create trigger to automatically sync legacy fields to Attio-compatible fields
+            conn.execute(text("""
+                CREATE OR REPLACE FUNCTION sync_customer_attio_fields() 
+                RETURNS TRIGGER AS $$
+                BEGIN
+                    -- Sync name from first_name and last_name
+                    IF NEW.first_name IS NOT NULL OR NEW.last_name IS NOT NULL THEN
+                        NEW.name = jsonb_build_object(
+                            'first_name', COALESCE(NEW.first_name, ''),
+                            'last_name', COALESCE(NEW.last_name, '')
+                        );
+                    END IF;
+                    
+                    -- Sync email_addresses from email
+                    IF NEW.email IS NOT NULL AND NEW.email != '' THEN
+                        NEW.email_addresses = jsonb_build_array(
+                            jsonb_build_object(
+                                'email_address', NEW.email,
+                                'type', 'work'
+                            )
+                        );
+                    ELSE
+                        NEW.email_addresses = '[]'::jsonb;
+                    END IF;
+                    
+                    -- Sync phone_numbers from mobile_number
+                    IF NEW.mobile_number IS NOT NULL AND NEW.mobile_number != '' THEN
+                        NEW.phone_numbers = jsonb_build_array(
+                            jsonb_build_object(
+                                'phone_number', NEW.mobile_number,
+                                'type', 'mobile'
+                            )
+                        );
+                    ELSE
+                        NEW.phone_numbers = '[]'::jsonb;
+                    END IF;
+                    
+                    -- Sync companies from company_name
+                    IF NEW.company_name IS NOT NULL AND NEW.company_name != '' THEN
+                        NEW.companies = jsonb_build_array(NEW.company_name);
+                    ELSE
+                        NEW.companies = '[]'::jsonb;
+                    END IF;
+                    
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+            """))
+            
+            # Create trigger on customers table
+            conn.execute(text("""
+                DROP TRIGGER IF EXISTS sync_customer_attio_fields_trigger ON customers;
+                CREATE TRIGGER sync_customer_attio_fields_trigger
+                BEFORE INSERT OR UPDATE ON customers
+                FOR EACH ROW EXECUTE FUNCTION sync_customer_attio_fields();
+            """))
+            
+            # Backfill Attio-compatible fields for existing customers
+            conn.execute(text("""
+                UPDATE customers SET
+                    name = jsonb_build_object(
+                        'first_name', COALESCE(first_name, ''),
+                        'last_name', COALESCE(last_name, '')
+                    ),
+                    email_addresses = CASE 
+                        WHEN email IS NOT NULL AND email != '' THEN
+                            jsonb_build_array(
+                                jsonb_build_object(
+                                    'email_address', email,
+                                    'type', 'work'
+                                )
+                            )
+                        ELSE '[]'::jsonb
+                    END,
+                    phone_numbers = CASE 
+                        WHEN mobile_number IS NOT NULL AND mobile_number != '' THEN
+                            jsonb_build_array(
+                                jsonb_build_object(
+                                    'phone_number', mobile_number,
+                                    'type', 'mobile'
+                                )
+                            )
+                        ELSE '[]'::jsonb
+                    END,
+                    companies = CASE 
+                        WHEN company_name IS NOT NULL AND company_name != '' THEN
+                            jsonb_build_array(company_name)
+                        ELSE '[]'::jsonb
+                    END
+                WHERE name IS NULL OR email_addresses IS NULL OR phone_numbers IS NULL OR companies IS NULL;
+            """))
+            
             # Create indexes for customers
             conn.execute(text("""
                 CREATE INDEX IF NOT EXISTS idx_customers_email 
@@ -1075,7 +1206,32 @@ class SubmissionsDB:
                      company_name: Optional[str] = None, contact_person: Optional[str] = None,
                      address: Optional[str] = None, email: Optional[str] = None,
                      mobile_number: Optional[str] = None) -> int:
-        """Add a new customer or return existing customer with same email/mobile."""
+        """
+        Add a new customer or return existing customer with same email/mobile.
+        
+        Args:
+            client_name: Display name for the customer (required)
+            first_name: Customer's first name (required for Attio sync)
+            last_name: Customer's last name (required for Attio sync)
+            title: Title (Mr, Mrs, etc.)
+            company_name: Company name
+            contact_person: Contact person name
+            address: Customer address
+            email: Email address (required for Attio sync)
+            mobile_number: Mobile phone number
+            
+        Returns:
+            Customer ID
+            
+        Raises:
+            ValueError: If first_name or last_name is missing
+        """
+        # Validate required fields for Attio sync
+        if not first_name or not first_name.strip():
+            raise ValueError("First name is required for customer records")
+        if not last_name or not last_name.strip():
+            raise ValueError("Last name is required for customer records")
+        
         engine = self._get_connection()
         
         now = datetime.now()

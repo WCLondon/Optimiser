@@ -1020,6 +1020,7 @@ if st.session_state.app_mode == "Quote Management":
         
         # Add new customer
         with st.expander("➕ Add New Customer", expanded=False):
+            st.info("⚠️ First Name and Last Name are required for Attio sync compatibility.")
             with st.form("add_customer_form"):
                 st.markdown("**Basic Information:**")
                 col1, col2 = st.columns([1, 3])
@@ -1030,9 +1031,9 @@ if st.session_state.app_mode == "Quote Management":
                 
                 col3, col4 = st.columns(2)
                 with col3:
-                    cust_first_name = st.text_input("First Name", key="cust_first_name")
+                    cust_first_name = st.text_input("First Name* (Required for Attio)", key="cust_first_name", placeholder="Required")
                 with col4:
-                    cust_last_name = st.text_input("Last Name", key="cust_last_name")
+                    cust_last_name = st.text_input("Last Name* (Required for Attio)", key="cust_last_name", placeholder="Required")
                 
                 st.markdown("**Company/Organization:**")
                 cust_company_name = st.text_input("Company Name", key="cust_company_name")
@@ -1051,15 +1052,17 @@ if st.session_state.app_mode == "Quote Management":
                 if add_cust_btn:
                     if not cust_client_name or not cust_client_name.strip():
                         st.error("Client name is required.")
-                    elif not cust_email and not cust_mobile:
-                        st.error("At least one of Email or Mobile Number is required.")
+                    elif not cust_first_name or not cust_first_name.strip():
+                        st.error("First name is required for Attio sync.")
+                    elif not cust_last_name or not cust_last_name.strip():
+                        st.error("Last name is required for Attio sync.")
                     else:
                         try:
                             customer_id = db.add_customer(
                                 client_name=cust_client_name.strip(),
                                 title=cust_title if cust_title else None,
-                                first_name=cust_first_name.strip() if cust_first_name else None,
-                                last_name=cust_last_name.strip() if cust_last_name else None,
+                                first_name=cust_first_name.strip(),
+                                last_name=cust_last_name.strip(),
                                 company_name=cust_company_name.strip() if cust_company_name else None,
                                 contact_person=cust_contact_person.strip() if cust_contact_person else None,
                                 address=cust_address.strip() if cust_address else None,
@@ -1068,6 +1071,8 @@ if st.session_state.app_mode == "Quote Management":
                             )
                             st.success(f"✅ Customer added successfully! ID: {customer_id}")
                             st.rerun()
+                        except ValueError as ve:
+                            st.error(f"❌ Validation error: {ve}")
                         except Exception as e:
                             st.error(f"Error adding customer: {e}")
         
@@ -5293,25 +5298,25 @@ if has_optimizer_results or has_manual_entries:
                     key="form_location"
                 )
             
-            # Customer info section
-            st.markdown("**👤 Customer Information (Optional):**")
-            st.caption("Link this quote to a customer record for tracking. Email or Mobile helps avoid duplicates.")
+            # Customer info section - REQUIRED for Attio sync
+            st.markdown("**👤 Customer Information (Required for Quote):**")
+            st.caption("⚠️ First Name and Last Name are required to generate and save quotes for Attio sync.")
+            
+            col_name1, col_name2, col_name3 = st.columns([1, 2, 2])
+            with col_name1:
+                form_customer_title = st.selectbox("Title", ["", "Mr", "Mrs", "Miss", "Ms", "Dr", "Prof"], key="form_customer_title")
+            with col_name2:
+                form_customer_first_name = st.text_input("First Name*", key="form_customer_first_name", placeholder="Required")
+            with col_name3:
+                form_customer_last_name = st.text_input("Last Name*", key="form_customer_last_name", placeholder="Required")
             
             col_cust1, col_cust2 = st.columns(2)
             with col_cust1:
-                form_customer_email = st.text_input("Customer Email", key="form_customer_email")
+                form_customer_email = st.text_input("Customer Email", key="form_customer_email", placeholder="Optional but recommended")
             with col_cust2:
-                form_customer_mobile = st.text_input("Customer Mobile", key="form_customer_mobile")
+                form_customer_mobile = st.text_input("Customer Mobile", key="form_customer_mobile", placeholder="Optional but recommended")
             
             with st.expander("Additional Customer Details (Optional)", expanded=False):
-                col_title, col_fname, col_lname = st.columns([1, 2, 2])
-                with col_title:
-                    form_customer_title = st.selectbox("Title", ["", "Mr", "Mrs", "Miss", "Ms", "Dr", "Prof"], key="form_customer_title")
-                with col_fname:
-                    form_customer_first_name = st.text_input("First Name", key="form_customer_first_name")
-                with col_lname:
-                    form_customer_last_name = st.text_input("Last Name", key="form_customer_last_name")
-                
                 col_cust3, col_cust4 = st.columns(2)
                 with col_cust3:
                     form_customer_company = st.text_input("Company Name", key="form_customer_company")
@@ -5328,87 +5333,100 @@ if has_optimizer_results or has_manual_entries:
             st.session_state.email_client_name = form_client_name
             st.session_state.email_ref_number = form_ref_number
             st.session_state.email_location = form_location
-            st.success("Email details updated!")
             
-            # Save to database after updating email details
-            if not db:
-                st.error("❌ Database is not available.")
-            elif not form_client_name or form_client_name == "INSERT NAME":
-                st.warning("⚠️ Please enter a valid client name before saving.")
-            elif not form_ref_number or form_ref_number == "BNG00XXX":
-                st.warning("⚠️ Please enter a valid reference number before saving.")
-            elif not form_location or form_location == "INSERT LOCATION":
-                st.warning("⚠️ Please enter a valid location before saving.")
-            elif session_alloc_df.empty:
-                st.error("❌ No optimization results to save. Please run the optimizer first.")
+            # Validate required customer fields
+            if not form_customer_first_name or not form_customer_first_name.strip():
+                st.error("❌ First Name is required to save the quote.")
+            elif not form_customer_last_name or not form_customer_last_name.strip():
+                st.error("❌ Last Name is required to save the quote.")
             else:
-                try:
-                    # Handle customer info if provided
-                    customer_id = None
-                    if form_customer_email or form_customer_mobile:
+                st.success("Email details updated!")
+                
+                # Save to database after updating email details
+                if not db:
+                    st.error("❌ Database is not available.")
+                elif not form_client_name or form_client_name == "INSERT NAME":
+                    st.warning("⚠️ Please enter a valid client name before saving.")
+                elif not form_ref_number or form_ref_number == "BNG00XXX":
+                    st.warning("⚠️ Please enter a valid reference number before saving.")
+                elif not form_location or form_location == "INSERT LOCATION":
+                    st.warning("⚠️ Please enter a valid location before saving.")
+                elif session_alloc_df.empty:
+                    st.error("❌ No optimization results to save. Please run the optimizer first.")
+                else:
+                    try:
+                        # Handle customer info - now always creating/updating customer
+                        customer_id = None
+                        
                         # Check if customer already exists
-                        existing_customer = db.get_customer_by_contact(
-                            email=form_customer_email if form_customer_email else None,
-                            mobile_number=form_customer_mobile if form_customer_mobile else None
-                        )
+                        existing_customer = None
+                        if form_customer_email or form_customer_mobile:
+                            existing_customer = db.get_customer_by_contact(
+                                email=form_customer_email if form_customer_email else None,
+                                mobile_number=form_customer_mobile if form_customer_mobile else None
+                            )
                         
                         if existing_customer:
                             customer_id = existing_customer['id']
                             st.info(f"ℹ️ Linked to existing customer: {existing_customer['client_name']} (ID: {customer_id})")
                         else:
-                            # Create new customer
-                            customer_id = db.add_customer(
-                                client_name=form_client_name,
-                                title=form_customer_title if form_customer_title else None,
-                                first_name=form_customer_first_name if form_customer_first_name else None,
-                                last_name=form_customer_last_name if form_customer_last_name else None,
-                                company_name=form_customer_company if form_customer_company else None,
-                                contact_person=form_customer_contact if form_customer_contact else None,
-                                address=form_customer_address if form_customer_address else None,
-                                email=form_customer_email if form_customer_email else None,
-                                mobile_number=form_customer_mobile if form_customer_mobile else None
-                            )
-                            st.info(f"✅ New customer created (ID: {customer_id})")
-                    
-                    # Get the current username
-                    current_user = st.secrets.get("auth", {}).get("username", DEFAULT_USER)
-                    
-                    # Determine contract size from allocation data
-                    present_sizes = backend.get("Pricing", pd.DataFrame()).get("contract_size", pd.Series()).drop_duplicates().tolist() if backend else []
-                    total_units = session_demand_df["units_required"].sum() if not session_demand_df.empty else 0.0
-                    contract_size_val = select_contract_size(total_units, present_sizes) if present_sizes else "Unknown"
-                    
-                    submission_id = db.store_submission(
-                        client_name=form_client_name,
-                        reference_number=form_ref_number,
-                        site_location=form_location,
-                        target_lpa=st.session_state.get("target_lpa_name", ""),
-                        target_nca=st.session_state.get("target_nca_name", ""),
-                        target_lat=st.session_state.get("target_lat"),
-                        target_lon=st.session_state.get("target_lon"),
-                        lpa_neighbors=st.session_state.get("lpa_neighbors", []),
-                        nca_neighbors=st.session_state.get("nca_neighbors", []),
-                        demand_df=session_demand_df,
-                        allocation_df=session_alloc_df,
-                        contract_size=contract_size_val,
-                        total_cost=session_total_cost,
-                        admin_fee=ADMIN_FEE_GBP,
-                        manual_hedgerow_rows=st.session_state.get("manual_hedgerow_rows", []),
-                        manual_watercourse_rows=st.session_state.get("manual_watercourse_rows", []),
-                        manual_area_habitat_rows=st.session_state.get("manual_area_habitat_rows", []),
-                        username=current_user,
-                        promoter_name=st.session_state.get("selected_promoter"),
-                        promoter_discount_type=st.session_state.get("promoter_discount_type"),
-                        promoter_discount_value=st.session_state.get("promoter_discount_value"),
-                        customer_id=customer_id
-                    )
-                    st.success(f"✅ Quote saved to database! Submission ID: {submission_id}")
-                    st.info(f"📊 Client: {form_client_name} | Reference: {form_ref_number} | Total: £{session_total_cost + ADMIN_FEE_GBP:,.0f}")
-                except Exception as e:
-                    st.error(f"❌ Error saving to database: {e}")
-                    import traceback
-                    st.code(traceback.format_exc())
-            # Don't call st.rerun() - let it naturally update
+                            # Create new customer with required fields
+                            try:
+                                customer_id = db.add_customer(
+                                    client_name=form_client_name,
+                                    title=form_customer_title if form_customer_title else None,
+                                    first_name=form_customer_first_name.strip(),
+                                    last_name=form_customer_last_name.strip(),
+                                    company_name=form_customer_company if form_customer_company else None,
+                                    contact_person=form_customer_contact if form_customer_contact else None,
+                                    address=form_customer_address if form_customer_address else None,
+                                    email=form_customer_email if form_customer_email else None,
+                                    mobile_number=form_customer_mobile if form_customer_mobile else None
+                                )
+                                st.info(f"✅ New customer created (ID: {customer_id})")
+                            except ValueError as ve:
+                                st.error(f"❌ Error creating customer: {ve}")
+                                customer_id = None
+                        
+                        # Get the current username
+                        current_user = st.secrets.get("auth", {}).get("username", DEFAULT_USER)
+                        
+                        # Determine contract size from allocation data
+                        present_sizes = backend.get("Pricing", pd.DataFrame()).get("contract_size", pd.Series()).drop_duplicates().tolist() if backend else []
+                        total_units = session_demand_df["units_required"].sum() if not session_demand_df.empty else 0.0
+                        contract_size_val = select_contract_size(total_units, present_sizes) if present_sizes else "Unknown"
+                        
+                        submission_id = db.store_submission(
+                            client_name=form_client_name,
+                            reference_number=form_ref_number,
+                            site_location=form_location,
+                            target_lpa=st.session_state.get("target_lpa_name", ""),
+                            target_nca=st.session_state.get("target_nca_name", ""),
+                            target_lat=st.session_state.get("target_lat"),
+                            target_lon=st.session_state.get("target_lon"),
+                            lpa_neighbors=st.session_state.get("lpa_neighbors", []),
+                            nca_neighbors=st.session_state.get("nca_neighbors", []),
+                            demand_df=session_demand_df,
+                            allocation_df=session_alloc_df,
+                            contract_size=contract_size_val,
+                            total_cost=session_total_cost,
+                            admin_fee=ADMIN_FEE_GBP,
+                            manual_hedgerow_rows=st.session_state.get("manual_hedgerow_rows", []),
+                            manual_watercourse_rows=st.session_state.get("manual_watercourse_rows", []),
+                            manual_area_habitat_rows=st.session_state.get("manual_area_habitat_rows", []),
+                            username=current_user,
+                            promoter_name=st.session_state.get("selected_promoter"),
+                            promoter_discount_type=st.session_state.get("promoter_discount_type"),
+                            promoter_discount_value=st.session_state.get("promoter_discount_value"),
+                            customer_id=customer_id
+                        )
+                        st.success(f"✅ Quote saved to database! Submission ID: {submission_id}")
+                        st.info(f"📊 Client: {form_client_name} | Reference: {form_ref_number} | Total: £{session_total_cost + ADMIN_FEE_GBP:,.0f}")
+                    except Exception as e:
+                        st.error(f"❌ Error saving to database: {e}")
+                        import traceback
+                        st.code(traceback.format_exc())
+                # Don't call st.rerun() - let it naturally update
         
         # Use the session state values for generating the report
         client_name = st.session_state.email_client_name
@@ -5446,25 +5464,37 @@ if has_optimizer_results or has_manual_entries:
             
             st.dataframe(display_table[cols_to_show], use_container_width=True, hide_index=True)
         
-        # Email generation
+        # Email generation - with validation
         st.markdown("**📧 Email Generation:**")
         
-        # Create .eml file content
-        import base64
-        from email.mime.multipart import MIMEMultipart
-        from email.mime.text import MIMEText
+        # Check if customer name information is complete
+        has_customer_name = (
+            st.session_state.get("form_customer_first_name") and 
+            st.session_state.get("form_customer_first_name").strip() and
+            st.session_state.get("form_customer_last_name") and
+            st.session_state.get("form_customer_last_name").strip()
+        )
         
-        subject = f"RE: BNG Units for site at {location} - {ref_number}"
-        total_with_admin = session_total_cost + ADMIN_FEE_GBP
-        
-        # Create email message
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = subject
-        msg['From'] = 'quotes@wildcapital.com'  # Replace with your actual email
-        msg['To'] = ''  # Will be filled by user
-        
-        # Create text version for email clients that don't support HTML
-        text_body = f"""Dear {client_name}
+        if not has_customer_name:
+            st.warning("⚠️ **Email download is disabled:** Please provide First Name and Last Name in the form above and click 'Update Email Details' to enable email download.")
+            st.info("💡 First and Last names are required for Attio CRM sync and proper customer tracking.")
+        else:
+            # Create .eml file content
+            import base64
+            from email.mime.multipart import MIMEMultipart
+            from email.mime.text import MIMEText
+            
+            subject = f"RE: BNG Units for site at {location} - {ref_number}"
+            total_with_admin = session_total_cost + ADMIN_FEE_GBP
+            
+            # Create email message
+            msg = MIMEMultipart('alternative')
+            msg['Subject'] = subject
+            msg['From'] = 'quotes@wildcapital.com'  # Replace with your actual email
+            msg['To'] = ''  # Will be filled by user
+            
+            # Create text version for email clients that don't support HTML
+            text_body = f"""Dear {client_name}
 
 Our Ref: {ref_number}
 
@@ -5493,25 +5523,25 @@ If you have any questions, please reply to this email or call 01962 436574.
 
 Best regards,
 Wild Capital Team"""
-        
-        # Attach text and HTML versions
-        text_part = MIMEText(text_body, 'plain')
-        html_part = MIMEText(email_html, 'html')
-        
-        msg.attach(text_part)
-        msg.attach(html_part)
-        
-        # Convert to string
-        eml_content = msg.as_string()
-        
-        # Download button for .eml file
-        st.download_button(
-            "📧 Download Email (.eml)",
-            data=eml_content,
-            file_name=f"BNG_Quote_{ref_number}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.eml",
-            mime="message/rfc822",
-            help="Download as .eml file - double-click to open in your email client with full HTML formatting"
-        )
+            
+            # Attach text and HTML versions
+            text_part = MIMEText(text_body, 'plain')
+            html_part = MIMEText(email_html, 'html')
+            
+            msg.attach(text_part)
+            msg.attach(html_part)
+            
+            # Convert to string
+            eml_content = msg.as_string()
+            
+            # Download button for .eml file
+            st.download_button(
+                "📧 Download Email (.eml)",
+                data=eml_content,
+                file_name=f"BNG_Quote_{ref_number}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.eml",
+                mime="message/rfc822",
+                help="Download as .eml file - double-click to open in your email client with full HTML formatting"
+            )
 
 # Debug section (temporary - can remove later)
 if st.checkbox("Show detailed debug info", value=False):
