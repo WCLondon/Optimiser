@@ -224,6 +224,7 @@ class SubmissionsDB:
                         id INTEGER PRIMARY KEY,
                         submission_date DATE,
                         customer_id INTEGER,
+                        client_name TEXT,
                         email TEXT,
                         mobile_number TEXT,
                         reference_number TEXT,
@@ -249,13 +250,13 @@ class SubmissionsDB:
             # Table might already exist
             pass
         
-        # Add customer_id column and migrate from client_name for Attio compatibility
+        # Add customer_id and client_name columns for Attio compatibility
         try:
             with engine.begin() as conn:
                 conn.execute(text("""
                     DO $$
                     BEGIN
-                        -- Add customer_id column if it doesn't exist
+                        -- Add customer_id column if it doesn't exist (for proper relational linking)
                         IF NOT EXISTS (
                             SELECT 1 FROM information_schema.columns 
                             WHERE table_name = 'submissions_attio' AND column_name = 'customer_id'
@@ -263,17 +264,17 @@ class SubmissionsDB:
                             ALTER TABLE submissions_attio ADD COLUMN customer_id INTEGER;
                         END IF;
                         
-                        -- Drop client_name column if it exists (Attio expects UUID reference, not TEXT)
-                        IF EXISTS (
+                        -- Add client_name column if it doesn't exist (for StackSync compatibility)
+                        IF NOT EXISTS (
                             SELECT 1 FROM information_schema.columns 
                             WHERE table_name = 'submissions_attio' AND column_name = 'client_name'
                         ) THEN
-                            ALTER TABLE submissions_attio DROP COLUMN client_name;
+                            ALTER TABLE submissions_attio ADD COLUMN client_name TEXT;
                         END IF;
                     END $$;
                 """))
         except Exception:
-            # Migration might fail if column doesn't exist
+            # Migration might fail if columns already exist
             pass
         
         # Add email and mobile_number columns to existing submissions_attio table if they don't exist
@@ -321,6 +322,7 @@ class SubmissionsDB:
                             id,
                             submission_date,
                             customer_id,
+                            client_name,
                             email,
                             mobile_number,
                             reference_number,
@@ -344,6 +346,7 @@ class SubmissionsDB:
                             NEW.id,
                             DATE(NEW.submission_date),
                             NEW.customer_id,
+                            NEW.client_name,
                             customer_email,
                             customer_mobile,
                             NEW.reference_number,
@@ -378,6 +381,7 @@ class SubmissionsDB:
                         ON CONFLICT (id) DO UPDATE SET
                             submission_date = EXCLUDED.submission_date,
                             customer_id = EXCLUDED.customer_id,
+                            client_name = EXCLUDED.client_name,
                             email = EXCLUDED.email,
                             mobile_number = EXCLUDED.mobile_number,
                             reference_number = EXCLUDED.reference_number,
@@ -441,7 +445,7 @@ class SubmissionsDB:
             with engine.begin() as conn:
                 conn.execute(text("""
                     INSERT INTO submissions_attio (
-                        id, submission_date, customer_id, email, mobile_number, reference_number,
+                        id, submission_date, customer_id, client_name, email, mobile_number, reference_number,
                         site_location, target_lpa, target_nca, target_lat, target_lon,
                         demand_habitats, contract_size, total_cost, total_with_admin,
                         num_banks_selected, banks_selected, watercourse_entries,
@@ -451,6 +455,7 @@ class SubmissionsDB:
                         s.id,
                         DATE(s.submission_date),
                         s.customer_id,
+                        s.client_name,
                         c.email,
                         c.mobile_number,
                         s.reference_number,
