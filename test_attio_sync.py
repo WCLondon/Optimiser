@@ -22,7 +22,7 @@ def test_customers_table_schema():
             content = f.read()
         
         # Check for Attio-compatible JSONB columns
-        attio_columns = ['name', 'email_addresses', 'phone_numbers', 'companies']
+        attio_columns = ['personal_name', 'email_addresses', 'phone_numbers', 'companies']
         
         for column in attio_columns:
             if f'column_name = \'{column}\'' in content:
@@ -240,9 +240,9 @@ if __name__ == "__main__":
         print("✓ ALL TESTS PASSED!")
         print("=" * 70)
         print("\nThe customers table is now compatible with Attio/StackSync:")
-        print("- name stored as JSONB object: {first_name, last_name}")
-        print("- email_addresses stored as JSONB array: [{email_address, type}]")
-        print("- phone_numbers stored as JSONB array: [{phone_number, type}]")
+        print("- personal_name stored as JSONB object: {first_name, last_name, full_name}")
+        print("- email_addresses stored as JSONB array: [{email_address}]")
+        print("- phone_numbers stored as JSONB array: [{original_phone_number, country_code}]")
         print("- companies stored as JSONB array: [company_name]")
         print("- Automatic trigger syncs legacy fields to Attio format")
         print("- First and last names are required for all customer records")

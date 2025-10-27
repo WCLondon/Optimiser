@@ -18,11 +18,12 @@ We implemented a dual-column approach that maintains backward compatibility whil
 
 #### New Columns Added to `customers` Table
 
-1. **`name` (JSONB)**: Stores customer name as JSON object
+1. **`personal_name` (JSONB)**: Stores customer name as JSON object (Attio requirement)
    ```json
    {
      "first_name": "John",
-     "last_name": "Smith"
+     "last_name": "Smith",
+     "full_name": "John Smith"
    }
    ```
 
@@ -30,18 +31,17 @@ We implemented a dual-column approach that maintains backward compatibility whil
    ```json
    [
      {
-       "email_address": "john.smith@example.com",
-       "type": "work"
+       "email_address": "john.smith@example.com"
      }
    ]
    ```
 
-3. **`phone_numbers` (JSONB)**: Stores phone numbers as array of objects
+3. **`phone_numbers` (JSONB)**: Stores phone numbers as array of objects (Attio format)
    ```json
    [
      {
-       "phone_number": "+44 7700 900000",
-       "type": "mobile"
+       "original_phone_number": "+44 7700 900000",
+       "country_code": "GB"
      }
    ]
    ```
@@ -119,19 +119,34 @@ Existing customer records are automatically backfilled with Attio-compatible dat
 
 ```sql
 UPDATE customers SET
-    name = jsonb_build_object(
+    personal_name = jsonb_build_object(
         'first_name', COALESCE(first_name, ''),
-        'last_name', COALESCE(last_name, '')
+        'last_name', COALESCE(last_name, ''),
+        'full_name', TRIM(COALESCE(first_name, '') || ' ' || COALESCE(last_name, ''))
     ),
     email_addresses = CASE 
-        WHEN email IS NOT NULL AND email != '' THEN
+        WHEN email IS NOT NULL AND email != '' AND email LIKE '%@%' THEN
             jsonb_build_array(
-                jsonb_build_object('email_address', email, 'type', 'work')
+                jsonb_build_object('email_address', email)
             )
         ELSE '[]'::jsonb
     END,
-    -- ... similar for phone_numbers and companies
-WHERE name IS NULL OR email_addresses IS NULL OR phone_numbers IS NULL OR companies IS NULL;
+    phone_numbers = CASE 
+        WHEN mobile_number IS NOT NULL AND mobile_number != '' THEN
+            jsonb_build_array(
+                jsonb_build_object(
+                    'original_phone_number', mobile_number,
+                    'country_code', 'GB'
+                )
+            )
+        ELSE '[]'::jsonb
+    END,
+    companies = CASE 
+        WHEN company_name IS NOT NULL AND company_name != '' THEN
+            jsonb_build_array(company_name)
+        ELSE '[]'::jsonb
+    END
+WHERE personal_name IS NULL OR email_addresses IS NULL OR phone_numbers IS NULL OR companies IS NULL;
 ```
 
 ## Benefits
@@ -215,9 +230,9 @@ python test_attio_sync.py
 │              PostgreSQL Trigger (BEFORE INSERT/UPDATE)       │
 │  sync_customer_attio_fields_trigger                         │
 │  - Converts TEXT → JSONB automatically                      │
-│  - name: {first_name, last_name}                           │
-│  - email_addresses: [{email_address, type}]                │
-│  - phone_numbers: [{phone_number, type}]                   │
+│  - personal_name: {first_name, last_name, full_name}       │
+│  - email_addresses: [{email_address}]                      │
+│  - phone_numbers: [{original_phone_number, country_code}] │
 │  - companies: [company_name]                               │
 └─────────────────┬───────────────────────────────────────────┘
                   │
@@ -227,10 +242,11 @@ python test_attio_sync.py
 │  ┌──────────────┬──────────────────────────────────────┐   │
 │  │ Legacy (TEXT)│ Attio-Compatible (JSONB)            │   │
 │  ├──────────────┼──────────────────────────────────────┤   │
-│  │ first_name   │ name: {first_name, last_name}       │   │
-│  │ last_name    │                                      │   │
-│  │ email        │ email_addresses: [{email, type}]    │   │
-│  │ mobile_number│ phone_numbers: [{phone, type}]      │   │
+│  │ first_name   │ personal_name: {first_name,         │   │
+│  │ last_name    │   last_name, full_name}             │   │
+│  │ email        │ email_addresses: [{email_address}]  │   │
+│  │ mobile_number│ phone_numbers: [{original_phone_    │   │
+│  │              │   number, country_code}]            │   │
 │  │ company_name │ companies: [company_name]           │   │
 │  └──────────────┴──────────────────────────────────────┘   │
 └─────────────────┬───────────────────────────────────────────┘

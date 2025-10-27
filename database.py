@@ -623,12 +623,12 @@ class SubmissionsDB:
             conn.execute(text("""
                 DO $$
                 BEGIN
-                    -- Add name as JSONB object {first_name, last_name}
+                    -- Add personal_name as JSONB object {first_name, last_name, full_name}
                     IF NOT EXISTS (
                         SELECT 1 FROM information_schema.columns 
-                        WHERE table_name = 'customers' AND column_name = 'name'
+                        WHERE table_name = 'customers' AND column_name = 'personal_name'
                     ) THEN
-                        ALTER TABLE customers ADD COLUMN name JSONB;
+                        ALTER TABLE customers ADD COLUMN personal_name JSONB;
                     END IF;
                     
                     -- Add email_addresses as JSONB array
@@ -662,20 +662,22 @@ class SubmissionsDB:
                 CREATE OR REPLACE FUNCTION sync_customer_attio_fields() 
                 RETURNS TRIGGER AS $$
                 BEGIN
-                    -- Sync name from first_name and last_name
+                    -- Sync personal_name from first_name and last_name
+                    -- Attio requires at least one of: first_name, last_name, or full_name
                     IF NEW.first_name IS NOT NULL OR NEW.last_name IS NOT NULL THEN
-                        NEW.name = jsonb_build_object(
+                        NEW.personal_name = jsonb_build_object(
                             'first_name', COALESCE(NEW.first_name, ''),
-                            'last_name', COALESCE(NEW.last_name, '')
+                            'last_name', COALESCE(NEW.last_name, ''),
+                            'full_name', TRIM(COALESCE(NEW.first_name, '') || ' ' || COALESCE(NEW.last_name, ''))
                         );
                     END IF;
                     
                     -- Sync email_addresses from email
-                    IF NEW.email IS NOT NULL AND NEW.email != '' THEN
+                    -- Only add if email is valid (contains @)
+                    IF NEW.email IS NOT NULL AND NEW.email != '' AND NEW.email LIKE '%@%' THEN
                         NEW.email_addresses = jsonb_build_array(
                             jsonb_build_object(
-                                'email_address', NEW.email,
-                                'type', 'work'
+                                'email_address', NEW.email
                             )
                         );
                     ELSE
@@ -683,11 +685,12 @@ class SubmissionsDB:
                     END IF;
                     
                     -- Sync phone_numbers from mobile_number
+                    -- Attio requires: original_phone_number and country_code
                     IF NEW.mobile_number IS NOT NULL AND NEW.mobile_number != '' THEN
                         NEW.phone_numbers = jsonb_build_array(
                             jsonb_build_object(
-                                'phone_number', NEW.mobile_number,
-                                'type', 'mobile'
+                                'original_phone_number', NEW.mobile_number,
+                                'country_code', 'GB'
                             )
                         );
                     ELSE
@@ -717,16 +720,16 @@ class SubmissionsDB:
             # Backfill Attio-compatible fields for existing customers
             conn.execute(text("""
                 UPDATE customers SET
-                    name = jsonb_build_object(
+                    personal_name = jsonb_build_object(
                         'first_name', COALESCE(first_name, ''),
-                        'last_name', COALESCE(last_name, '')
+                        'last_name', COALESCE(last_name, ''),
+                        'full_name', TRIM(COALESCE(first_name, '') || ' ' || COALESCE(last_name, ''))
                     ),
                     email_addresses = CASE 
-                        WHEN email IS NOT NULL AND email != '' THEN
+                        WHEN email IS NOT NULL AND email != '' AND email LIKE '%@%' THEN
                             jsonb_build_array(
                                 jsonb_build_object(
-                                    'email_address', email,
-                                    'type', 'work'
+                                    'email_address', email
                                 )
                             )
                         ELSE '[]'::jsonb
@@ -735,8 +738,8 @@ class SubmissionsDB:
                         WHEN mobile_number IS NOT NULL AND mobile_number != '' THEN
                             jsonb_build_array(
                                 jsonb_build_object(
-                                    'phone_number', mobile_number,
-                                    'type', 'mobile'
+                                    'original_phone_number', mobile_number,
+                                    'country_code', 'GB'
                                 )
                             )
                         ELSE '[]'::jsonb
@@ -746,7 +749,7 @@ class SubmissionsDB:
                             jsonb_build_array(company_name)
                         ELSE '[]'::jsonb
                     END
-                WHERE name IS NULL OR email_addresses IS NULL OR phone_numbers IS NULL OR companies IS NULL;
+                WHERE personal_name IS NULL OR email_addresses IS NULL OR phone_numbers IS NULL OR companies IS NULL;
             """))
             
             # Create indexes for customers
