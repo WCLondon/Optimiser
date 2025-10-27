@@ -700,7 +700,7 @@ class SubmissionsDB:
             """))
             
             # Create trigger to automatically sync legacy fields to Attio-compatible fields
-            conn.execute(text("""
+            conn.execute(text(r"""
                 CREATE OR REPLACE FUNCTION sync_customer_attio_fields() 
                 RETURNS TRIGGER AS $$
                 BEGIN
@@ -750,8 +750,9 @@ class SubmissionsDB:
                     END IF;
                     
                     -- Sync email_addresses from email
-                    -- Only add if email is valid (contains @)
-                    IF NEW.email IS NOT NULL AND NEW.email != '' AND NEW.email LIKE '%@%' THEN
+                    -- Only add if email is valid (basic validation: has @ and text on both sides)
+                    IF NEW.email IS NOT NULL AND NEW.email != '' AND 
+                       NEW.email ~ '^[^@]+@[^@]+\.[^@]+$' THEN
                         NEW.email_addresses = jsonb_build_array(
                             jsonb_build_object(
                                 'email_address', NEW.email
@@ -759,9 +760,18 @@ class SubmissionsDB:
                         );
                     ELSIF NEW.email_addresses IS NOT NULL AND jsonb_array_length(NEW.email_addresses) > 0 THEN
                         -- Sync back from email_addresses to email if email is null
-                        IF NEW.email IS NULL OR NEW.email = '' THEN
-                            NEW.email = NEW.email_addresses->0->>'email_address';
-                        END IF;
+                        -- Only extract if it's a valid email
+                        DECLARE
+                            extracted_email TEXT;
+                        BEGIN
+                            extracted_email = NEW.email_addresses->0->>'email_address';
+                            IF extracted_email IS NOT NULL AND extracted_email != '' AND
+                               extracted_email ~ '^[^@]+@[^@]+\.[^@]+$' THEN
+                                IF NEW.email IS NULL OR NEW.email = '' THEN
+                                    NEW.email = extracted_email;
+                                END IF;
+                            END IF;
+                        END;
                     ELSE
                         NEW.email_addresses = '[]'::jsonb;
                     END IF;
@@ -812,7 +822,7 @@ class SubmissionsDB:
             """))
             
             # Backfill Attio-compatible fields for existing customers
-            conn.execute(text("""
+            conn.execute(text(r"""
                 UPDATE customers SET
                     personal_name = jsonb_build_object(
                         'first_name', COALESCE(first_name, ''),
@@ -820,7 +830,7 @@ class SubmissionsDB:
                         'full_name', TRIM(COALESCE(first_name, '') || ' ' || COALESCE(last_name, ''))
                     ),
                     email_addresses = CASE 
-                        WHEN email IS NOT NULL AND email != '' AND email LIKE '%@%' THEN
+                        WHEN email IS NOT NULL AND email != '' AND email ~ '^[^@]+@[^@]+\.[^@]+$' THEN
                             jsonb_build_array(
                                 jsonb_build_object(
                                     'email_address', email
