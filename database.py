@@ -665,62 +665,103 @@ class SubmissionsDB:
                 END $$;
             """))
             
-            # Add Attio-compatible columns for syncing
-            # These columns store data in the format Attio expects
+            # CRITICAL DATA CLEANUP: Fix data corrupted during Attio sync attempts
             conn.execute(text("""
                 DO $$
                 BEGIN
-                    -- Add personal_name as JSONB object {first_name, last_name, full_name}
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns 
-                        WHERE table_name = 'customers' AND column_name = 'personal_name'
-                    ) THEN
-                        ALTER TABLE customers ADD COLUMN personal_name JSONB;
+                    -- Step 1: Extract data from JSONB columns back to TEXT (if JSONB columns exist)
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'customers' AND column_name = 'personal_name') THEN
+                        -- Extract first_name from personal_name JSONB if first_name is NULL
+                        UPDATE customers 
+                        SET first_name = personal_name->>'first_name'
+                        WHERE first_name IS NULL AND personal_name IS NOT NULL AND personal_name->>'first_name' != '';
+                        
+                        -- Extract last_name from personal_name JSONB if last_name is NULL
+                        UPDATE customers 
+                        SET last_name = personal_name->>'last_name'
+                        WHERE last_name IS NULL AND personal_name IS NOT NULL AND personal_name->>'last_name' != '';
                     END IF;
                     
-                    -- Add email_addresses as JSONB array
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns 
-                        WHERE table_name = 'customers' AND column_name = 'email_addresses'
-                    ) THEN
-                        ALTER TABLE customers ADD COLUMN email_addresses JSONB;
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'customers' AND column_name = 'email_addresses') THEN
+                        -- Extract email from email_addresses JSONB array
+                        UPDATE customers 
+                        SET email = email_addresses->0->>'email_address'
+                        WHERE email IS NULL AND email_addresses IS NOT NULL 
+                        AND jsonb_array_length(email_addresses) > 0;
                     END IF;
                     
-                    -- Add phone_numbers as JSONB array
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns 
-                        WHERE table_name = 'customers' AND column_name = 'phone_numbers'
-                    ) THEN
-                        ALTER TABLE customers ADD COLUMN phone_numbers JSONB;
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'customers' AND column_name = 'phone_numbers') THEN
+                        -- Extract phone from phone_numbers JSONB array
+                        UPDATE customers 
+                        SET mobile_number = phone_numbers->0->>'original_phone_number'
+                        WHERE mobile_number IS NULL AND phone_numbers IS NOT NULL 
+                        AND jsonb_array_length(phone_numbers) > 0;
                     END IF;
                     
-                    -- Add companies as JSONB array
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns 
-                        WHERE table_name = 'customers' AND column_name = 'companies'
-                    ) THEN
-                        ALTER TABLE customers ADD COLUMN companies JSONB;
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'customers' AND column_name = 'companies') THEN
+                        -- Extract company from companies JSONB array
+                        UPDATE customers 
+                        SET company_name = companies->0
+                        WHERE company_name IS NULL AND companies IS NOT NULL 
+                        AND jsonb_array_length(companies) > 0;
+                    END IF;
+                    
+                    -- Step 2: Clean up any JSON strings that got stored in TEXT columns
+                    -- Fix last_name if it contains JSON
+                    UPDATE customers 
+                    SET last_name = TRIM(BOTH '"' FROM (last_name::jsonb->>'last_name'))
+                    WHERE last_name LIKE '{%' AND last_name::text ~ '^\{.*\}$';
+                    
+                    -- Fix email if it contains JSON  
+                    UPDATE customers 
+                    SET email = TRIM(BOTH '"' FROM (email::jsonb->0->>'email_address'))
+                    WHERE email LIKE '[{%' AND email::text ~ '^\[\{.*\}\]$';
+                    
+                    -- Step 3: Rebuild client_name from first_name and last_name
+                    UPDATE customers 
+                    SET client_name = TRIM(COALESCE(first_name, '') || ' ' || COALESCE(last_name, ''))
+                    WHERE (client_name IS NULL OR client_name = '') 
+                    AND (first_name IS NOT NULL OR last_name IS NOT NULL);
+                    
+                    -- Set client_name to 'Unknown' for completely empty records
+                    UPDATE customers 
+                    SET client_name = 'Unknown'
+                    WHERE client_name IS NULL OR TRIM(client_name) = '';
+                    
+                    -- Step 4: Now drop the JSONB columns
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'customers' AND column_name = 'personal_name') THEN
+                        ALTER TABLE customers DROP COLUMN personal_name;
+                    END IF;
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'customers' AND column_name = 'email_addresses') THEN
+                        ALTER TABLE customers DROP COLUMN email_addresses;
+                    END IF;
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'customers' AND column_name = 'phone_numbers') THEN
+                        ALTER TABLE customers DROP COLUMN phone_numbers;
+                    END IF;
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'customers' AND column_name = 'companies') THEN
+                        ALTER TABLE customers DROP COLUMN companies;
                     END IF;
                 END $$;
             """))
             
-            # Create trigger to automatically sync legacy fields to Attio-compatible fields
+            # Drop old trigger if it exists
+            conn.execute(text("""
+                DROP TRIGGER IF EXISTS sync_customer_attio_trigger ON customers;
+                DROP FUNCTION IF EXISTS sync_customer_attio_fields();
+            """))
+            
+            # Create simple trigger to populate client_name from first_name/last_name
             conn.execute(text(r"""
-                CREATE OR REPLACE FUNCTION sync_customer_attio_fields() 
+                CREATE OR REPLACE FUNCTION sync_customer_name() 
                 RETURNS TRIGGER AS $$
                 BEGIN
-                    -- Auto-populate client_name if null (for Attio reverse sync)
-                    IF NEW.client_name IS NULL THEN
-                        -- Try to build from first_name and last_name
+                    -- Auto-populate client_name if it's empty
+                    IF NEW.client_name IS NULL OR NEW.client_name = '' THEN
                         IF NEW.first_name IS NOT NULL OR NEW.last_name IS NOT NULL THEN
                             NEW.client_name = TRIM(COALESCE(NEW.first_name, '') || ' ' || COALESCE(NEW.last_name, ''));
-                        -- Try to extract from personal_name JSONB if it exists
-                        ELSIF NEW.personal_name IS NOT NULL THEN
-                            NEW.client_name = COALESCE(
-                                NEW.personal_name->>'full_name',
-                                TRIM(COALESCE(NEW.personal_name->>'first_name', '') || ' ' || COALESCE(NEW.personal_name->>'last_name', '')),
-                                'Unknown'
-                            );
+                            IF NEW.client_name = '' THEN
+                                NEW.client_name = 'Unknown';
+                            END IF;
                         ELSE
                             NEW.client_name = 'Unknown';
                         END IF;
