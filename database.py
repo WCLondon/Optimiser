@@ -775,93 +775,6 @@ class SubmissionsDB:
                         END IF;
                     END IF;
                     
-                    -- Sync personal_name from first_name and last_name
-                    -- Attio requires at least one of: first_name, last_name, or full_name
-                    IF NEW.first_name IS NOT NULL OR NEW.last_name IS NOT NULL THEN
-                        DECLARE
-                            full_name_value TEXT;
-                        BEGIN
-                            full_name_value = TRIM(COALESCE(NEW.first_name, '') || ' ' || COALESCE(NEW.last_name, ''));
-                            -- Ensure full_name is never just empty string
-                            IF full_name_value = '' THEN
-                                full_name_value = COALESCE(NEW.first_name, NEW.last_name, 'Unknown');
-                            END IF;
-                            
-                            NEW.personal_name = jsonb_build_object(
-                                'first_name', COALESCE(NEW.first_name, ''),
-                                'last_name', COALESCE(NEW.last_name, ''),
-                                'full_name', full_name_value
-                            );
-                        END;
-                    ELSIF NEW.personal_name IS NOT NULL THEN
-                        -- Sync back from personal_name to TEXT fields if they're null
-                        IF NEW.first_name IS NULL THEN
-                            NEW.first_name = NEW.personal_name->>'first_name';
-                        END IF;
-                        IF NEW.last_name IS NULL THEN
-                            NEW.last_name = NEW.personal_name->>'last_name';
-                        END IF;
-                    END IF;
-                    
-                    -- Sync email_addresses from email
-                    -- Only add if email is valid (basic validation: has @ and text on both sides)
-                    IF NEW.email IS NOT NULL AND NEW.email != '' AND 
-                       NEW.email ~ '^[^@]+@[^@]+\.[^@]+$' THEN
-                        NEW.email_addresses = jsonb_build_array(
-                            jsonb_build_object(
-                                'email_address', NEW.email
-                            )
-                        );
-                    ELSIF NEW.email_addresses IS NOT NULL AND jsonb_array_length(NEW.email_addresses) > 0 THEN
-                        -- Sync back from email_addresses to email if email is null
-                        -- Only extract if it's a valid email
-                        DECLARE
-                            extracted_email TEXT;
-                        BEGIN
-                            extracted_email = NEW.email_addresses->0->>'email_address';
-                            IF extracted_email IS NOT NULL AND extracted_email != '' AND
-                               extracted_email ~ '^[^@]+@[^@]+\.[^@]+$' THEN
-                                IF NEW.email IS NULL OR NEW.email = '' THEN
-                                    NEW.email = extracted_email;
-                                END IF;
-                            END IF;
-                        END;
-                    ELSE
-                        NEW.email_addresses = '[]'::jsonb;
-                    END IF;
-                    
-                    -- Sync phone_numbers from mobile_number
-                    -- Attio requires: original_phone_number and country_code
-                    IF NEW.mobile_number IS NOT NULL AND NEW.mobile_number != '' THEN
-                        NEW.phone_numbers = jsonb_build_array(
-                            jsonb_build_object(
-                                'original_phone_number', NEW.mobile_number,
-                                'country_code', 'GB'
-                            )
-                        );
-                    ELSIF NEW.phone_numbers IS NOT NULL AND jsonb_array_length(NEW.phone_numbers) > 0 THEN
-                        -- Sync back from phone_numbers to mobile_number if mobile_number is null
-                        IF NEW.mobile_number IS NULL OR NEW.mobile_number = '' THEN
-                            NEW.mobile_number = NEW.phone_numbers->0->>'original_phone_number';
-                        END IF;
-                    ELSE
-                        NEW.phone_numbers = '[]'::jsonb;
-                    END IF;
-                    
-                    -- Sync companies from company_name
-                    IF NEW.company_name IS NOT NULL AND NEW.company_name != '' THEN
-                        NEW.companies = jsonb_build_array(NEW.company_name);
-                    ELSIF NEW.companies IS NOT NULL AND jsonb_array_length(NEW.companies) > 0 THEN
-                        -- Sync back from companies to company_name if company_name is null
-                        IF NEW.company_name IS NULL OR NEW.company_name = '' THEN
-                            NEW.company_name = NEW.companies->0::text;
-                            -- Remove quotes if present
-                            NEW.company_name = TRIM(BOTH '"' FROM NEW.company_name);
-                        END IF;
-                    ELSE
-                        NEW.companies = '[]'::jsonb;
-                    END IF;
-                    
                     RETURN NEW;
                 END;
                 $$ LANGUAGE plpgsql;
@@ -869,45 +782,10 @@ class SubmissionsDB:
             
             # Create trigger on customers table
             conn.execute(text("""
-                DROP TRIGGER IF EXISTS sync_customer_attio_fields_trigger ON customers;
-                CREATE TRIGGER sync_customer_attio_fields_trigger
+                DROP TRIGGER IF EXISTS sync_customer_name_trigger ON customers;
+                CREATE TRIGGER sync_customer_name_trigger
                 BEFORE INSERT OR UPDATE ON customers
-                FOR EACH ROW EXECUTE FUNCTION sync_customer_attio_fields();
-            """))
-            
-            # Backfill Attio-compatible fields for existing customers
-            conn.execute(text(r"""
-                UPDATE customers SET
-                    personal_name = jsonb_build_object(
-                        'first_name', COALESCE(first_name, ''),
-                        'last_name', COALESCE(last_name, ''),
-                        'full_name', TRIM(COALESCE(first_name, '') || ' ' || COALESCE(last_name, ''))
-                    ),
-                    email_addresses = CASE 
-                        WHEN email IS NOT NULL AND email != '' AND email ~ '^[^@]+@[^@]+\.[^@]+$' THEN
-                            jsonb_build_array(
-                                jsonb_build_object(
-                                    'email_address', email
-                                )
-                            )
-                        ELSE '[]'::jsonb
-                    END,
-                    phone_numbers = CASE 
-                        WHEN mobile_number IS NOT NULL AND mobile_number != '' THEN
-                            jsonb_build_array(
-                                jsonb_build_object(
-                                    'original_phone_number', mobile_number,
-                                    'country_code', 'GB'
-                                )
-                            )
-                        ELSE '[]'::jsonb
-                    END,
-                    companies = CASE 
-                        WHEN company_name IS NOT NULL AND company_name != '' THEN
-                            jsonb_build_array(company_name)
-                        ELSE '[]'::jsonb
-                    END
-                WHERE personal_name IS NULL OR email_addresses IS NULL OR phone_numbers IS NULL OR companies IS NULL;
+                FOR EACH ROW EXECUTE FUNCTION sync_customer_name();
             """))
             
             # Create indexes for customers
