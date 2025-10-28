@@ -706,16 +706,23 @@ class SubmissionsDB:
                         AND jsonb_array_length(companies) > 0;
                     END IF;
                     
-                    -- Step 2: Clean up any JSON strings that got stored in TEXT columns
-                    -- Fix last_name if it contains JSON
+                    -- Step 2: Clean up any JSON/dict strings that got stored in TEXT columns
+                    -- Remove JSON-like strings from TEXT columns (don't try to parse them)
                     UPDATE customers 
-                    SET last_name = TRIM(BOTH '"' FROM (last_name::jsonb->>'last_name'))
-                    WHERE last_name LIKE '{%' AND last_name::text ~ '^\{.*\}$';
+                    SET last_name = NULL
+                    WHERE last_name IS NOT NULL AND (last_name LIKE '{%' OR last_name LIKE '[%');
                     
-                    -- Fix email if it contains JSON  
                     UPDATE customers 
-                    SET email = TRIM(BOTH '"' FROM (email::jsonb->0->>'email_address'))
-                    WHERE email LIKE '[{%' AND email::text ~ '^\[\{.*\}\]$';
+                    SET email = NULL
+                    WHERE email IS NOT NULL AND (email LIKE '{%' OR email LIKE '[%');
+                    
+                    UPDATE customers 
+                    SET mobile_number = NULL
+                    WHERE mobile_number IS NOT NULL AND (mobile_number LIKE '{%' OR mobile_number LIKE '[%');
+                    
+                    UPDATE customers 
+                    SET company_name = NULL
+                    WHERE company_name IS NOT NULL AND (company_name LIKE '{%' OR company_name LIKE '[%');
                     
                     -- Step 3: Rebuild client_name from first_name and last_name
                     UPDATE customers 
