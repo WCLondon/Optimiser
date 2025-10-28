@@ -758,11 +758,64 @@ class SubmissionsDB:
                 DROP FUNCTION IF EXISTS sync_customer_attio_fields() CASCADE;
             """))
             
-            # Create simple trigger to populate client_name from first_name/last_name
+            # Add JSONB columns that Attio writes to for bidirectional sync
+            conn.execute(text("""
+                DO $$
+                BEGIN
+                    -- Add 'name' JSONB column for Attio name sync
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name = 'customers' AND column_name = 'name'
+                    ) THEN
+                        ALTER TABLE customers ADD COLUMN name JSONB;
+                    END IF;
+                END $$;
+            """))
+            
+            # Add timestamp columns for Attio sync tracking
+            conn.execute(text("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name = 'customers' AND column_name = 'created_at'
+                    ) THEN
+                        ALTER TABLE customers ADD COLUMN created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name = 'customers' AND column_name = 'updated_at'
+                    ) THEN
+                        ALTER TABLE customers ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+                    END IF;
+                END $$;
+            """))
+            
+            # Create bidirectional sync trigger that handles both TEXT and JSONB columns
             conn.execute(text(r"""
-                CREATE OR REPLACE FUNCTION sync_customer_name() 
+                CREATE OR REPLACE FUNCTION sync_customer_fields() 
                 RETURNS TRIGGER AS $$
                 BEGIN
+                    -- Sync from JSONB 'name' to TEXT fields (Attio → App)
+                    IF NEW.name IS NOT NULL THEN
+                        NEW.first_name = COALESCE(NEW.name->>'first_name', NEW.first_name);
+                        NEW.last_name = COALESCE(NEW.name->>'last_name', NEW.last_name);
+                        
+                        -- Update client_name from name JSONB full_name if available
+                        IF NEW.name->>'full_name' IS NOT NULL AND NEW.name->>'full_name' != '' THEN
+                            NEW.client_name = NEW.name->>'full_name';
+                        END IF;
+                    END IF;
+                    
+                    -- Sync from TEXT fields to JSONB 'name' (App → Attio)
+                    IF NEW.first_name IS NOT NULL OR NEW.last_name IS NOT NULL THEN
+                        NEW.name = jsonb_build_object(
+                            'first_name', COALESCE(NEW.first_name, ''),
+                            'last_name', COALESCE(NEW.last_name, ''),
+                            'full_name', TRIM(COALESCE(NEW.first_name, '') || ' ' || COALESCE(NEW.last_name, ''))
+                        );
+                    END IF;
+                    
                     -- Auto-populate client_name if it's empty
                     IF NEW.client_name IS NULL OR NEW.client_name = '' THEN
                         IF NEW.first_name IS NOT NULL OR NEW.last_name IS NOT NULL THEN
@@ -770,10 +823,15 @@ class SubmissionsDB:
                             IF NEW.client_name = '' THEN
                                 NEW.client_name = 'Unknown';
                             END IF;
+                        ELSIF NEW.name IS NOT NULL AND NEW.name->>'full_name' IS NOT NULL THEN
+                            NEW.client_name = NEW.name->>'full_name';
                         ELSE
                             NEW.client_name = 'Unknown';
                         END IF;
                     END IF;
+                    
+                    -- Update timestamp
+                    NEW.updated_at = NOW();
                     
                     RETURN NEW;
                 END;
@@ -783,9 +841,10 @@ class SubmissionsDB:
             # Create trigger on customers table
             conn.execute(text("""
                 DROP TRIGGER IF EXISTS sync_customer_name_trigger ON customers;
-                CREATE TRIGGER sync_customer_name_trigger
+                DROP TRIGGER IF EXISTS sync_customer_fields_trigger ON customers;
+                CREATE TRIGGER sync_customer_fields_trigger
                 BEFORE INSERT OR UPDATE ON customers
-                FOR EACH ROW EXECUTE FUNCTION sync_customer_name();
+                FOR EACH ROW EXECUTE FUNCTION sync_customer_fields();
             """))
             
             # Create indexes for customers
