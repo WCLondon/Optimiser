@@ -751,10 +751,11 @@ class SubmissionsDB:
                 END $$;
             """))
             
-            # Drop old trigger if it exists
+            # Drop old triggers if they exist (drop triggers before functions)
             conn.execute(text("""
                 DROP TRIGGER IF EXISTS sync_customer_attio_trigger ON customers;
-                DROP FUNCTION IF EXISTS sync_customer_attio_fields();
+                DROP TRIGGER IF EXISTS sync_customer_attio_fields_trigger ON customers;
+                DROP FUNCTION IF EXISTS sync_customer_attio_fields() CASCADE;
             """))
             
             # Create simple trigger to populate client_name from first_name/last_name
