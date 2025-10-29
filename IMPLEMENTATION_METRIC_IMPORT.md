@@ -12,12 +12,21 @@ The BNG Optimiser now supports importing habitat requirements directly from DEFR
 ## Key Components
 
 ### 1. Core Module: metric_reader.py
-- **Purpose**: Parse DEFRA BNG metric Excel files and extract requirements
+- **Purpose**: Parse DEFRA BNG metric Excel files following metric reader app logic exactly
 - **Key Functions**:
-  - `open_metric_workbook()`: Handle multiple Excel formats
+  - `open_metric_workbook()`: Handle multiple Excel formats (.xlsx, .xlsm, .xlsb)
   - `normalise_requirements()`: Extract and parse Trading Summary sheets
-  - `parse_metric_requirements()`: Main entry point returning deficits by category
-- **Lines of Code**: 303 lines
+  - `can_offset_area()`: Apply habitat trading rules
+  - `apply_area_offsets()`: Calculate on-site offsets and residuals
+  - `parse_headline_target_row()`: Extract Net Gain target % from Headline Results
+  - `allocate_to_headline()`: Allocate surpluses to headline requirement
+  - `parse_metric_requirements()`: Main entry point returning OFF-SITE mitigation needs
+- **Lines of Code**: ~550 lines
+- **Critical Update (Oct 29)**: Completely rewritten to follow metric reader logic:
+  - Applies on-site trading rules to reduce deficits
+  - Parses headline Net Gain from Headline Results sheet
+  - Allocates surpluses to headline
+  - Returns only residual off-site mitigation needs
 
 ### 2. UI Integration: app.py
 - **Location**: Demand section (Section 2), before manual entry
@@ -51,17 +60,36 @@ The BNG Optimiser now supports importing habitat requirements directly from DEFR
 
 ## Technical Implementation
 
-### Parsing Logic
-1. **Sheet Detection**: Searches for Trading Summary sheets by name
+### Parsing Logic (Following Metric Reader App Exactly)
+
+**For Area Habitats:**
+1. **Sheet Detection**: Searches for Trading Summary Area Habitats sheet
 2. **Header Identification**: Finds column headers within first 80 rows
 3. **Distinctiveness Extraction**: Parses band information from section headers
-4. **Deficit Extraction**: Filters rows with negative project-wide unit changes
-5. **Data Normalization**: Converts to standard format with positive units
+4. **Data Normalization**: Extracts deficits and surpluses with distinctiveness
+5. **On-site Offset Application**:
+   - Applies habitat trading rules (Very High/High: like-for-like; Medium: same broad group; Low: any)
+   - Matches surpluses to deficits following priority order
+   - Calculates residual unmet deficits
+6. **Headline Net Gain Parsing**: Extracts target % and baseline from Headline Results sheet
+7. **Surplus Allocation to Headline**: Allocates remaining surpluses (High→Medium→Low priority)
+8. **Residual Calculation**: Returns combined off-site needs (habitat residuals + headline remainder)
+
+**For Hedgerows & Watercourses:**
+- Simple deficit extraction (no trading rules per DEFRA guidance)
+- Returns absolute values of negative project-wide unit changes
+
+### Trading Rules Implemented
+- **Very High distinctiveness**: Like-for-like habitat only
+- **High distinctiveness**: Like-for-like habitat only
+- **Medium distinctiveness**: Can be offset by High/Very High (any group) or Medium (same group)
+- **Low distinctiveness**: Can be offset by any distinctiveness ≥ Low
 
 ### Supported Sheets
 - Trading Summary Area Habitats
 - Trading Summary Hedgerows
 - Trading Summary Watercourses
+- Headline Results (for Net Gain target)
 - Various name variants (see documentation)
 
 ### Habitat Matching
@@ -74,7 +102,8 @@ The BNG Optimiser now supports importing habitat requirements directly from DEFR
 - Safe float conversion with fallback to 0.0
 - User confirmation before clearing existing data
 - Clear error messages for parsing failures
-- Graceful handling of missing sheets
+- Graceful handling of missing sheets (returns empty results)
+- Fallback to 10% Net Gain target if Headline Results missing
 
 ## Security Analysis
 - **CodeQL Scan**: ✅ Passed with 0 alerts

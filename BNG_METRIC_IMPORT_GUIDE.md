@@ -27,13 +27,24 @@ The BNG Optimiser now supports importing requirements directly from DEFRA BNG me
 
 ## What Gets Imported
 
-The importer extracts **deficits only** (negative project-wide unit changes) from:
+The importer follows the **exact logic of the DEFRA BNG Metric Reader app** to calculate off-site mitigation requirements:
 
-- **Trading Summary Area Habitats** sheet
-- **Trading Summary Hedgerows** sheet  
-- **Trading Summary Watercourses** sheet
+### Area Habitats (Full Trading Logic)
+1. **On-site offsets applied**: Surpluses offset deficits according to habitat trading rules
+2. **Headline Net Gain calculated**: Target % × baseline units from Headline Results sheet
+3. **Surpluses allocated to headline**: Remaining surpluses reduce headline requirement
+4. **Residual extracted**: Only what needs OFF-SITE mitigation:
+   - Habitat deficits after on-site offsets
+   - Headline Net Gain remainder after surplus allocation
 
-All extracted deficits are converted to positive values (absolute values) representing units required.
+This matches the "🧮 Still needs mitigation OFF-SITE" total from the metric reader.
+
+### Hedgerows & Watercourses (Simple Deficits)
+- Extracts raw deficits (negative project-wide unit changes)
+- No trading rules applied (per DEFRA guidance)
+- All values converted to positive units required
+
+**Key Point**: You get the **combined off-site mitigation total**, not raw deficits. The metric reader's trading rules and headline logic are applied automatically.
 
 ## Habitat Matching
 
@@ -105,16 +116,24 @@ This feature is **fully backward compatible**:
 
 ```
 1. Upload "Project_BNG_Metric_v4.0.xlsx"
-   → Parser extracts:
-     - Grassland (Medium distinctiveness): 5.23 units
-     - Woodland (High distinctiveness): 3.45 units
+   → Metric reader logic applied:
+     a) On-site offsets: Surpluses reduce deficits via trading rules
+     b) Headline Net Gain: 10% × 100 baseline = 10.0 units target
+     c) Surplus allocation: 3.5 units surplus → covers part of headline
+     d) Residual calculated:
+        - Grassland (after offsets): 2.8 units
+        - Headline Net Gain (after surplus): 6.5 units
+        - Hedgerow deficit: 2.10 units
+   → Parser extracts OFF-SITE requirements only:
+     - Grassland: 2.8 units
+     - Headline Net Gain (10%): 6.5 units  
      - Hedgerow: 2.10 units
 
 2. Click "Add to Demand Rows"
    → Demand table populated with 3 rows
 
 3. Proceed with optimization as normal
-   → Optimizer finds best allocation across banks
+   → Optimizer finds best allocation across banks for off-site mitigation
 ```
 
 ## Troubleshooting
@@ -123,7 +142,13 @@ This feature is **fully backward compatible**:
 A: Try re-saving the file as .xlsx format in Excel
 
 **Q: No requirements found in preview**
-A: Ensure your file has Trading Summary sheets with negative project-wide unit changes
+A: Check that your file has:
+   - Trading Summary sheets with project-wide unit changes
+   - Headline Results sheet (for area habitats)
+   - Actual deficits after on-site offsets and surplus allocation
+
+**Q: Numbers don't match raw deficits in metric**
+A: This is correct! The importer applies trading rules and headline logic, just like the metric reader app. You're seeing off-site mitigation needs, not raw deficits.
 
 **Q: Habitat names don't match catalog**
 A: Generic Net Gain labels will be used automatically. You can manually edit after import.
