@@ -2435,26 +2435,23 @@ with st.expander("📄 Import from BNG Metric File", expanded=False):
                 with st.expander("Preview: Watercourses", expanded=False):
                     st.dataframe(requirements["watercourses"], use_container_width=True)
             
-            # Add button to populate demand rows
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                if st.button("➕ Add to Demand Rows", type="primary", help="Add parsed requirements to the demand table below"):
-                    # Show warning if there are existing rows
-                    has_existing = any(r.get("habitat_name") and r.get("units", 0) > 0 for r in st.session_state.demand_rows)
-                    if has_existing:
-                        st.warning("⚠️ This will replace all existing demand rows. Click 'Clear & Import' to proceed.")
-                        st.session_state["_confirm_import"] = True
-                    else:
-                        st.session_state["_confirm_import"] = True
-                        st.session_state["_do_import"] = True
-            
-            with col2:
-                if st.session_state.get("_confirm_import", False) and st.button("Clear & Import", type="secondary", help="Replace existing rows with metric data"):
-                    st.session_state["_do_import"] = True
-            
-            if st.session_state.get("_do_import", False):
+            # Automatically populate demand rows
+            # Check if this is a new upload (not already processed)
+            uploaded_file_name = uploaded_metric.name
+            if st.session_state.get("_last_imported_file") != uploaded_file_name:
                 try:
-                    # Clear existing demand rows
+                    # Clear existing demand rows and widget keys
+                    if "demand_rows" in st.session_state:
+                        for row in st.session_state["demand_rows"]:
+                            row_id = row.get("id")
+                            # Delete widget keys for old rows
+                            hab_key = f"hab_{row_id}"
+                            units_key = f"units_{row_id}"
+                            if hab_key in st.session_state:
+                                del st.session_state[hab_key]
+                            if units_key in st.session_state:
+                                del st.session_state[units_key]
+                    
                     st.session_state.demand_rows = []
                     next_id = 1
                     
@@ -2508,22 +2505,16 @@ with st.expander("📄 Import from BNG Metric File", expanded=False):
                             next_id += 1
                     
                     st.session_state._next_row_id = next_id
+                    st.session_state["_last_imported_file"] = uploaded_file_name
                     
                     if st.session_state.demand_rows:
-                        st.success(f"✅ Added {len(st.session_state.demand_rows)} requirements to demand table!")
-                        # Clear import flags
-                        st.session_state["_confirm_import"] = False
-                        st.session_state["_do_import"] = False
+                        st.info(f"ℹ️ Automatically populated {len(st.session_state.demand_rows)} requirements in demand table below.")
                         st.rerun()
                     else:
                         st.warning("No valid requirements found to add.")
-                        st.session_state["_confirm_import"] = False
-                        st.session_state["_do_import"] = False
                 
                 except Exception as e:
                     st.error(f"❌ Error importing requirements: {e}")
-                    st.session_state["_confirm_import"] = False
-                    st.session_state["_do_import"] = False
         
         except Exception as e:
             st.error(f"❌ Error parsing metric file: {e}")

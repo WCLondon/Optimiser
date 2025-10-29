@@ -542,9 +542,10 @@ def parse_metric_requirements(uploaded_file) -> Dict[str, pd.DataFrame]:
         residual_headline = max(headline_requirement - applied_to_headline, 0.0)
         
         # Add headline remainder if > 0
+        # Use "Net Gain (Low-equivalent)" to match optimiser's naming
         if residual_headline > 1e-9:
             area_requirements.append({
-                "habitat": f"Headline Net Gain requirement ({target_pct*100:.0f}% of baseline)",
+                "habitat": "Net Gain (Low-equivalent)",
                 "units": round(residual_headline, 4)
             })
     
