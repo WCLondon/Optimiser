@@ -42,6 +42,9 @@ from database import SubmissionsDB
 # Repository layer for reference/config tables
 import repo
 
+# BNG Metric reader
+import metric_reader
+
 # ================= Config / constants =================
 ADMIN_FEE_GBP = 500.0
 SINGLE_BANK_SOFT_PCT = 0.01
@@ -2397,6 +2400,102 @@ NET_GAIN_HEDGEROW_LABEL = "Net Gain (Hedgerows)"
 HAB_CHOICES = sorted(
     [sstr(x) for x in backend["HabitatCatalog"]["habitat_name"].dropna().unique().tolist()] + [NET_GAIN_LABEL]
 ) + [NET_GAIN_HEDGEROW_LABEL, NET_GAIN_WATERCOURSE_LABEL]  # add watercourses NG
+
+# ================= Metric File Upload =================
+with st.expander("📄 Import from BNG Metric File", expanded=False):
+    st.markdown("Upload a DEFRA BNG metric file (.xlsx, .xlsm, or .xlsb) to automatically populate requirements.")
+    
+    uploaded_metric = st.file_uploader(
+        "Upload BNG Metric",
+        type=["xlsx", "xlsm", "xlsb"],
+        help="Select a DEFRA BNG metric file to extract habitat requirements",
+        key="metric_uploader"
+    )
+    
+    if uploaded_metric is not None:
+        try:
+            with st.spinner("Parsing metric file..."):
+                requirements = metric_reader.parse_metric_requirements(uploaded_metric)
+            
+            # Show what was found
+            total_area = len(requirements["area"]) if not requirements["area"].empty else 0
+            total_hedge = len(requirements["hedgerows"]) if not requirements["hedgerows"].empty else 0
+            total_water = len(requirements["watercourses"]) if not requirements["watercourses"].empty else 0
+            
+            st.success(f"✅ Metric parsed successfully! Found: {total_area} area habitats, {total_hedge} hedgerow items, {total_water} watercourse items")
+            
+            # Show preview
+            if not requirements["area"].empty:
+                with st.expander("Preview: Area Habitats", expanded=True):
+                    st.dataframe(requirements["area"], use_container_width=True)
+            if not requirements["hedgerows"].empty:
+                with st.expander("Preview: Hedgerows", expanded=False):
+                    st.dataframe(requirements["hedgerows"], use_container_width=True)
+            if not requirements["watercourses"].empty:
+                with st.expander("Preview: Watercourses", expanded=False):
+                    st.dataframe(requirements["watercourses"], use_container_width=True)
+            
+            # Add button to populate demand rows
+            if st.button("➕ Add to Demand Rows", type="primary", help="Add parsed requirements to the demand table below"):
+                # Clear existing demand rows
+                st.session_state.demand_rows = []
+                next_id = 1
+                
+                # Add area habitats
+                for _, row in requirements["area"].iterrows():
+                    habitat = str(row["habitat"]).strip()
+                    units = float(row["units"])
+                    if habitat and units > 0:
+                        st.session_state.demand_rows.append({
+                            "id": next_id,
+                            "habitat_name": habitat,
+                            "units": units
+                        })
+                        next_id += 1
+                
+                # Add hedgerows with Net Gain label if generic
+                for _, row in requirements["hedgerows"].iterrows():
+                    habitat = str(row["habitat"]).strip()
+                    units = float(row["units"])
+                    if habitat and units > 0:
+                        # Try to match to catalog, otherwise use Net Gain (Hedgerows)
+                        if habitat not in HAB_CHOICES:
+                            habitat = NET_GAIN_HEDGEROW_LABEL
+                        st.session_state.demand_rows.append({
+                            "id": next_id,
+                            "habitat_name": habitat,
+                            "units": units
+                        })
+                        next_id += 1
+                
+                # Add watercourses
+                for _, row in requirements["watercourses"].iterrows():
+                    habitat = str(row["habitat"]).strip()
+                    units = float(row["units"])
+                    if habitat and units > 0:
+                        # Try to match to catalog, otherwise use Net Gain (Watercourses)
+                        if habitat not in HAB_CHOICES:
+                            habitat = NET_GAIN_WATERCOURSE_LABEL
+                        st.session_state.demand_rows.append({
+                            "id": next_id,
+                            "habitat_name": habitat,
+                            "units": units
+                        })
+                        next_id += 1
+                
+                st.session_state._next_row_id = next_id
+                
+                if st.session_state.demand_rows:
+                    st.success(f"✅ Added {len(st.session_state.demand_rows)} requirements to demand table!")
+                    st.rerun()
+                else:
+                    st.warning("No valid requirements found to add.")
+        
+        except Exception as e:
+            st.error(f"❌ Error parsing metric file: {e}")
+            st.info("Please ensure this is a valid DEFRA BNG metric file with Trading Summary sheets.")
+
+st.markdown("---")
 
 with st.container(border=True):
     st.markdown("**Add habitats one by one** (type to search the catalog):")
