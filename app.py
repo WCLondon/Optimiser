@@ -2436,60 +2436,94 @@ with st.expander("📄 Import from BNG Metric File", expanded=False):
                     st.dataframe(requirements["watercourses"], use_container_width=True)
             
             # Add button to populate demand rows
-            if st.button("➕ Add to Demand Rows", type="primary", help="Add parsed requirements to the demand table below"):
-                # Clear existing demand rows
-                st.session_state.demand_rows = []
-                next_id = 1
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                if st.button("➕ Add to Demand Rows", type="primary", help="Add parsed requirements to the demand table below"):
+                    # Show warning if there are existing rows
+                    has_existing = any(r.get("habitat_name") and r.get("units", 0) > 0 for r in st.session_state.demand_rows)
+                    if has_existing:
+                        st.warning("⚠️ This will replace all existing demand rows. Click 'Clear & Import' to proceed.")
+                        st.session_state["_confirm_import"] = True
+                    else:
+                        st.session_state["_confirm_import"] = True
+                        st.session_state["_do_import"] = True
+            
+            with col2:
+                if st.session_state.get("_confirm_import", False) and st.button("Clear & Import", type="secondary", help="Replace existing rows with metric data"):
+                    st.session_state["_do_import"] = True
+            
+            if st.session_state.get("_do_import", False):
+                try:
+                    # Clear existing demand rows
+                    st.session_state.demand_rows = []
+                    next_id = 1
+                    
+                    # Helper function for safe float conversion
+                    def safe_float(value, default=0.0):
+                        try:
+                            return float(value)
+                        except (ValueError, TypeError):
+                            return default
+                    
+                    # Add area habitats
+                    for _, row in requirements["area"].iterrows():
+                        habitat = str(row["habitat"]).strip()
+                        units = safe_float(row["units"])
+                        if habitat and units > 0:
+                            st.session_state.demand_rows.append({
+                                "id": next_id,
+                                "habitat_name": habitat,
+                                "units": units
+                            })
+                            next_id += 1
+                    
+                    # Add hedgerows with Net Gain label if generic
+                    for _, row in requirements["hedgerows"].iterrows():
+                        habitat = str(row["habitat"]).strip()
+                        units = safe_float(row["units"])
+                        if habitat and units > 0:
+                            # Try to match to catalog, otherwise use Net Gain (Hedgerows)
+                            if habitat not in HAB_CHOICES:
+                                habitat = NET_GAIN_HEDGEROW_LABEL
+                            st.session_state.demand_rows.append({
+                                "id": next_id,
+                                "habitat_name": habitat,
+                                "units": units
+                            })
+                            next_id += 1
+                    
+                    # Add watercourses
+                    for _, row in requirements["watercourses"].iterrows():
+                        habitat = str(row["habitat"]).strip()
+                        units = safe_float(row["units"])
+                        if habitat and units > 0:
+                            # Try to match to catalog, otherwise use Net Gain (Watercourses)
+                            if habitat not in HAB_CHOICES:
+                                habitat = NET_GAIN_WATERCOURSE_LABEL
+                            st.session_state.demand_rows.append({
+                                "id": next_id,
+                                "habitat_name": habitat,
+                                "units": units
+                            })
+                            next_id += 1
+                    
+                    st.session_state._next_row_id = next_id
+                    
+                    if st.session_state.demand_rows:
+                        st.success(f"✅ Added {len(st.session_state.demand_rows)} requirements to demand table!")
+                        # Clear import flags
+                        st.session_state["_confirm_import"] = False
+                        st.session_state["_do_import"] = False
+                        st.rerun()
+                    else:
+                        st.warning("No valid requirements found to add.")
+                        st.session_state["_confirm_import"] = False
+                        st.session_state["_do_import"] = False
                 
-                # Add area habitats
-                for _, row in requirements["area"].iterrows():
-                    habitat = str(row["habitat"]).strip()
-                    units = float(row["units"])
-                    if habitat and units > 0:
-                        st.session_state.demand_rows.append({
-                            "id": next_id,
-                            "habitat_name": habitat,
-                            "units": units
-                        })
-                        next_id += 1
-                
-                # Add hedgerows with Net Gain label if generic
-                for _, row in requirements["hedgerows"].iterrows():
-                    habitat = str(row["habitat"]).strip()
-                    units = float(row["units"])
-                    if habitat and units > 0:
-                        # Try to match to catalog, otherwise use Net Gain (Hedgerows)
-                        if habitat not in HAB_CHOICES:
-                            habitat = NET_GAIN_HEDGEROW_LABEL
-                        st.session_state.demand_rows.append({
-                            "id": next_id,
-                            "habitat_name": habitat,
-                            "units": units
-                        })
-                        next_id += 1
-                
-                # Add watercourses
-                for _, row in requirements["watercourses"].iterrows():
-                    habitat = str(row["habitat"]).strip()
-                    units = float(row["units"])
-                    if habitat and units > 0:
-                        # Try to match to catalog, otherwise use Net Gain (Watercourses)
-                        if habitat not in HAB_CHOICES:
-                            habitat = NET_GAIN_WATERCOURSE_LABEL
-                        st.session_state.demand_rows.append({
-                            "id": next_id,
-                            "habitat_name": habitat,
-                            "units": units
-                        })
-                        next_id += 1
-                
-                st.session_state._next_row_id = next_id
-                
-                if st.session_state.demand_rows:
-                    st.success(f"✅ Added {len(st.session_state.demand_rows)} requirements to demand table!")
-                    st.rerun()
-                else:
-                    st.warning("No valid requirements found to add.")
+                except Exception as e:
+                    st.error(f"❌ Error importing requirements: {e}")
+                    st.session_state["_confirm_import"] = False
+                    st.session_state["_do_import"] = False
         
         except Exception as e:
             st.error(f"❌ Error parsing metric file: {e}")
