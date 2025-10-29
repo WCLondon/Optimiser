@@ -2501,13 +2501,16 @@ with st.expander("📄 Import from BNG Metric File", expanded=False):
                         if units_key in st.session_state:
                             del st.session_state[units_key]
                     
-                    # Now create the rows
+                    # Now create the rows and set widget values
                     for req in all_requirements:
                         st.session_state.demand_rows.append({
                             "id": next_id,
                             "habitat_name": req["habitat"],
                             "units": req["units"]
                         })
+                        # Pre-set the widget state values to force them to populate
+                        st.session_state[f"hab_{next_id}"] = req["habitat"]
+                        st.session_state[f"units_{next_id}"] = req["units"]
                         next_id += 1
                     
                     st.session_state._next_row_id = next_id
