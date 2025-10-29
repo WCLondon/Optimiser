@@ -240,11 +240,247 @@ def normalise_requirements(
     return out.reset_index(drop=True), colmap, sheet
 
 
+# ------------- area trading rules -------------
+def can_offset_area(d_band: str, d_broad: str, d_hab: str,
+                    s_band: str, s_broad: str, s_hab: str) -> bool:
+    """Check if surplus can offset deficit according to trading rules"""
+    rank = {"Low":1, "Medium":2, "High":3, "Very High":4}
+    rd = rank.get(str(d_band), 0)
+    rs = rank.get(str(s_band), 0)
+    d_broad = clean_text(d_broad)
+    s_broad = clean_text(s_broad)
+    d_hab = clean_text(d_hab)
+    s_hab = clean_text(s_hab)
+    
+    if d_band == "Very High": 
+        return d_hab == s_hab
+    if d_band == "High":      
+        return d_hab == s_hab
+    if d_band == "Medium":
+        # High or Very High can offset Medium from any broad group
+        if rs > rd:  # High (3) or Very High (4) > Medium (2)
+            return True
+        # Medium can offset Medium only if same broad group
+        if rs == rd:  # Both Medium
+            return d_broad != "" and d_broad == s_broad
+        return False
+    if d_band == "Low":       
+        return rs >= rd
+    return False
+
+
+def apply_area_offsets(area_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+    """
+    Apply on-site trading rules and calculate residual deficits.
+    Returns dict with:
+      - residual_off_site: unmet deficits after on-site offsets
+      - surplus_after_offsets_detail: remaining surpluses
+    """
+    data = area_df.copy()
+    data["project_wide_change"] = coerce_num(data["project_wide_change"])
+    deficits = data[data["project_wide_change"] < 0].copy()
+    surpluses = data[data["project_wide_change"] > 0].copy()
+
+    # Working copy to track remaining surplus
+    sur = surpluses.copy()
+    sur["__remain__"] = sur["project_wide_change"].astype(float)
+
+    band_rank = {"Low": 1, "Medium": 2, "High": 3, "Very High": 4}
+    
+    # Track what each deficit received
+    deficit_received = {}
+    
+    # Apply trading rules to offset deficits with surpluses
+    for di, d in deficits.iterrows():
+        need = abs(float(d["project_wide_change"]))
+        d_band  = str(d["distinctiveness"])
+        d_broad = clean_text(d.get("broad_group",""))
+        d_hab   = clean_text(d.get("habitat",""))
+        
+        deficit_key = (di, d_hab, d_broad, d_band)
+        deficit_received[deficit_key] = 0.0
+        
+        # Find eligible surpluses
+        elig_idx = [si for si, s in sur.iterrows()
+                    if can_offset_area(d_band, d_broad, d_hab,
+                                       str(s["distinctiveness"]), 
+                                       clean_text(s.get("broad_group","")),
+                                       clean_text(s.get("habitat","")))
+                    and sur.loc[si,"__remain__"] > 0]
+        
+        # Sort by priority: higher distinctiveness first, then larger surplus
+        elig_idx = sorted(elig_idx,
+                          key=lambda i: (-band_rank.get(str(sur.loc[i,"distinctiveness"]),0),
+                                         -sur.loc[i,"__remain__"]))
+        
+        # Allocate surpluses to deficit
+        for i in elig_idx:
+            if need <= 1e-9: 
+                break
+            give = min(need, float(sur.loc[i,"__remain__"]))
+            if give <= 0: 
+                continue
+            sur.loc[i,"__remain__"] -= give
+            deficit_received[deficit_key] += give
+            need -= give
+
+    # Calculate residual unmet deficits
+    remaining_records = []
+    
+    for di, d in deficits.iterrows():
+        d_hab   = clean_text(d.get("habitat",""))
+        d_broad = clean_text(d.get("broad_group",""))
+        d_band  = str(d["distinctiveness"])
+        
+        original_need = abs(float(d["project_wide_change"]))
+        deficit_key = (di, d_hab, d_broad, d_band)
+        received = deficit_received.get(deficit_key, 0.0)
+        unmet = max(original_need - received, 0.0)
+        
+        if unmet > 1e-4:  # Filter out floating-point errors
+            remaining_records.append({
+                "habitat": d_hab,
+                "broad_group": d_broad,
+                "distinctiveness": d_band,
+                "unmet_units_after_on_site_offset": round(unmet, 6)
+            })
+
+    # Detail table of remaining surpluses (for headline allocation)
+    surplus_after_offsets_detail = sur.rename(columns={"__remain__":"surplus_remaining_units"})[
+        ["habitat","broad_group","distinctiveness","surplus_remaining_units"]
+    ].copy()
+
+    return {
+        "residual_off_site": pd.DataFrame(remaining_records).reset_index(drop=True) if remaining_records else pd.DataFrame(columns=["habitat","broad_group","distinctiveness","unmet_units_after_on_site_offset"]),
+        "surplus_after_offsets_detail": surplus_after_offsets_detail
+    }
+
+
+def parse_headline_target_row(xls: pd.ExcelFile, unit_type_keyword: str = "Area habitat units") -> Dict[str, float]:
+    """
+    Parse Headline Results for dynamic target %, baseline units.
+    Returns dict with keys: target_percent, baseline_units
+    """
+    SHEET_NAME = "Headline Results"
+    
+    def extract_percent(val) -> Optional[float]:
+        """Extract percentage from string like '10 %' or '15%'"""
+        if val is None or (isinstance(val, float) and pd.isna(val)): 
+            return None
+        s = clean_text(str(val))
+        num = pd.to_numeric(s.replace("%", "").strip(), errors="coerce")
+        if pd.notna(num):
+            return float(num / 100.0 if num > 1 else num)
+        return None
+    
+    try:
+        raw = pd.read_excel(xls, sheet_name=SHEET_NAME, header=None)
+    except Exception:
+        return {"target_percent": 0.10, "baseline_units": 0.0}
+    
+    # Find header row
+    header_idx = None
+    for i in range(min(200, len(raw))):
+        txt = " ".join([clean_text(x).lower() for x in raw.iloc[i].tolist()])
+        if "unit type" in txt and ("target" in txt or "baseline" in txt):
+            header_idx = i
+            break
+    
+    if header_idx is None:
+        return {"target_percent": 0.10, "baseline_units": 0.0}
+    
+    df = raw.iloc[header_idx:].copy()
+    df.columns = [clean_text(x) for x in df.iloc[0].tolist()]
+    df = df.iloc[1:].reset_index(drop=True)
+    
+    # Normalize column names
+    norm = {re.sub(r"[^a-z0-9]+", "_", c.lower()).strip("_"): c for c in df.columns}
+    
+    unit_col = next((norm[k] for k in ["unit_type", "type", "unit"] if k in norm), None)
+    baseline_col = next((norm[k] for k in ["baseline_units", "baseline", "baseline_unit"] if k in norm), None)
+    target_col = next((norm[k] for k in ["target", "target_percent", "target_"] if k in norm), None)
+    
+    # Find the area habitat units row
+    def is_target_row(row) -> bool:
+        if unit_col:
+            val = clean_text(row.get(unit_col, "")).lower()
+            if re.search(r"\barea\s*habitat\s*units\b", val):
+                return True
+        return re.search(r"\barea\s*habitat\s*units\b", " ".join([clean_text(v).lower() for v in row.tolist()])) is not None
+    
+    mask = df.apply(is_target_row, axis=1)
+    if not mask.any():
+        return {"target_percent": 0.10, "baseline_units": 0.0}
+    
+    row = df.loc[mask].iloc[0]
+    
+    # Extract values
+    baseline_units = 0.0
+    if baseline_col and baseline_col in row.index:
+        baseline_units = float(pd.to_numeric(row[baseline_col], errors="coerce") or 0.0)
+    
+    target_percent = 0.10  # default
+    if target_col and target_col in row.index:
+        pct = extract_percent(row[target_col])
+        if pct is not None:
+            target_percent = pct
+    
+    return {
+        "target_percent": target_percent,
+        "baseline_units": baseline_units
+    }
+
+
+def allocate_to_headline(
+    remaining_target: float,
+    surplus_detail: pd.DataFrame
+) -> float:
+    """
+    Allocate available surpluses to cover headline net gain target.
+    Returns total amount applied to headline.
+    """
+    if remaining_target <= 1e-9:
+        return 0.0
+    
+    band_rank = {"Very High": 4, "High": 3, "Medium": 2, "Low": 1}
+    
+    # Sort surpluses by rank (higher first), then by remaining units (larger first)
+    surs = surplus_detail.copy()
+    surs["surplus_remaining_units"] = pd.to_numeric(surs["surplus_remaining_units"], errors="coerce").fillna(0.0)
+    surs = surs[surs["surplus_remaining_units"] > 1e-9]
+    surs["__rank__"] = surs["distinctiveness"].map(lambda b: band_rank.get(str(b), 0))
+    surs = surs.sort_values(by=["__rank__", "surplus_remaining_units"], ascending=[False, False])
+    
+    to_cover = remaining_target
+    
+    for _, s in surs.iterrows():
+        if to_cover <= 1e-9:
+            break
+        give = min(to_cover, float(s["surplus_remaining_units"]))
+        if give <= 1e-9:
+            continue
+        to_cover -= give
+    
+    total_applied = remaining_target - to_cover
+    return total_applied
+
+
 def parse_metric_requirements(uploaded_file) -> Dict[str, pd.DataFrame]:
     """
-    Main entry point: parse a BNG metric file and return requirements.
+    Main entry point: parse a BNG metric file and return OFF-SITE mitigation requirements.
+    
+    This follows the metric reader logic exactly:
+    1. Parse Trading Summary sheets
+    2. Apply on-site offsets (habitat trading rules)
+    3. Parse headline Net Gain target from Headline Results
+    4. Allocate remaining surpluses to headline
+    5. Return residual off-site requirements
+    
     Returns dict with keys: 'area', 'hedgerows', 'watercourses'
-    Each value is a DataFrame with columns: habitat, units (negative values only = deficits)
+    Each value is a DataFrame with columns: habitat, units
+    
+    For area: returns combined residual (habitat deficits + headline remainder)
+    For hedgerows/watercourses: returns raw deficits (no trading rules applied)
     """
     try:
         xls = open_metric_workbook(uploaded_file)
@@ -276,28 +512,66 @@ def parse_metric_requirements(uploaded_file) -> Dict[str, pd.DataFrame]:
     hedge_norm, _, _ = normalise_requirements(xls, HEDGE_SHEETS, "Hedgerows")
     water_norm, _, _ = normalise_requirements(xls, WATER_SHEETS, "Watercourses")
     
-    # Extract deficits (negative project_wide_change values)
-    def extract_deficits(df: pd.DataFrame) -> pd.DataFrame:
-        if df.empty:
-            return pd.DataFrame(columns=["habitat", "units"])
+    # ========== AREA HABITATS - Full trading logic ==========
+    area_requirements = []
+    
+    if not area_norm.empty:
+        # Step 1: Apply on-site offsets
+        alloc = apply_area_offsets(area_norm)
+        residual_table = alloc["residual_off_site"]
+        surplus_detail = alloc["surplus_after_offsets_detail"]
         
-        df = df.copy()
-        df["project_wide_change"] = coerce_num(df["project_wide_change"])
-        deficits = df[df["project_wide_change"] < 0].copy()
+        # Add habitat residuals
+        if not residual_table.empty:
+            for _, row in residual_table.iterrows():
+                area_requirements.append({
+                    "habitat": clean_text(row["habitat"]),
+                    "units": float(row["unmet_units_after_on_site_offset"])
+                })
         
-        if deficits.empty:
-            return pd.DataFrame(columns=["habitat", "units"])
+        # Step 2: Parse headline target
+        headline_info = parse_headline_target_row(xls, "Area habitat units")
+        target_pct = headline_info["target_percent"]
+        baseline_units = headline_info["baseline_units"]
+        headline_requirement = baseline_units * target_pct
         
-        # Convert to positive units (absolute value)
-        result = pd.DataFrame({
-            "habitat": deficits["habitat"].astype(str).map(clean_text),
-            "units": deficits["project_wide_change"].abs()
-        })
+        # Step 3: Allocate surpluses to headline
+        applied_to_headline = allocate_to_headline(headline_requirement, surplus_detail)
         
-        return result.reset_index(drop=True)
+        # Step 4: Calculate headline remainder
+        residual_headline = max(headline_requirement - applied_to_headline, 0.0)
+        
+        # Add headline remainder if > 0
+        if residual_headline > 1e-9:
+            area_requirements.append({
+                "habitat": f"Headline Net Gain requirement ({target_pct*100:.0f}% of baseline)",
+                "units": round(residual_headline, 4)
+            })
+    
+    # ========== HEDGEROWS - Simple deficits ==========
+    hedge_requirements = []
+    if not hedge_norm.empty:
+        hedge_norm["project_wide_change"] = coerce_num(hedge_norm["project_wide_change"])
+        deficits = hedge_norm[hedge_norm["project_wide_change"] < 0]
+        for _, row in deficits.iterrows():
+            hedge_requirements.append({
+                "habitat": clean_text(row["habitat"]),
+                "units": abs(float(row["project_wide_change"]))
+            })
+    
+    # ========== WATERCOURSES - Simple deficits ==========
+    water_requirements = []
+    if not water_norm.empty:
+        water_norm["project_wide_change"] = coerce_num(water_norm["project_wide_change"])
+        deficits = water_norm[water_norm["project_wide_change"] < 0]
+        for _, row in deficits.iterrows():
+            water_requirements.append({
+                "habitat": clean_text(row["habitat"]),
+                "units": abs(float(row["project_wide_change"]))
+            })
     
     return {
-        "area": extract_deficits(area_norm),
-        "hedgerows": extract_deficits(hedge_norm),
-        "watercourses": extract_deficits(water_norm)
+        "area": pd.DataFrame(area_requirements) if area_requirements else pd.DataFrame(columns=["habitat", "units"]),
+        "hedgerows": pd.DataFrame(hedge_requirements) if hedge_requirements else pd.DataFrame(columns=["habitat", "units"]),
+        "watercourses": pd.DataFrame(water_requirements) if water_requirements else pd.DataFrame(columns=["habitat", "units"])
     }
