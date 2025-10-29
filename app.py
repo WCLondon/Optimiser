@@ -2462,17 +2462,15 @@ with st.expander("📄 Import from BNG Metric File", expanded=False):
                         except (ValueError, TypeError):
                             return default
                     
+                    # First pass: collect all requirements to determine how many rows we'll need
+                    all_requirements = []
+                    
                     # Add area habitats
                     for _, row in requirements["area"].iterrows():
                         habitat = str(row["habitat"]).strip()
                         units = safe_float(row["units"])
                         if habitat and units > 0:
-                            st.session_state.demand_rows.append({
-                                "id": next_id,
-                                "habitat_name": habitat,
-                                "units": units
-                            })
-                            next_id += 1
+                            all_requirements.append({"habitat": habitat, "units": units})
                     
                     # Add hedgerows with Net Gain label if generic
                     for _, row in requirements["hedgerows"].iterrows():
@@ -2482,12 +2480,7 @@ with st.expander("📄 Import from BNG Metric File", expanded=False):
                             # Try to match to catalog, otherwise use Net Gain (Hedgerows)
                             if habitat not in HAB_CHOICES:
                                 habitat = NET_GAIN_HEDGEROW_LABEL
-                            st.session_state.demand_rows.append({
-                                "id": next_id,
-                                "habitat_name": habitat,
-                                "units": units
-                            })
-                            next_id += 1
+                            all_requirements.append({"habitat": habitat, "units": units})
                     
                     # Add watercourses
                     for _, row in requirements["watercourses"].iterrows():
@@ -2497,12 +2490,25 @@ with st.expander("📄 Import from BNG Metric File", expanded=False):
                             # Try to match to catalog, otherwise use Net Gain (Watercourses)
                             if habitat not in HAB_CHOICES:
                                 habitat = NET_GAIN_WATERCOURSE_LABEL
-                            st.session_state.demand_rows.append({
-                                "id": next_id,
-                                "habitat_name": habitat,
-                                "units": units
-                            })
-                            next_id += 1
+                            all_requirements.append({"habitat": habitat, "units": units})
+                    
+                    # Delete widget keys for all IDs we're about to use
+                    for i in range(1, len(all_requirements) + 1):
+                        hab_key = f"hab_{i}"
+                        units_key = f"units_{i}"
+                        if hab_key in st.session_state:
+                            del st.session_state[hab_key]
+                        if units_key in st.session_state:
+                            del st.session_state[units_key]
+                    
+                    # Now create the rows
+                    for req in all_requirements:
+                        st.session_state.demand_rows.append({
+                            "id": next_id,
+                            "habitat_name": req["habitat"],
+                            "units": req["units"]
+                        })
+                        next_id += 1
                     
                     st.session_state._next_row_id = next_id
                     st.session_state["_last_imported_file"] = uploaded_file_name
