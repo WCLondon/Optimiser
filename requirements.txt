@@ -7,3 +7,5 @@ pulp>=2.7   # optional; app falls back to greedy if not present
 sqlalchemy>=2.0
 psycopg[binary]>=3.1
 tenacity>=8.0
+openpyxl>=3.1   # for BNG metric Excel reading
+pyxlsb>=1.0     # for BNG metric .xlsb files

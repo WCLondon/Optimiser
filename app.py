@@ -42,6 +42,9 @@ from database import SubmissionsDB
 # Repository layer for reference/config tables
 import repo
 
+# BNG Metric reader
+import metric_reader
+
 # ================= Config / constants =================
 ADMIN_FEE_GBP = 500.0
 SINGLE_BANK_SOFT_PCT = 0.01
@@ -2397,6 +2400,136 @@ NET_GAIN_HEDGEROW_LABEL = "Net Gain (Hedgerows)"
 HAB_CHOICES = sorted(
     [sstr(x) for x in backend["HabitatCatalog"]["habitat_name"].dropna().unique().tolist()] + [NET_GAIN_LABEL]
 ) + [NET_GAIN_HEDGEROW_LABEL, NET_GAIN_WATERCOURSE_LABEL]  # add watercourses NG
+
+# ================= Metric File Upload =================
+with st.expander("📄 Import from BNG Metric File", expanded=False):
+    st.markdown("Upload a DEFRA BNG metric file (.xlsx, .xlsm, or .xlsb) to automatically populate requirements.")
+    
+    uploaded_metric = st.file_uploader(
+        "Upload BNG Metric",
+        type=["xlsx", "xlsm", "xlsb"],
+        help="Select a DEFRA BNG metric file to extract habitat requirements",
+        key="metric_uploader"
+    )
+    
+    if uploaded_metric is not None:
+        try:
+            with st.spinner("Parsing metric file..."):
+                requirements = metric_reader.parse_metric_requirements(uploaded_metric)
+            
+            # Show what was found
+            total_area = len(requirements["area"]) if not requirements["area"].empty else 0
+            total_hedge = len(requirements["hedgerows"]) if not requirements["hedgerows"].empty else 0
+            total_water = len(requirements["watercourses"]) if not requirements["watercourses"].empty else 0
+            
+            st.success(f"✅ Metric parsed successfully! Found: {total_area} area habitats, {total_hedge} hedgerow items, {total_water} watercourse items")
+            
+            # Show preview
+            if not requirements["area"].empty:
+                with st.expander("Preview: Area Habitats", expanded=True):
+                    st.dataframe(requirements["area"], use_container_width=True)
+            if not requirements["hedgerows"].empty:
+                with st.expander("Preview: Hedgerows", expanded=False):
+                    st.dataframe(requirements["hedgerows"], use_container_width=True)
+            if not requirements["watercourses"].empty:
+                with st.expander("Preview: Watercourses", expanded=False):
+                    st.dataframe(requirements["watercourses"], use_container_width=True)
+            
+            # Automatically populate demand rows
+            # Check if this is a new upload (not already processed)
+            uploaded_file_name = uploaded_metric.name
+            if st.session_state.get("_last_imported_file") != uploaded_file_name:
+                try:
+                    # Clear existing demand rows and widget keys
+                    if "demand_rows" in st.session_state:
+                        for row in st.session_state["demand_rows"]:
+                            row_id = row.get("id")
+                            # Delete widget keys for old rows
+                            hab_key = f"hab_{row_id}"
+                            units_key = f"units_{row_id}"
+                            if hab_key in st.session_state:
+                                del st.session_state[hab_key]
+                            if units_key in st.session_state:
+                                del st.session_state[units_key]
+                    
+                    st.session_state.demand_rows = []
+                    next_id = 1
+                    
+                    # Helper function for safe float conversion
+                    def safe_float(value, default=0.0):
+                        try:
+                            return float(value)
+                        except (ValueError, TypeError):
+                            return default
+                    
+                    # First pass: collect all requirements to determine how many rows we'll need
+                    all_requirements = []
+                    
+                    # Add area habitats
+                    for _, row in requirements["area"].iterrows():
+                        habitat = str(row["habitat"]).strip()
+                        units = safe_float(row["units"])
+                        if habitat and units > 0:
+                            all_requirements.append({"habitat": habitat, "units": units})
+                    
+                    # Add hedgerows with Net Gain label if generic
+                    for _, row in requirements["hedgerows"].iterrows():
+                        habitat = str(row["habitat"]).strip()
+                        units = safe_float(row["units"])
+                        if habitat and units > 0:
+                            # Try to match to catalog, otherwise use Net Gain (Hedgerows)
+                            if habitat not in HAB_CHOICES:
+                                habitat = NET_GAIN_HEDGEROW_LABEL
+                            all_requirements.append({"habitat": habitat, "units": units})
+                    
+                    # Add watercourses
+                    for _, row in requirements["watercourses"].iterrows():
+                        habitat = str(row["habitat"]).strip()
+                        units = safe_float(row["units"])
+                        if habitat and units > 0:
+                            # Try to match to catalog, otherwise use Net Gain (Watercourses)
+                            if habitat not in HAB_CHOICES:
+                                habitat = NET_GAIN_WATERCOURSE_LABEL
+                            all_requirements.append({"habitat": habitat, "units": units})
+                    
+                    # Delete widget keys for all IDs we're about to use
+                    for i in range(1, len(all_requirements) + 1):
+                        hab_key = f"hab_{i}"
+                        units_key = f"units_{i}"
+                        if hab_key in st.session_state:
+                            del st.session_state[hab_key]
+                        if units_key in st.session_state:
+                            del st.session_state[units_key]
+                    
+                    # Now create the rows and set widget values
+                    for req in all_requirements:
+                        st.session_state.demand_rows.append({
+                            "id": next_id,
+                            "habitat_name": req["habitat"],
+                            "units": req["units"]
+                        })
+                        # Pre-set the widget state values to force them to populate
+                        st.session_state[f"hab_{next_id}"] = req["habitat"]
+                        st.session_state[f"units_{next_id}"] = req["units"]
+                        next_id += 1
+                    
+                    st.session_state._next_row_id = next_id
+                    st.session_state["_last_imported_file"] = uploaded_file_name
+                    
+                    if st.session_state.demand_rows:
+                        st.info(f"ℹ️ Automatically populated {len(st.session_state.demand_rows)} requirements in demand table below.")
+                        st.rerun()
+                    else:
+                        st.warning("No valid requirements found to add.")
+                
+                except Exception as e:
+                    st.error(f"❌ Error importing requirements: {e}")
+        
+        except Exception as e:
+            st.error(f"❌ Error parsing metric file: {e}")
+            st.info("Please ensure this is a valid DEFRA BNG metric file with Trading Summary sheets.")
+
+st.markdown("---")
 
 with st.container(border=True):
     st.markdown("**Add habitats one by one** (type to search the catalog):")
