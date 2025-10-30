@@ -4650,8 +4650,16 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                     }
                     area_habitats.append(row_data)
     
-    # Update total cost to include manual entries
-    total_cost_with_manual = total_cost + manual_hedgerow_cost + manual_watercourse_cost + manual_area_cost
+    # Calculate total cost from actual line items (which have SUO discount already applied)
+    # Sum up all offset costs from the line items
+    optimizer_cost = 0.0
+    for habitat_list in [area_habitats, hedgerow_habitats, watercourse_habitats]:
+        for row in habitat_list:
+            cost_str = row["Offset Cost"].replace("£", "").replace(",", "")
+            optimizer_cost += float(cost_str)
+    
+    # Add manual entries
+    total_cost_with_manual = optimizer_cost + manual_hedgerow_cost + manual_watercourse_cost + manual_area_cost
     total_with_admin = total_cost_with_manual + admin_fee
     
     # Bundle Low + 10% Net Gain rows together for each habitat type
