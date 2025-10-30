@@ -26,6 +26,7 @@ def create_demo_metric():
         ws_headline.cell(row=5, column=col, value=header)
     
     # Add realistic test data for all three unit types
+    # Format: [Unit Type, Target %, Baseline Units, Units Required, Unit Deficit]
     data = [
         ["Habitat units", "10.00%", 0.71, 0.78, 0.72],
         ["Hedgerow units", "10.00%", 2.50, 2.75, 0.25],
@@ -42,9 +43,11 @@ def create_demo_metric():
     for col, header in enumerate(area_headers, start=1):
         ws_area.cell(row=1, column=col, value=header)
     
+    # Sample area habitat data with deficits (negative values indicate loss)
+    # Format: [Habitat name, Broad habitat, Distinctiveness, Project-wide change, On-site change]
     area_data = [
-        ["Grassland", "Grassland and marsh", "Medium", -3.5, -1.0],
-        ["Woodland", "Woodland and forest", "High", -2.0, -0.5],
+        ["Grassland", "Grassland and marsh", "Medium", -3.5, -1.0],  # 3.5 unit deficit
+        ["Woodland", "Woodland and forest", "High", -2.0, -0.5],     # 2.0 unit deficit
     ]
     
     for row_idx, row_data in enumerate(area_data, start=2):
@@ -151,6 +154,8 @@ def demo_baseline_reading():
         target_pct = info["target_percent"]
         
         if baseline > 0:
+            # Net Gain calculation: baseline units × target percentage
+            # This represents the additional biodiversity units required beyond baseline
             net_gain_target = baseline * target_pct
             print(f"\n{display_name} Net Gain Target Calculation:")
             print(f"  Baseline: {baseline:.2f} units")
