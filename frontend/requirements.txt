@@ -1,0 +1,11 @@
+streamlit>=1.37
+pandas>=2.1
+requests>=2.31
+streamlit-folium>=0.18
+folium>=0.16
+pulp>=2.7
+sqlalchemy>=2.0
+psycopg[binary]>=3.1
+tenacity>=8.0
+openpyxl>=3.1
+pyxlsb>=1.0

@@ -1,0 +1,49 @@
+# fly.toml for BNG Optimiser Frontend (Streamlit)
+app = "bng-frontend"
+primary_region = "lhr"  # London
+
+[build]
+  dockerfile = "docker/Dockerfile.frontend"
+
+[env]
+  # Backend URL will be set via fly secrets
+
+[http_service]
+  internal_port = 8501
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 8501
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 250
+    soft_limit = 200
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 2
+  memory_gb = 4
+
+[checks]
+  [checks.health]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/_stcore/health"
+    port = 8501
+    timeout = "5s"
+    type = "http"

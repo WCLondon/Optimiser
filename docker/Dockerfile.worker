@@ -1,0 +1,27 @@
+# Worker Dockerfile for BNG Optimiser RQ worker
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy backend requirements and install Python dependencies
+COPY backend/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy backend code and shared modules
+COPY backend/ /app/backend/
+COPY database.py /app/
+COPY db.py /app/
+COPY repo.py /app/
+COPY metric_reader.py /app/
+
+# Set Python path
+ENV PYTHONPATH=/app
+
+# Run RQ worker
+CMD ["python", "backend/worker.py"]
