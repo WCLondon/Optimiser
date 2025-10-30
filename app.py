@@ -322,12 +322,18 @@ def require_login():
 require_login()
 
 # ================= Database Initialization =================
+# ================= Database Initialization =================
+@st.cache_resource(show_spinner=False)
+def get_database():
+    """Initialize database connection (cached as a resource for reuse across reruns)."""
+    try:
+        return SubmissionsDB()
+    except Exception as e:
+        st.error(f"Failed to initialize database: {e}")
+        return None
+
 # Initialize database (will create tables if they don't exist)
-try:
-    db = SubmissionsDB()
-except Exception as e:
-    st.error(f"Failed to initialize database: {e}")
-    db = None
+db = get_database()
 
 # ================= Mode Selection (Sidebar) =================
 # Add admin_authenticated flag to session state
@@ -1389,7 +1395,9 @@ def get_umbrella_for(hab_name: str, catalog: pd.DataFrame) -> str:
 
 
 # ================= Geocoding / lookups =================
+@st.cache_data(ttl=86400, show_spinner=False)  # Cache for 24 hours
 def get_postcode_info(pc: str) -> Tuple[float, float, str]:
+    """Get lat/lon for UK postcode. Cached for 24 hours to reduce API calls."""
     pc_clean = sstr(pc).replace(" ", "").upper()
     r = http_get(POSTCODES_IO + pc_clean)
     js = safe_json(r)
@@ -1398,7 +1406,9 @@ def get_postcode_info(pc: str) -> Tuple[float, float, str]:
     data = js["result"]
     return float(data["latitude"]), float(data["longitude"]), sstr(data.get("admin_district") or data.get("admin_county"))
 
+@st.cache_data(ttl=86400, show_spinner=False)  # Cache for 24 hours
 def geocode_address(addr: str) -> Tuple[float, float]:
+    """Geocode address to lat/lon. Cached for 24 hours to reduce API calls."""
     r = http_get(NOMINATIM_SEARCH, params={"q": sstr(addr), "format": "jsonv2", "limit": 1, "addressdetails": 0})
     js = safe_json(r)
     if isinstance(js, list) and js:
@@ -1412,7 +1422,9 @@ def geocode_address(addr: str) -> Tuple[float, float]:
         return float(lat), float(lon)
     raise RuntimeError("Address geocoding failed.")
 
+@st.cache_data(ttl=3600, show_spinner=False)  # Cache for 1 hour
 def arcgis_point_query(layer_url: str, lat: float, lon: float, out_fields: str) -> Dict[str, Any]:
+    """Query ArcGIS layer for point intersection. Cached for 1 hour."""
     geometry_dict = {"x": lon, "y": lat, "spatialReference": {"wkid": 4326}}
     params = {
         "f": "json", "where": "1=1",

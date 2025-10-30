@@ -207,9 +207,11 @@ def fetch_trading_rules() -> pd.DataFrame:
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=600, show_spinner=False)
 def fetch_all_reference_tables() -> Dict[str, pd.DataFrame]:
     """
     Fetch all reference/config tables from Supabase.
+    Cached for 10 minutes to reduce database load and improve responsiveness.
     
     Returns:
         Dictionary with table names as keys and DataFrames as values.
