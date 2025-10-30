@@ -2523,12 +2523,31 @@ with st.expander("📄 Import from BNG Metric File", expanded=False):
                     st.session_state._next_row_id = next_id
                     st.session_state["_last_imported_file"] = uploaded_file_name
                     
-                    # Store surplus for SUO
+                    # Store surplus for SUO and check if usable
                     if "surplus" in requirements and not requirements["surplus"].empty:
                         st.session_state["metric_surplus"] = requirements["surplus"].copy()
-                        st.info(f"✅ Found {len(requirements['surplus'])} surplus habitat(s) for Surplus Uplift Offset")
+                        
+                        # Check if there's usable surplus (Medium+ distinctiveness)
+                        distinctiveness_order = {"Very Low": 0, "Low": 1, "Medium": 2, "High": 3, "Very High": 4}
+                        eligible_surplus = requirements["surplus"][
+                            requirements["surplus"]["distinctiveness"].apply(
+                                lambda d: distinctiveness_order.get(str(d), 0) >= 2
+                            )
+                        ]
+                        
+                        if not eligible_surplus.empty:
+                            total_eligible = eligible_surplus["units_surplus"].sum()
+                            usable_surplus = total_eligible * 0.5  # 50% headroom
+                            st.success(
+                                f"🎯 **Surplus Uplift Offset Available!** "
+                                f"{total_eligible:.2f} units of Medium+ surplus found. "
+                                f"Up to {usable_surplus:.2f} units (50% headroom) can provide a cost discount after optimization."
+                            )
+                        else:
+                            st.info(f"ℹ️ Found {len(requirements['surplus'])} surplus habitat(s), but none are Medium+ distinctiveness (no SUO discount available)")
                     else:
                         st.session_state["metric_surplus"] = None
+                        st.info("ℹ️ No surplus found in metric file (no SUO discount available)")
                     
                     if st.session_state.demand_rows:
                         st.info(f"ℹ️ Automatically populated {len(st.session_state.demand_rows)} requirements in demand table below.")
