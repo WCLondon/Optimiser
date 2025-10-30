@@ -3986,35 +3986,12 @@ def compute_suo_discount(alloc_df: pd.DataFrame, backend: Dict[str, pd.DataFrame
         # Apply 50% headroom
         usable_surplus = total_eligible * 0.5
         
-        # Get average SRM from allocated banks
-        # Extract unique banks and their tiers from allocation
-        bank_tiers = alloc_df[["bank_id", "tier"]].drop_duplicates()
-        
-        # Get SRM values for these banks
-        srm_df = backend.get("SRM", pd.DataFrame())
-        avg_srm = 1.0  # Default
-        
-        if not srm_df.empty and "tier" in srm_df.columns and "multiplier" in srm_df.columns:
-            # Map tiers to SRMs
-            tier_srm_map = dict(zip(srm_df["tier"].str.lower(), srm_df["multiplier"]))
-            bank_tiers["srm"] = bank_tiers["tier"].str.lower().map(tier_srm_map).fillna(1.0)
-            
-            # Weight by units allocated per bank
-            bank_units = alloc_df.groupby("bank_id")["units_supplied"].sum()
-            bank_tiers = bank_tiers.merge(bank_units.reset_index(), on="bank_id", how="left")
-            
-            # Calculate weighted average SRM
-            if bank_tiers["units_supplied"].sum() > 0:
-                avg_srm = (bank_tiers["srm"] * bank_tiers["units_supplied"]).sum() / bank_tiers["units_supplied"].sum()
-        
-        # Calculate effective offset capacity (surplus adjusted for SRM)
-        effective_offset = usable_surplus / avg_srm
-        
-        # Calculate total units purchased
+        # Calculate total units purchased (this is what we need to mitigate)
         total_units = alloc_df["units_supplied"].sum()
         
-        # Calculate discount fraction
-        discount_fraction = min(effective_offset / total_units, 1.0) if total_units > 0 else 0.0
+        # Calculate discount fraction: usable_surplus / total_units_to_mitigate
+        # Note: We do NOT adjust for SRM here - the discount is simply based on surplus vs units needed
+        discount_fraction = min(usable_surplus / total_units, 1.0) if total_units > 0 else 0.0
         
         if discount_fraction > 0:
             return {
@@ -4022,9 +3999,7 @@ def compute_suo_discount(alloc_df: pd.DataFrame, backend: Dict[str, pd.DataFrame
                 "discount_fraction": discount_fraction,
                 "eligible_surplus": total_eligible,
                 "usable_surplus": usable_surplus,
-                "effective_offset": effective_offset,
-                "total_units_purchased": total_units,
-                "avg_srm": avg_srm
+                "total_units_purchased": total_units
             }
         else:
             return {"applicable": False, "reason": "No discount possible (insufficient surplus)"}
@@ -4268,7 +4243,8 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                                        removed_allocation_rows: List[int] = None,
                                        promoter_name: str = None,
                                        promoter_discount_type: str = None,
-                                       promoter_discount_value: float = None) -> Tuple[pd.DataFrame, str]:
+                                       promoter_discount_value: float = None,
+                                       suo_discount_fraction: float = 0.0) -> Tuple[pd.DataFrame, str]:
     """Generate the client-facing report table and email body matching exact template with improved styling"""
     
     if manual_hedgerow_rows is None:
@@ -4279,6 +4255,10 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
         manual_area_rows = []
     if removed_allocation_rows is None:
         removed_allocation_rows = []
+    
+    # Helper function to round unit price to nearest £100
+    def round_to_100(price):
+        return round(price / 100) * 100
     
     # Filter out removed allocation rows
     if "_row_id" not in alloc_df.columns:
@@ -4325,6 +4305,16 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
             supply_units = alloc_row["units_supplied"]
             unit_price = alloc_row["unit_price"]
             offset_cost = alloc_row["cost"]
+            
+            # Apply SUO discount to unit price and offset cost
+            if suo_discount_fraction > 0:
+                unit_price = unit_price * (1 - suo_discount_fraction)
+                offset_cost = offset_cost * (1 - suo_discount_fraction)
+            
+            # Round unit price to nearest £100
+            unit_price = round_to_100(unit_price)
+            # Recalculate offset cost with rounded unit price
+            offset_cost = unit_price * supply_units
             
             # For paired allocations, show only the highest distinctiveness habitat
             allocation_type = sstr(alloc_row.get("allocation_type", "normal"))
@@ -5111,7 +5101,7 @@ if st.session_state.get("optimization_complete", False) and st.session_state.get
             total_with_admin_discounted = total_discounted_cost + ADMIN_FEE_GBP
             
             # Show SUO summary metrics
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Eligible Surplus", f"{suo_results['eligible_surplus']:.2f} units", 
                          help="Total surplus from Medium+ distinctiveness habitats")
@@ -5119,9 +5109,6 @@ if st.session_state.get("optimization_complete", False) and st.session_state.get
                 st.metric("Usable (50% headroom)", f"{suo_results['usable_surplus']:.2f} units",
                          help="50% of eligible surplus available for offset")
             with col3:
-                st.metric("Effective Offset", f"{suo_results['effective_offset']:.2f} units",
-                         help=f"Usable surplus adjusted for bank SRM (avg: {suo_results.get('avg_srm', 1.0):.2f})")
-            with col4:
                 st.metric("Discount Applied", f"{discount_pct:.1f}%",
                          help="Percentage discount on allocation costs")
             
@@ -5786,7 +5773,8 @@ if has_optimizer_results or has_manual_entries:
             st.session_state.get("removed_allocation_rows", []),
             st.session_state.get("selected_promoter"),
             st.session_state.get("promoter_discount_type"),
-            st.session_state.get("promoter_discount_value")
+            st.session_state.get("promoter_discount_value"),
+            st.session_state.get("suo_results", {}).get("discount_fraction", 0.0) if st.session_state.get("suo_enabled", False) else 0.0
         )
         
         # Display the table

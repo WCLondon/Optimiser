@@ -6,8 +6,8 @@ import pandas as pd
 
 
 def test_suo_discount_calculation():
-    """Test that SUO discount is calculated correctly with bank SRMs"""
-    print("\n=== Test: SUO Discount Calculation ===")
+    """Test that SUO discount is calculated correctly: usable_surplus / total_units"""
+    print("\n=== Test: SUO Discount Calculation (New Formula) ===")
     
     # Mock allocation data: 100 units allocated across 2 banks
     alloc_df = pd.DataFrame({
@@ -25,55 +25,52 @@ def test_suo_discount_calculation():
         "units_surplus": [60.0]
     })
     
-    # Mock SRM data
-    srm_df = pd.DataFrame({
-        "tier": ["local", "adjacent", "far"],
-        "multiplier": [1.0, 1.33, 2.0]
-    })
-    
     # Calculate expected values
-    # Total units: 100
-    # Bank1: 70 units at local (SRM=1.0)
-    # Bank2: 30 units at adjacent (SRM=1.33)
-    # Weighted avg SRM: (70*1.0 + 30*1.33) / 100 = 1.099
-    
+    # Total units to mitigate: 100
     # Eligible surplus: 60 (Medium)
     # Usable (50%): 30
-    # Effective offset: 30 / 1.099 = 27.3
-    # Discount: 27.3 / 100 = 27.3%
+    # Discount formula: usable / total_units = 30 / 100 = 30%
     
     print(f"Allocation: {alloc_df['units_supplied'].sum()} units across {alloc_df['bank_id'].nunique()} banks")
     print(f"Metric surplus: {metric_surplus['units_surplus'].sum()} units (Medium)")
     print(f"\nExpected:")
     print(f"  Eligible: 60 units")
     print(f"  Usable (50%): 30 units")
-    print(f"  Weighted avg SRM: ~1.10")
-    print(f"  Effective offset: ~27 units")
-    print(f"  Discount: ~27%")
+    print(f"  Total units to mitigate: 100 units")
+    print(f"  Discount: 30 / 100 = 30%")
     
     # Manual calculation to verify logic
     eligible = 60.0  # All Medium
     usable = eligible * 0.5  # 50% headroom
-    
-    # Calculate weighted SRM
-    bank_units = alloc_df.groupby(["bank_id", "tier"])["units_supplied"].sum().reset_index()
-    tier_srm = dict(zip(srm_df["tier"].str.lower(), srm_df["multiplier"]))
-    bank_units["srm"] = bank_units["tier"].str.lower().map(tier_srm)
-    weighted_srm = (bank_units["srm"] * bank_units["units_supplied"]).sum() / bank_units["units_supplied"].sum()
-    
-    effective = usable / weighted_srm
     total_units = alloc_df["units_supplied"].sum()
-    discount = effective / total_units
+    discount = usable / total_units
     
     print(f"\nActual calculation:")
     print(f"  Eligible: {eligible} units")
     print(f"  Usable: {usable} units")
-    print(f"  Weighted SRM: {weighted_srm:.3f}")
-    print(f"  Effective: {effective:.2f} units")
+    print(f"  Total units: {total_units} units")
     print(f"  Discount: {discount*100:.1f}%")
     
-    # Verify discount is reasonable
-    assert 0.25 <= discount <= 0.30, f"Discount {discount} not in expected range"
+    # Verify discount is correct
+    assert abs(discount - 0.30) < 0.001, f"Discount {discount} not 0.30"
+    
+    # Test rounding to nearest £100
+    original_price = 1234.56
+    rounded = round(original_price / 100) * 100
+    print(f"\nPrice rounding test:")
+    print(f"  Original: £{original_price:.2f}")
+    print(f"  Rounded to nearest £100: £{rounded:.0f}")
+    assert rounded == 1200, f"Rounded price {rounded} not 1200"
+    
+    # Test discount application
+    original_cost = 10000
+    discounted_cost = original_cost * (1 - discount)
+    savings = original_cost - discounted_cost
+    print(f"\nDiscount application:")
+    print(f"  Original cost: £{original_cost:,.0f}")
+    print(f"  Discount: {discount*100:.1f}%")
+    print(f"  Discounted cost: £{discounted_cost:,.0f}")
+    print(f"  Savings: £{savings:,.0f}")
     
     print("\n✅ SUO discount calculation test passed")
     return True
