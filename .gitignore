@@ -49,3 +49,16 @@ test_data_serialization.py
 test_sanitize_function.py
 test_integration.py
 FIX_VERIFICATION.md
+
+# Docker
+docker-compose.override.yml
+.dockerignore
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Deployment
+fly.toml
+.fly/

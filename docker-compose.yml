@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  # Redis for job queue and caching
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - optimiser-network
+
+  # FastAPI backend service
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - CACHE_TTL=43200
+      # Database connection (configure with your PostgreSQL details)
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - optimiser-network
+
+  # RQ Worker for background jobs
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      # Database connection (configure with your PostgreSQL details)
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - optimiser-network
+    # Scale workers as needed
+    deploy:
+      replicas: 2
+
+  # Streamlit frontend
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    ports:
+      - "8501:8501"
+    environment:
+      - BACKEND_URL=http://backend:8000
+      # Database connection (configure with your PostgreSQL details)
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      # Mount secrets file (create this locally)
+      - ./.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro
+    networks:
+      - optimiser-network
+
+volumes:
+  redis_data:
+    driver: local
+
+networks:
+  optimiser-network:
+    driver: bridge

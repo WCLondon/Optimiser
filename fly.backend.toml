@@ -1,0 +1,51 @@
+# fly.toml for BNG Optimiser Backend (FastAPI)
+app = "bng-backend"
+primary_region = "lhr"  # London
+
+[build]
+  dockerfile = "docker/Dockerfile.backend"
+
+[env]
+  REDIS_HOST = "bng-redis.internal"
+  REDIS_PORT = "6379"
+  CACHE_TTL = "43200"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 8000
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 250
+    soft_limit = 200
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 2
+  memory_gb = 4
+
+[checks]
+  [checks.health]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    port = 8000
+    timeout = "5s"
+    type = "http"
