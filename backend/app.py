@@ -46,8 +46,9 @@ def health():
     try:
         r.ping()
         return {"ok": True, "redis": "connected"}
-    except Exception as e:
-        return {"ok": False, "redis": "disconnected", "error": str(e)}
+    except Exception:
+        # Don't expose detailed error information to external users
+        return {"ok": False, "redis": "disconnected"}
 
 
 @app.post("/jobs", response_model=JobOut)
@@ -107,10 +108,11 @@ def get_job(job_id: str):
         )
     
     if j.is_failed:
+        # Don't expose detailed stack traces to external users
         return JobOut(
             job_id=job_id,
             status="failed",
-            error=str(j.exc_info) if j.exc_info else "Unknown error"
+            error="Job processing failed"
         )
     
     status = j.get_status()
