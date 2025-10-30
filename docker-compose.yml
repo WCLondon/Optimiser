@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  # Redis - Message queue and cache
+  redis:
+    image: redis:7-alpine
+    container_name: bng-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    container_name: bng-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # RQ Worker
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    container_name: bng-worker
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      replicas: 2  # Run 2 workers for better throughput
+
+  # Streamlit Frontend
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    container_name: bng-frontend
+    ports:
+      - "8501:8501"
+    environment:
+      - BACKEND_URL=http://backend:8000
+      # Add your database connection string here
+      # - DATABASE_URL=postgresql://user:pass@host:port/db
+    depends_on:
+      - backend
+    volumes:
+      - ../.streamlit:/app/.streamlit:ro  # Mount secrets (read-only)
+
+volumes:
+  redis_data:
+
+networks:
+  default:
+    name: bng-network

@@ -1,0 +1,45 @@
+# Fly.io configuration for BNG Backend
+app = "bng-backend"
+primary_region = "lhr"  # London
+
+[build]
+  dockerfile = "docker/Dockerfile.backend"
+
+[env]
+  REDIS_HOST = "bng-redis.internal"
+  REDIS_PORT = "6379"
+  REDIS_DB = "0"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 8000
+  
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+  
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+[compute]
+  cpu_kind = "shared"
+  cpus = 2
+  memory_mb = 2048
+
+[[vm]]
+  size = "shared-cpu-2x"

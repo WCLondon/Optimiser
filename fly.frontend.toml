@@ -1,0 +1,43 @@
+# Fly.io configuration for BNG Frontend
+app = "bng-frontend"
+primary_region = "lhr"  # London
+
+[build]
+  dockerfile = "docker/Dockerfile.frontend"
+
+[env]
+  BACKEND_URL = "https://bng-backend.fly.dev"
+
+[http_service]
+  internal_port = 8501
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  
+  [[http_service.checks]]
+    interval = "60s"
+    timeout = "10s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/_stcore/health"
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 8501
+  
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+  
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+[compute]
+  cpu_kind = "shared"
+  cpus = 2
+  memory_mb = 4096
+
+[[vm]]
+  size = "shared-cpu-4x"
