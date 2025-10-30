@@ -4211,6 +4211,8 @@ if run:
         if suo_results and suo_results.get("applicable", False):
             st.session_state["suo_results"] = suo_results
             st.session_state["suo_applicable"] = True
+            # Initialize discount for report (defaults to enabled since checkbox defaults to True)
+            st.session_state["suo_discount_for_report"] = suo_results.get("discount_fraction", 0.0)
         else:
             st.session_state["suo_results"] = None
             st.session_state["suo_applicable"] = False
