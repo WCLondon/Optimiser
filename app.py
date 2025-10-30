@@ -128,7 +128,8 @@ def init_session_state():
         "enriched_banks_timestamp": None,  # Timestamp when banks were last enriched
         "suo_enabled": True,  # SUO toggle (enabled by default)
         "suo_results": None,  # SUO computation results
-        "suo_applicable": False  # Whether SUO can be applied
+        "suo_applicable": False,  # Whether SUO can be applied
+        "metric_surplus": None,  # Surplus from metric file
     }
     
     for key, value in defaults.items():
@@ -2522,6 +2523,13 @@ with st.expander("📄 Import from BNG Metric File", expanded=False):
                     st.session_state._next_row_id = next_id
                     st.session_state["_last_imported_file"] = uploaded_file_name
                     
+                    # Store surplus for SUO
+                    if "surplus" in requirements and not requirements["surplus"].empty:
+                        st.session_state["metric_surplus"] = requirements["surplus"].copy()
+                        st.info(f"✅ Found {len(requirements['surplus'])} surplus habitat(s) for Surplus Uplift Offset")
+                    else:
+                        st.session_state["metric_surplus"] = None
+                    
                     if st.session_state.demand_rows:
                         st.info(f"ℹ️ Automatically populated {len(st.session_state.demand_rows)} requirements in demand table below.")
                         st.rerun()
@@ -3920,16 +3928,23 @@ with st.expander("💷 Pricing completeness (this contract size)", expanded=Fals
 def compute_suo_for_allocation(demand_df: pd.DataFrame, alloc_df: pd.DataFrame, backend: Dict[str, pd.DataFrame]) -> Optional[Dict]:
     """
     Compute Surplus Uplift Offset (SUO) after optimization.
+    Uses surplus from the metric file (stored in session state) rather than calculating from stock.
     
     Returns dict with:
         - applicable: bool - whether SUO can be applied
         - requirements: DataFrame - requirement lines with line_id, units_needed
-        - surplus_supply: DataFrame - eligible surplus by site
+        - surplus_supply: DataFrame - eligible surplus from metric
         - requirements_reduced: DataFrame - requirements after SUO
         - allocation_ledger: DataFrame - SUO allocation details
         - summary: dict - SUO summary statistics
     """
     try:
+        # Get surplus from metric (stored in session state when metric was uploaded)
+        metric_surplus = st.session_state.get("metric_surplus")
+        
+        if metric_surplus is None or metric_surplus.empty:
+            return {"applicable": False, "reason": "No surplus from metric file"}
+        
         # Build requirements DataFrame from demand
         requirements = demand_df.copy()
         requirements["line_id"] = requirements.index.astype(str)
@@ -3946,47 +3961,29 @@ def compute_suo_for_allocation(demand_df: pd.DataFrame, alloc_df: pd.DataFrame, 
         else:
             requirements["trading_group"] = ""
         
-        # Compute surplus from stock after allocation
-        stock = backend.get("Stock", pd.DataFrame()).copy()
-        if stock.empty:
-            return None
+        # Prepare surplus_supply DataFrame for SUO from metric surplus
+        # The metric surplus already has habitat, broad_group, distinctiveness, units_surplus
+        surplus_supply = metric_surplus.copy()
         
-        # Calculate allocated units per (bank_id, habitat)
-        allocated = alloc_df.groupby(["bank_id", "supply_habitat"], as_index=False)["units_supplied"].sum()
-        allocated = allocated.rename(columns={"supply_habitat": "habitat_name", "units_supplied": "allocated_units"})
+        # Add a site_id (since surplus comes from the same site - the development site)
+        surplus_supply["site_id"] = "development_site"
         
-        # Merge stock with allocation to compute surplus
-        stock["quantity_available"] = pd.to_numeric(stock["quantity_available"], errors="coerce").fillna(0)
-        surplus = stock.merge(
-            allocated, on=["bank_id", "habitat_name"], how="left"
-        )
-        surplus["allocated_units"] = surplus["allocated_units"].fillna(0)
-        surplus["units_surplus"] = (surplus["quantity_available"] - surplus["allocated_units"]).clip(lower=0)
+        # Ensure required columns exist
+        if "broad_group" not in surplus_supply.columns:
+            surplus_supply["broad_group"] = ""
         
-        # Filter to only surplus rows (positive surplus)
-        surplus = surplus[surplus["units_surplus"] > 0].copy()
+        surplus_supply = surplus_supply.rename(columns={"broad_group": "trading_group"})
         
-        if surplus.empty:
-            return {"applicable": False}
-        
-        # Get distinctiveness from catalog
-        if not catalog.empty:
-            surplus = surplus.merge(
-                catalog[["habitat_name", "distinctiveness_name", "broader_type"]].drop_duplicates(),
-                on="habitat_name", how="left"
-            )
-            surplus["distinctiveness"] = surplus["distinctiveness_name"]
-            surplus["trading_group"] = surplus["broader_type"]
-        else:
-            surplus["distinctiveness"] = "Medium"  # Default
-            surplus["trading_group"] = ""
-        
-        # Prepare surplus_supply DataFrame for SUO
-        surplus_supply = surplus[["bank_id", "distinctiveness", "trading_group", "units_surplus"]].copy()
-        surplus_supply = surplus_supply.rename(columns={"bank_id": "site_id"})
-        
-        # Get SRM data
+        # Get SRM data (use tier-based SRM for development site)
         srm_df = backend.get("SRM", pd.DataFrame())
+        if not srm_df.empty:
+            # For development site surplus, assume local tier (SRM=1.0)
+            srm_for_suo = pd.DataFrame({
+                "site_id": ["development_site"],
+                "srm": [1.0]
+            })
+        else:
+            srm_for_suo = pd.DataFrame({"site_id": ["development_site"], "srm": [1.0]})
         
         # Compute SUO
         config = suo.SUOConfig(
@@ -3997,8 +3994,8 @@ def compute_suo_for_allocation(demand_df: pd.DataFrame, alloc_df: pd.DataFrame, 
         
         req_reduced, alloc_ledger, summary = suo.compute_suo(
             requirements[["line_id", "trading_group", "units_needed"]],
-            surplus_supply,
-            srm_df,
+            surplus_supply[["site_id", "distinctiveness", "trading_group", "units_surplus"]],
+            srm_for_suo,
             config
         )
         
@@ -4013,11 +4010,13 @@ def compute_suo_for_allocation(demand_df: pd.DataFrame, alloc_df: pd.DataFrame, 
                 "summary": summary
             }
         else:
-            return {"applicable": False}
+            return {"applicable": False, "reason": "No reduction achieved (insufficient eligible surplus)"}
             
     except Exception as e:
         st.warning(f"SUO computation error: {e}")
-        return None
+        import traceback
+        traceback.print_exc()
+        return {"applicable": False, "reason": f"Error: {e}"}
 
 # ================= Run optimiser & compute results =================
 # ================= Run optimiser & compute results =================

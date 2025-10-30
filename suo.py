@@ -185,6 +185,11 @@ def _filter_eligible_surplus(
 ) -> pd.DataFrame:
     """
     Filter surplus to only include habitats with distinctiveness >= MIN_DISTINCTIVENESS.
+    
+    Low distinctiveness surplus is excluded because it has the same baseline as the 
+    original land, therefore it cannot be used to offset requirements.
+    Only Medium, High, and Very High distinctiveness habitats represent genuine 
+    ecological uplift that can offset baseline mitigation requirements.
     """
     if surplus_supply.empty:
         return surplus_supply.copy()
