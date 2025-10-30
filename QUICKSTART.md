@@ -141,10 +141,10 @@ curl -X POST http://localhost:8000/jobs \
   -H "Content-Type: application/json" \
   -d '{"params": {"test": "data"}}'
 
-# Should return: {"job_id": "...", "status": "queued"}
+# Example response: {"job_id": "abc-123-def", "status": "queued"}
 
-# Check job status
-curl http://localhost:8000/jobs/{job_id}
+# Check job status (replace abc-123-def with actual job_id from response)
+curl http://localhost:8000/jobs/abc-123-def
 
 # Should return: {"status": "finished", "result": {...}}
 ```
@@ -282,7 +282,7 @@ A: Yes! Deploy `app.py` as before. You'll get caching benefits without microserv
 A: Very low. Changes are backward compatible. Frontend works with or without backend.
 
 **Q: What's the cost difference?**
-A: Frontend-only: Same as before. Full stack: ~€85-175/month (Cloud Run) or ~$85-160/month (Fly.io).
+A: Frontend-only: Same as before. Full stack: ~€85-175/month (Cloud Run, GCP Europe) or ~$85-160/month (Fly.io, USD).
 
 **Q: Can I test locally first?**
 A: Yes! Use `make dev` to run everything locally with Docker Compose.
