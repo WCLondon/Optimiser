@@ -5,7 +5,7 @@ Processes optimization tasks from the Redis queue
 
 import os
 import redis
-from rq import Worker, Queue, Connection
+from rq import Worker, Queue
 
 # Redis connection configuration
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
@@ -30,11 +30,10 @@ def main():
         return
     
     # Create worker for the 'jobs' queue
-    with Connection(redis_conn):
-        worker = Worker(['jobs'], connection=redis_conn)
-        print(f"✓ Worker started, listening on queue 'jobs'")
-        print("Waiting for jobs...")
-        worker.work()
+    worker = Worker(['jobs'], connection=redis_conn)
+    print(f"✓ Worker started, listening on queue 'jobs'")
+    print("Waiting for jobs...")
+    worker.work()
 
 
 if __name__ == "__main__":
