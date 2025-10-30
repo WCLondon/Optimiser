@@ -137,7 +137,14 @@ class SubmissionsDB:
                     -- Promoter/Introducer info
                     promoter_name TEXT,
                     promoter_discount_type TEXT,
-                    promoter_discount_value FLOAT
+                    promoter_discount_value FLOAT,
+                    
+                    -- Surplus Uplift Offset (SUO) info
+                    suo_enabled BOOLEAN DEFAULT FALSE,
+                    suo_discount_fraction FLOAT,
+                    suo_eligible_surplus FLOAT,
+                    suo_usable_surplus FLOAT,
+                    suo_total_units FLOAT
                 )
             """))
         
@@ -684,7 +691,12 @@ class SubmissionsDB:
                         promoter_name: Optional[str] = None,
                         promoter_discount_type: Optional[str] = None,
                         promoter_discount_value: Optional[float] = None,
-                        customer_id: Optional[int] = None) -> int:
+                        customer_id: Optional[int] = None,
+                        suo_enabled: bool = False,
+                        suo_discount_fraction: Optional[float] = None,
+                        suo_eligible_surplus: Optional[float] = None,
+                        suo_usable_surplus: Optional[float] = None,
+                        suo_total_units: Optional[float] = None) -> int:
         """
         Store a complete submission to the database.
         Returns the submission_id for reference.
@@ -742,7 +754,8 @@ class SubmissionsDB:
                         manual_hedgerow_entries, manual_watercourse_entries, manual_area_habitat_entries,
                         allocation_results, username,
                         promoter_name, promoter_discount_type, promoter_discount_value,
-                        customer_id
+                        customer_id,
+                        suo_enabled, suo_discount_fraction, suo_eligible_surplus, suo_usable_surplus, suo_total_units
                     ) VALUES (
                         :submission_date, :client_name, :reference_number, :site_location,
                         :target_lpa, :target_nca, :target_lat, :target_lon,
@@ -752,7 +765,8 @@ class SubmissionsDB:
                         :manual_hedgerow_entries, :manual_watercourse_entries, :manual_area_habitat_entries,
                         :allocation_results, :username,
                         :promoter_name, :promoter_discount_type, :promoter_discount_value,
-                        :customer_id
+                        :customer_id,
+                        :suo_enabled, :suo_discount_fraction, :suo_eligible_surplus, :suo_usable_surplus, :suo_total_units
                     ) RETURNING id
                 """), {
                     "submission_date": submission_date,
@@ -780,7 +794,12 @@ class SubmissionsDB:
                     "promoter_name": promoter_name,
                     "promoter_discount_type": promoter_discount_type,
                     "promoter_discount_value": promoter_discount_value_clean,
-                    "customer_id": customer_id
+                    "customer_id": customer_id,
+                    "suo_enabled": suo_enabled,
+                    "suo_discount_fraction": float(suo_discount_fraction) if suo_discount_fraction is not None else None,
+                    "suo_eligible_surplus": float(suo_eligible_surplus) if suo_eligible_surplus is not None else None,
+                    "suo_usable_surplus": float(suo_usable_surplus) if suo_usable_surplus is not None else None,
+                    "suo_total_units": float(suo_total_units) if suo_total_units is not None else None
                 })
                 
                 submission_id = result.fetchone()[0]
