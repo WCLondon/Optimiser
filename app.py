@@ -4214,6 +4214,7 @@ if run:
         else:
             st.session_state["suo_results"] = None
             st.session_state["suo_applicable"] = False
+            st.session_state["suo_discount_for_report"] = 0.0
         
         # Save summary data to session state for persistence
         st.session_state["site_hab_totals"] = site_hab_totals.copy()
@@ -5060,6 +5061,13 @@ if st.session_state.get("optimization_complete", False) and st.session_state.get
         )
         st.session_state["suo_enabled"] = suo_enabled
         
+        # Store the actual discount to use for emails/reports
+        # This ensures the email matches what the user sees in the UI
+        if suo_enabled:
+            st.session_state["suo_discount_for_report"] = suo_results['discount_fraction']
+        else:
+            st.session_state["suo_discount_for_report"] = 0.0
+        
         if suo_enabled:
             discount_pct = suo_results['discount_fraction'] * 100
             st.success(f"✅ SUO Discount Applied: {discount_pct:.1f}% cost reduction")
@@ -5779,7 +5787,7 @@ if has_optimizer_results or has_manual_entries:
             st.session_state.get("selected_promoter"),
             st.session_state.get("promoter_discount_type"),
             st.session_state.get("promoter_discount_value"),
-            st.session_state.get("suo_results", {}).get("discount_fraction", 0.0) if st.session_state.get("suo_enabled", False) else 0.0
+            st.session_state.get("suo_discount_for_report", 0.0)
         )
         
         # Display the table
