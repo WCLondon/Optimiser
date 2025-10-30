@@ -356,10 +356,128 @@ def apply_area_offsets(area_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
     }
 
 
+def parse_headline_all_unit_types(xls: pd.ExcelFile) -> Dict[str, Dict[str, float]]:
+    """
+    Parse Headline Results for all unit types (Habitat, Hedgerow, Watercourse).
+    Returns dict with keys: 'habitat', 'hedgerow', 'watercourse'
+    Each value is a dict with keys: target_percent, baseline_units, units_required, unit_deficit
+    """
+    SHEET_NAME = "Headline Results"
+    
+    def extract_percent(val) -> Optional[float]:
+        """Extract percentage from string like '10 %' or '15%'"""
+        if val is None or (isinstance(val, float) and pd.isna(val)): 
+            return None
+        s = clean_text(str(val))
+        num = pd.to_numeric(s.replace("%", "").strip(), errors="coerce")
+        if pd.notna(num):
+            return float(num / 100.0 if num > 1 else num)
+        return None
+    
+    def extract_number(val) -> float:
+        """Extract number from cell value"""
+        if val is None or (isinstance(val, float) and pd.isna(val)): 
+            return 0.0
+        return float(pd.to_numeric(val, errors="coerce") or 0.0)
+    
+    # Default values if parsing fails
+    defaults = {
+        "habitat": {"target_percent": 0.10, "baseline_units": 0.0, "units_required": 0.0, "unit_deficit": 0.0},
+        "hedgerow": {"target_percent": 0.10, "baseline_units": 0.0, "units_required": 0.0, "unit_deficit": 0.0},
+        "watercourse": {"target_percent": 0.10, "baseline_units": 0.0, "units_required": 0.0, "unit_deficit": 0.0}
+    }
+    
+    try:
+        raw = pd.read_excel(xls, sheet_name=SHEET_NAME, header=None)
+    except Exception:
+        return defaults
+    
+    # Find header row
+    header_idx = None
+    for i in range(min(200, len(raw))):
+        txt = " ".join([clean_text(x).lower() for x in raw.iloc[i].tolist()])
+        if "unit type" in txt and ("target" in txt or "baseline" in txt):
+            header_idx = i
+            break
+    
+    if header_idx is None:
+        return defaults
+    
+    df = raw.iloc[header_idx:].copy()
+    df.columns = [clean_text(x) for x in df.iloc[0].tolist()]
+    df = df.iloc[1:].reset_index(drop=True)
+    
+    # Normalize column names
+    norm = {re.sub(r"[^a-z0-9]+", "_", c.lower()).strip("_"): c for c in df.columns}
+    
+    unit_col = next((norm[k] for k in ["unit_type", "type", "unit"] if k in norm), None)
+    baseline_col = next((norm[k] for k in ["baseline_units", "baseline", "baseline_unit"] if k in norm), None)
+    target_col = next((norm[k] for k in ["target", "target_percent", "target_"] if k in norm), None)
+    required_col = next((norm[k] for k in ["units_required", "required", "unit_required"] if k in norm), None)
+    deficit_col = next((norm[k] for k in ["unit_deficit", "deficit"] if k in norm), None)
+    
+    result = defaults.copy()
+    
+    # Parse each unit type
+    for unit_type, patterns in [
+        ("habitat", [r"\bhabi?tat\s*units?\b", r"\barea\s*habitat\s*units?\b"]),
+        ("hedgerow", [r"\bhedgerow\s*units?\b"]),
+        ("watercourse", [r"\bwatercourse\s*units?\b"])
+    ]:
+        def is_target_row(row) -> bool:
+            if unit_col:
+                val = clean_text(row.get(unit_col, "")).lower()
+                for pattern in patterns:
+                    if re.search(pattern, val):
+                        return True
+            # Also check in all row values
+            row_text = " ".join([clean_text(v).lower() for v in row.tolist()])
+            for pattern in patterns:
+                if re.search(pattern, row_text):
+                    return True
+            return False
+        
+        mask = df.apply(is_target_row, axis=1)
+        if not mask.any():
+            continue
+        
+        row = df.loc[mask].iloc[0]
+        
+        # Extract values
+        baseline_units = 0.0
+        if baseline_col and baseline_col in row.index:
+            baseline_units = extract_number(row[baseline_col])
+        
+        target_percent = 0.10  # default
+        if target_col and target_col in row.index:
+            pct = extract_percent(row[target_col])
+            if pct is not None:
+                target_percent = pct
+        
+        units_required = 0.0
+        if required_col and required_col in row.index:
+            units_required = extract_number(row[required_col])
+        
+        unit_deficit = 0.0
+        if deficit_col and deficit_col in row.index:
+            unit_deficit = extract_number(row[deficit_col])
+        
+        result[unit_type] = {
+            "target_percent": target_percent,
+            "baseline_units": baseline_units,
+            "units_required": units_required,
+            "unit_deficit": unit_deficit
+        }
+    
+    return result
+
+
 def parse_headline_target_row(xls: pd.ExcelFile, unit_type_keyword: str = "Area habitat units") -> Dict[str, float]:
     """
     Parse Headline Results for dynamic target %, baseline units.
     Returns dict with keys: target_percent, baseline_units
+    
+    DEPRECATED: Use parse_headline_all_unit_types() for comprehensive parsing
     """
     SHEET_NAME = "Headline Results"
     
@@ -465,7 +583,7 @@ def allocate_to_headline(
     return total_applied
 
 
-def parse_metric_requirements(uploaded_file) -> Dict[str, pd.DataFrame]:
+def parse_metric_requirements(uploaded_file) -> Dict:
     """
     Main entry point: parse a BNG metric file and return OFF-SITE mitigation requirements.
     
@@ -476,8 +594,12 @@ def parse_metric_requirements(uploaded_file) -> Dict[str, pd.DataFrame]:
     4. Allocate remaining surpluses to headline
     5. Return residual off-site requirements
     
-    Returns dict with keys: 'area', 'hedgerows', 'watercourses'
-    Each value is a DataFrame with columns: habitat, units
+    Returns dict with keys: 
+    - 'area': DataFrame with columns: habitat, units
+    - 'hedgerows': DataFrame with columns: habitat, units
+    - 'watercourses': DataFrame with columns: habitat, units
+    - 'baseline_info': Dict with keys 'habitat', 'hedgerow', 'watercourse'
+        Each containing: target_percent, baseline_units, units_required, unit_deficit
     
     For area: returns combined residual (habitat deficits + headline remainder)
     For hedgerows/watercourses: returns raw deficits (no trading rules applied)
@@ -512,6 +634,9 @@ def parse_metric_requirements(uploaded_file) -> Dict[str, pd.DataFrame]:
     hedge_norm, _, _ = normalise_requirements(xls, HEDGE_SHEETS, "Hedgerows")
     water_norm, _, _ = normalise_requirements(xls, WATER_SHEETS, "Watercourses")
     
+    # Parse headline baseline info for all unit types
+    headline_all = parse_headline_all_unit_types(xls)
+    
     # ========== AREA HABITATS - Full trading logic ==========
     area_requirements = []
     
@@ -530,9 +655,9 @@ def parse_metric_requirements(uploaded_file) -> Dict[str, pd.DataFrame]:
                 })
         
         # Step 2: Parse headline target
-        headline_info = parse_headline_target_row(xls, "Area habitat units")
-        target_pct = headline_info["target_percent"]
-        baseline_units = headline_info["baseline_units"]
+        habitat_info = headline_all["habitat"]
+        target_pct = habitat_info["target_percent"]
+        baseline_units = habitat_info["baseline_units"]
         headline_requirement = baseline_units * target_pct
         
         # Step 3: Allocate surpluses to headline
@@ -574,5 +699,6 @@ def parse_metric_requirements(uploaded_file) -> Dict[str, pd.DataFrame]:
     return {
         "area": pd.DataFrame(area_requirements) if area_requirements else pd.DataFrame(columns=["habitat", "units"]),
         "hedgerows": pd.DataFrame(hedge_requirements) if hedge_requirements else pd.DataFrame(columns=["habitat", "units"]),
-        "watercourses": pd.DataFrame(water_requirements) if water_requirements else pd.DataFrame(columns=["habitat", "units"])
+        "watercourses": pd.DataFrame(water_requirements) if water_requirements else pd.DataFrame(columns=["habitat", "units"]),
+        "baseline_info": headline_all
     }
