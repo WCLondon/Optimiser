@@ -3607,7 +3607,7 @@ def optimise(demand_df: pd.DataFrame,
             
             Groups allocations by BANK_KEY, supply_habitat, allocation_type, tier, and paired_parts.
             Sums units_supplied for each group and rounds up to nearest 0.01.
-            Recalculates cost based on rounded units.
+            Then creates individual rows for each demand habitat with proportional allocation.
             """
             import math
             
@@ -3619,24 +3619,38 @@ def optimise(demand_df: pd.DataFrame,
             if "paired_parts" in alloc_df.columns:
                 group_cols.append("paired_parts")
             
-            # Also track demand habitats as a list for reference
-            grouped = alloc_df.groupby([col for col in group_cols if col in alloc_df.columns], dropna=False).agg({
-                "demand_habitat": lambda x: ", ".join(sorted(set(x))),  # Combine demand habitats
-                "units_supplied": "sum",  # Sum units
-                "unit_price": "first",  # Take first unit price (should be same within group)
-                "cost": "sum"  # Sum original costs
+            # Create a bundle key for grouping
+            alloc_df = alloc_df.copy()
+            alloc_df["_bundle_key"] = alloc_df[[col for col in group_cols if col in alloc_df.columns]].astype(str).agg("||".join, axis=1)
+            
+            # Calculate bundled totals per bundle key
+            bundle_totals = alloc_df.groupby("_bundle_key").agg({
+                "units_supplied": "sum",
+                "cost": "sum"
             }).reset_index()
             
-            # Round up units_supplied to nearest 0.01
-            grouped["units_supplied"] = grouped["units_supplied"].apply(lambda x: math.ceil(x * 100) / 100)
+            # Round up bundled units to nearest 0.01
+            bundle_totals["units_supplied_rounded"] = bundle_totals["units_supplied"].apply(lambda x: math.ceil(x * 100) / 100)
             
-            # Recalculate cost based on rounded units
-            grouped["cost"] = grouped["units_supplied"] * grouped["unit_price"]
+            # Join back to original rows
+            alloc_df = alloc_df.merge(bundle_totals[["_bundle_key", "units_supplied_rounded"]], on="_bundle_key", how="left")
+            
+            # Calculate each row's proportion of the bundle
+            alloc_df["_proportion"] = alloc_df["units_supplied"] / alloc_df.groupby("_bundle_key")["units_supplied"].transform("sum")
+            
+            # Distribute rounded units proportionally
+            alloc_df["units_supplied"] = alloc_df["units_supplied_rounded"] * alloc_df["_proportion"]
+            
+            # Recalculate cost based on new units_supplied
+            alloc_df["cost"] = alloc_df["units_supplied"] * alloc_df["unit_price"]
+            
+            # Clean up temporary columns
+            alloc_df = alloc_df.drop(columns=["_bundle_key", "units_supplied_rounded", "_proportion"])
             
             # Calculate total cost
-            total_cost = float(grouped["cost"].sum())
+            total_cost = float(alloc_df["cost"].sum())
             
-            return grouped, total_cost
+            return alloc_df, total_cost
 
         def extract(xvars, zvars):
             rows, total_cost = [], 0.0

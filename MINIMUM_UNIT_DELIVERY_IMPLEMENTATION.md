@@ -9,7 +9,7 @@ This implementation addresses the requirements for minimum unit delivery (0.01 u
 
 **Location**: `bundle_and_round_allocations()` function applied after optimizer extraction (around line 3603)
 
-Rounding up to nearest 0.01 happens **after bundling by supply habitat**:
+Rounding up to nearest 0.01 happens **after bundling by supply habitat**, while preserving individual demand habitat rows:
 
 ```python
 def bundle_and_round_allocations(alloc_df):
@@ -18,22 +18,27 @@ def bundle_and_round_allocations(alloc_df):
     
     Groups allocations by BANK_KEY, supply_habitat, allocation_type, tier, and paired_parts.
     Sums units_supplied for each group and rounds up to nearest 0.01.
-    Recalculates cost based on rounded units.
+    Then distributes rounded units proportionally back to individual demand rows.
     """
     import math
     
-    # Group by key fields that identify the same supply type
-    grouped = alloc_df.groupby([supply habitat fields]).agg({
-        "demand_habitat": lambda x: ", ".join(sorted(set(x))),  # Combine demands
-        "units_supplied": "sum",  # Sum units
-        # ...
+    # Create bundle key for grouping
+    alloc_df["_bundle_key"] = [supply habitat fields concatenated]
+    
+    # Calculate bundled totals per bundle key
+    bundle_totals = alloc_df.groupby("_bundle_key").agg({
+        "units_supplied": "sum"
     })
     
-    # Round up units_supplied to nearest 0.01
-    grouped["units_supplied"] = grouped["units_supplied"].apply(lambda x: math.ceil(x * 100) / 100)
+    # Round up bundled units to nearest 0.01
+    bundle_totals["units_supplied_rounded"] = bundle_totals["units_supplied"].apply(
+        lambda x: math.ceil(x * 100) / 100
+    )
     
-    # Recalculate cost based on rounded units
-    grouped["cost"] = grouped["units_supplied"] * grouped["unit_price"]
+    # Distribute rounded units proportionally back to original rows
+    # This preserves individual demand_habitat rows for client report table
+    alloc_df["_proportion"] = alloc_df["units_supplied"] / bundle_total
+    alloc_df["units_supplied"] = rounded_bundle_total * alloc_df["_proportion"]
 ```
 
 **Key Benefits**:
@@ -41,7 +46,7 @@ def bundle_and_round_allocations(alloc_df):
 - Optimizer calculates with full precision internally
 - **Multiple requirements that can be mitigated by the same habitat are bundled FIRST**
 - **Then the bundled total is rounded up to nearest 0.01**
-- Only one allocation line per supply habitat (unless from different banks/tiers)
+- **Individual demand habitat rows are preserved** for proper client report table generation
 - Unit prices and costs remain accurate
 
 **Real Example from User**:
