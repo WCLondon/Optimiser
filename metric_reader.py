@@ -11,6 +11,23 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 
+# ------------- Medium distinctiveness hierarchy -------------
+# Priority Medium broad groups (processed before secondary groups during on-site offsets)
+PRIORITY_MEDIUM_GROUPS = {
+    "cropland",
+    "lakes",
+    "sparsely vegetated land",
+    "urban",
+    "individual trees",
+    "woodland and forest",
+    "intertidal sediment",
+    "intertidal hard structures"
+}
+
+# Secondary Medium broad groups: Grassland, Heathland and shrub
+# (processed after priority groups)
+
+
 # ------------- open workbook -------------
 def open_metric_workbook(uploaded_file) -> pd.ExcelFile:
     """Open a BNG metric workbook (.xlsx, .xlsm, .xlsb)"""
@@ -288,19 +305,6 @@ def apply_area_offsets(area_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
 
     band_rank = {"Low": 1, "Medium": 2, "High": 3, "Very High": 4}
     
-    # Medium distinctiveness hierarchy groups
-    # Priority group (process first)
-    priority_medium_groups = {
-        "cropland",
-        "lakes",
-        "sparsely vegetated land",
-        "urban",
-        "individual trees",
-        "woodland and forest",
-        "intertidal sediment",
-        "intertidal hard structures"
-    }
-    
     # Sub-ranking boost for priority Medium groups to ensure they're processed
     # between regular Medium (2.0) and High (3.0) distinctiveness
     MEDIUM_PRIORITY_BOOST = 0.5
@@ -318,7 +322,7 @@ def apply_area_offsets(area_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
         
         # For Medium distinctiveness, add sub-ranking
         if d_band == "Medium":
-            is_priority = d_broad in priority_medium_groups
+            is_priority = d_broad in PRIORITY_MEDIUM_GROUPS
             # Priority group gets rank 2.5 (between Medium 2 and High 3)
             # Secondary group keeps rank 2.0
             sub_rank = MEDIUM_PRIORITY_BOOST if is_priority else 0.0
@@ -343,7 +347,7 @@ def apply_area_offsets(area_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
         
         # Check if this is a priority Medium group
         is_priority_medium = (d_band == "Medium" and 
-                             d_broad.lower() in priority_medium_groups)
+                             d_broad.lower() in PRIORITY_MEDIUM_GROUPS)
         
         deficit_key = (di, d_hab, d_broad, d_band)
         deficit_received[deficit_key] = 0.0
