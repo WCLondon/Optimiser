@@ -3607,6 +3607,10 @@ def optimise(demand_df: pd.DataFrame,
                 qty = xvars[i].value() or 0.0
                 sel = zvars[i].value() or 0.0
                 if sel >= 0.5 and qty > 0:
+                    # Round up to nearest 0.01 (minimum unit delivery)
+                    import math
+                    qty_rounded = math.ceil(qty * 100) / 100
+                    
                     opt = options[i]
                     row = {
                         "demand_habitat": opt["demand_habitat"],
@@ -3616,16 +3620,16 @@ def optimise(demand_df: pd.DataFrame,
                         "supply_habitat": opt["supply_habitat"],
                         "allocation_type": opt.get("type", "normal"),
                         "tier": opt["tier"],
-                        "units_supplied": qty,
+                        "units_supplied": qty_rounded,
                         "unit_price": opt["unit_price"],
-                        "cost": qty * opt["unit_price"],
+                        "cost": qty_rounded * opt["unit_price"],
                         "price_source": opt.get("price_source",""),
                         "price_habitat": opt.get("price_habitat",""),
                     }
                     if opt.get("type") == "paired" and "paired_parts" in opt:
                         row["paired_parts"] = json.dumps(opt["paired_parts"])
                     rows.append(row)
-                    total_cost += qty * opt["unit_price"]
+                    total_cost += qty_rounded * opt["unit_price"]
             return pd.DataFrame(rows), float(total_cost)
 
         allocA, costA = extract(xA, zA)
@@ -3717,6 +3721,10 @@ def optimise(demand_df: pd.DataFrame,
             if bkey not in used_banks:
                 used_banks.append(bkey)
 
+            # Round up to nearest 0.01 (minimum unit delivery)
+            import math
+            need_rounded = math.ceil(need * 100) / 100
+
             row = {
                 "demand_habitat": opt["demand_habitat"],
                 "BANK_KEY": opt["BANK_KEY"],
@@ -3725,16 +3733,16 @@ def optimise(demand_df: pd.DataFrame,
                 "supply_habitat": opt["supply_habitat"],
                 "allocation_type": opt.get("type", "normal"),
                 "tier": opt["tier"],
-                "units_supplied": need,
+                "units_supplied": need_rounded,
                 "unit_price": opt["unit_price"],
-                "cost": need * opt["unit_price"],
+                "cost": need_rounded * opt["unit_price"],
                 "price_source": opt.get("price_source",""),
                 "price_habitat": opt.get("price_habitat",""),
             }
             if opt.get("type") == "paired" and "paired_parts" in opt:
                 row["paired_parts"] = json.dumps(opt["paired_parts"])
             rows.append(row)
-            total_cost += need * opt["unit_price"]
+            total_cost += need_rounded * opt["unit_price"]
 
         return pd.DataFrame(rows), float(total_cost), chosen_size
 

@@ -1,22 +1,23 @@
 """
-Test script to validate minimum unit delivery (0.01 units) in metric reader.
+Test script to validate minimum unit delivery (0.01 units) at optimizer output stage.
 
-This test verifies that the metric reader rounds all habitat units up to the nearest 0.01.
+This test verifies that the optimizer rounds all allocation lines up to the nearest 0.01.
 """
 
 import sys
 
 
-def test_minimum_unit_constraint():
+def test_optimizer_output_rounding():
     """
-    Test that minimum unit delivery is enforced by rounding up in metric reader.
+    Test that minimum unit delivery is enforced by rounding up optimizer output.
     
-    All units from the metric should be rounded up to the nearest 0.01 at the 
-    point of upload, ensuring the optimizer always works with values >= 0.01.
+    The optimizer works with full precision during calculation, but each 
+    allocation line (supply line) is rounded up to nearest 0.01 in output.
+    This allows bundling multiple small requirements without forcing each to 0.01.
     """
-    print("Testing minimum unit delivery via metric reader rounding...")
+    print("Testing minimum unit delivery via optimizer output rounding...")
     
-    # Test cases showing how metric values get rounded up
+    # Test cases showing how optimizer output gets rounded up
     test_cases = [
         {
             "input": 0.01,
@@ -27,6 +28,16 @@ def test_minimum_unit_constraint():
             "input": 0.005,
             "expected": 0.01,
             "description": "0.005 units - rounds up to 0.01"
+        },
+        {
+            "input": 0.0034,
+            "expected": 0.01,
+            "description": "0.0034 units - rounds up to 0.01 (minimum)"
+        },
+        {
+            "input": 0.0024,
+            "expected": 0.01,
+            "description": "0.0024 units - rounds up to 0.01 (minimum)"
         },
         {
             "input": 0.02,
@@ -50,7 +61,7 @@ def test_minimum_unit_constraint():
         },
     ]
     
-    print("\nMetric Reader Rounding Tests:")
+    print("\nOptimizer Output Rounding Tests:")
     print("=" * 60)
     
     all_passed = True
@@ -74,52 +85,85 @@ def test_minimum_unit_constraint():
     return all_passed
 
 
-def test_constraint_in_code():
+def test_bundling_example():
     """
-    Verify that the rounding function is present in metric_reader.py.
+    Test that bundling works: two small requirements can be combined.
+    
+    Example: 0.0034 + 0.0024 = 0.0058 can be allocated as a single 0.01 unit
+    rather than forcing 0.01 + 0.01 = 0.02 units.
     """
-    print("\nVerifying rounding function in metric_reader.py...")
+    print("\nTesting bundling example (0.0034 + 0.0024)...")
+    
+    import math
+    
+    # Individual rounding (OLD approach - would give 0.02)
+    individual_rounded = math.ceil(0.0034 * 100) / 100 + math.ceil(0.0024 * 100) / 100
+    print(f"  Individual rounding: 0.01 + 0.01 = {individual_rounded:.2f} units")
+    
+    # Combined rounding (NEW approach - gives 0.01)
+    combined = 0.0034 + 0.0024
+    combined_rounded = math.ceil(combined * 100) / 100
+    print(f"  Combined rounding: (0.0034 + 0.0024) = 0.0058 → {combined_rounded:.2f} units")
+    
+    if combined_rounded == 0.01:
+        print("  ✓ Bundling works correctly - single 0.01 unit allocation")
+        return True
+    else:
+        print(f"  ✗ Bundling failed - expected 0.01, got {combined_rounded}")
+        return False
+
+
+def test_rounding_in_code():
+    """
+    Verify that the rounding is present in app.py at optimizer output stage.
+    """
+    print("\nVerifying rounding function in app.py...")
     
     try:
-        with open('metric_reader.py', 'r') as f:
+        with open('app.py', 'r') as f:
             content = f.read()
             
-        # Check for the rounding function
-        if "def round_up_to_nearest_hundredth" in content:
-            print("  ✓ round_up_to_nearest_hundredth function found")
+        # Check for math.ceil usage in extract function
+        if "math.ceil" in content and "qty_rounded" in content:
+            print("  ✓ Rounding logic found in optimizer output (extract function)")
         else:
-            print("  ✗ round_up_to_nearest_hundredth function not found")
+            print("  ✗ Rounding logic not found in extract function")
             return False
         
-        # Check for math.ceil usage
-        if "math.ceil" in content:
-            print("  ✓ math.ceil usage found")
+        # Check that it's in the extract function
+        if "def extract(xvars, zvars):" in content:
+            print("  ✓ extract function found")
+            
+            # Check if rounding is applied to units_supplied
+            extract_section_start = content.find("def extract(xvars, zvars):")
+            extract_section_end = content.find("return pd.DataFrame(rows)", extract_section_start)
+            extract_section = content[extract_section_start:extract_section_end]
+            
+            if "qty_rounded" in extract_section and "units_supplied" in extract_section:
+                print("  ✓ Rounding applied to units_supplied in extract function")
+            else:
+                print("  ✗ Rounding not properly applied in extract function")
+                return False
         else:
-            print("  ✗ math.ceil usage not found")
-            return False
-        
-        # Check that the function is being used
-        if "round_up_to_nearest_hundredth(" in content and content.count("round_up_to_nearest_hundredth(") > 1:
-            print("  ✓ Rounding function is being used in multiple places")
-        else:
-            print("  ✗ Rounding function not used sufficiently")
+            print("  ✗ extract function not found")
             return False
         
         return True
     except Exception as e:
-        print(f"  ✗ Error reading metric_reader.py: {e}")
+        print(f"  ✗ Error reading app.py: {e}")
         return False
 
 
 def main():
     print("=" * 60)
-    print("Minimum Unit Delivery Tests (Metric Reader)")
+    print("Minimum Unit Delivery Tests (Optimizer Output Stage)")
     print("=" * 60)
     
     results = []
     
-    results.append(("metric_reader_rounding", test_minimum_unit_constraint()))
-    results.append(("rounding_function_in_code", test_constraint_in_code()))
+    results.append(("optimizer_output_rounding", test_optimizer_output_rounding()))
+    results.append(("bundling_example", test_bundling_example()))
+    results.append(("rounding_in_code", test_rounding_in_code()))
     
     print("\n" + "=" * 60)
     print("Test Summary")

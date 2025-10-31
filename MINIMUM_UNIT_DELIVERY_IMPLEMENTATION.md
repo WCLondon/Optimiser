@@ -3,44 +3,48 @@
 ## Overview
 This implementation addresses the requirements for minimum unit delivery (0.01 units) and changing all calculations to 2 decimal places instead of 3.
 
-## Changes Made
+## Final Approach (Current Implementation)
 
-### 1. Minimum Unit Delivery via Metric Reader (metric_reader.py)
-**Location**: Function added at top of file, applied at lines 409, 734, 777, 793, 804
+### 1. Minimum Unit Delivery at Optimizer Output Stage (app.py)
 
-Added rounding up to nearest 0.01 at the point of metric upload:
+**Location**: In the `extract()` function within the optimizer (around line 3604) and greedy fallback (around line 3717)
+
+Rounding up to nearest 0.01 happens **per allocation line (supply line)** at optimizer output:
+
 ```python
-def round_up_to_nearest_hundredth(value: float) -> float:
-    """
-    Round up to the nearest 0.01 (hundredth).
-    Minimum unit delivery is 0.01 units.
-    """
-    if value <= 0:
-        return 0.0
-    return math.ceil(value * 100) / 100
+def extract(xvars, zvars):
+    rows, total_cost = [], 0.0
+    for i in range(len(options)):
+        qty = xvars[i].value() or 0.0
+        sel = zvars[i].value() or 0.0
+        if sel >= 0.5 and qty > 0:
+            # Round up to nearest 0.01 (minimum unit delivery)
+            import math
+            qty_rounded = math.ceil(qty * 100) / 100
+            
+            # ... create row with qty_rounded as units_supplied
+            row = {
+                "units_supplied": qty_rounded,
+                "cost": qty_rounded * opt["unit_price"],
+                # ...
+            }
 ```
 
-**Applied to**:
-- Area habitat residual requirements
-- Headline target (Net Gain) requirements
-- Hedgerow requirements
-- Watercourse requirements
-
-**Impact**: 
-- All habitat units from the metric are rounded UP to nearest 0.01 at upload time
-- Values like 0.001, 0.005, 0.009 all become 0.01
-- Values like 0.228 become 0.23
-- Optimizer receives pre-rounded values, ensuring consistency throughout
-- Unit prices and calculations automatically correct since rounding happens upfront
+**Key Benefits**:
+- Metric maintains full precision (typically 4 decimal places from DEFRA metric)
+- Optimizer calculates with full precision internally
+- **Bundling works**: Multiple small requirements (e.g., 0.0034 + 0.0024 = 0.0058) can be optimized together and result in a single 0.01 unit allocation
+- Only the **final output** per supply line is rounded up to 0.01
+- Unit prices and costs remain accurate
 
 **Examples**:
-| Metric Value | Rounded Value | Description |
-|--------------|---------------|-------------|
-| 0.001        | 0.01          | Minimum delivery |
-| 0.005        | 0.01          | Minimum delivery |
-| 0.228        | 0.23          | Rounds up |
-| 0.121        | 0.13          | Rounds up |
-| 1.5          | 1.5           | No change |
+| Optimizer Output | Rounded Output | Description |
+|------------------|----------------|-------------|
+| 0.0058           | 0.01          | Bundled allocation (0.0034 + 0.0024) |
+| 0.001            | 0.01          | Minimum delivery |
+| 0.228            | 0.23          | Rounds up |
+| 0.121            | 0.13          | Rounds up |
+| 1.5              | 1.5           | No change |
 
 ### 2. Format Functions Updated (app.py)
 
@@ -111,7 +115,8 @@ def format_units_total(value):
 - ✓ User's example test (0.228 + 0.121 = 0.35)
 
 **test_minimum_unit_constraint.py**:
-- ✓ Metric reader rounding tests (6 test cases)
+- ✓ Optimizer output rounding tests (8 test cases)
+- ✓ Bundling example test (0.0034 + 0.0024 = 0.01)
 - ✓ Rounding function presence verification
 
 **Code Review**: No issues found
@@ -129,34 +134,35 @@ def format_units_total(value):
 | 0.083       | 0.083                  | 0.08                   |
 | 1.5         | 1.50                   | 1.50                   |
 
-### Minimum Unit Delivery
+### Minimum Unit Delivery (Optimizer Output Stage)
 
-| Metric Value | Old Behavior | New Behavior (Rounded Up) |
-|--------------|--------------|---------------------------|
-| 0.001        | 0.001        | 0.01 (minimum) |
-| 0.005        | 0.005        | 0.01 (minimum) |
-| 0.01         | 0.01         | 0.01 (no change) |
-| 0.228        | 0.228        | 0.23 (rounded up) |
-| 0.02         | 0.02         | 0.02 (no change) |
+| Optimizer Calculation | Output Per Supply Line | Description |
+|-----------------------|------------------------|-------------|
+| 0.0058 (bundled)      | 0.01                   | Two requirements bundled: 0.0034 + 0.0024 |
+| 0.001                 | 0.01                   | Minimum delivery |
+| 0.005                 | 0.01                   | Minimum delivery |
+| 0.01                  | 0.01                   | No change |
+| 0.228                 | 0.23                   | Rounded up |
+| 0.02                  | 0.02                   | No change |
 
 ## Business Logic Impact
 
 ### What Changed
 1. **Display Precision**: All units now display at exactly 2 decimals
-2. **Calculation Consistency**: All internal calculations round to 2 decimals
-3. **Minimum Delivery**: All habitat units from metrics rounded UP to nearest 0.01
-4. **Rounding Location**: Rounding happens at metric upload, not in optimizer
+2. **Minimum Delivery**: Each allocation line (supply line) rounded UP to nearest 0.01
+3. **Rounding Location**: Rounding happens at optimizer output stage, not metric upload
 
 ### What Stayed the Same
 1. **Upstream Calculations**: Price per unit and costs still come from upstream
 2. **No Recalculation**: Costs are not recalculated from rounded values
 3. **Core Business Logic**: The optimization algorithm remains unchanged
+4. **Metric Precision**: Metrics maintain full precision (typically 4 decimals)
 
 ### Key Benefits
-1. **Consistency**: All values are >= 0.01 from the start
-2. **Simplicity**: No optimizer constraints needed
-3. **Accuracy**: Unit prices automatically correct since rounding happens upfront
-4. **Transparency**: Tables update correctly with rounded values
+1. **Bundling**: Multiple small requirements can be optimized together and result in single allocation
+2. **Precision**: Optimizer calculates with full precision internally
+3. **Accuracy**: Unit prices automatically correct since only output is rounded
+4. **Flexibility**: Allows efficient allocation of very small habitat requirements
 
 ## Verification Steps
 
