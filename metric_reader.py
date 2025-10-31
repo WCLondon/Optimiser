@@ -11,6 +11,23 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 
+# ------------- Medium distinctiveness hierarchy -------------
+# Priority Medium broad groups (processed before secondary groups during on-site offsets)
+PRIORITY_MEDIUM_GROUPS = {
+    "cropland",
+    "lakes",
+    "sparsely vegetated land",
+    "urban",
+    "individual trees",
+    "woodland and forest",
+    "intertidal sediment",
+    "intertidal hard structures"
+}
+
+# Secondary Medium broad groups: Grassland, Heathland and shrub
+# (processed after priority groups)
+
+
 # ------------- open workbook -------------
 def open_metric_workbook(uploaded_file) -> pd.ExcelFile:
     """Open a BNG metric workbook (.xlsx, .xlsm, .xlsb)"""
@@ -275,6 +292,7 @@ def apply_area_offsets(area_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
     Returns dict with:
       - residual_off_site: unmet deficits after on-site offsets
       - surplus_after_offsets_detail: remaining surpluses
+      - flow_log: list of allocation records with priority_medium flag
     """
     data = area_df.copy()
     data["project_wide_change"] = coerce_num(data["project_wide_change"])
@@ -287,15 +305,49 @@ def apply_area_offsets(area_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
 
     band_rank = {"Low": 1, "Medium": 2, "High": 3, "Very High": 4}
     
+    # Sub-ranking boost for priority Medium groups to ensure they're processed
+    # between regular Medium (2.0) and High (3.0) distinctiveness
+    MEDIUM_PRIORITY_BOOST = 0.5
+    
+    # Sort deficits by:
+    # 1. Distinctiveness rank (Very High > High > Medium > Low)
+    # 2. For Medium: priority group first, then secondary group
+    # 3. Original order within each group
+    def deficit_sort_key(row_tuple):
+        idx, row = row_tuple
+        d_band = str(row["distinctiveness"])
+        d_broad = clean_text(row.get("broad_group", "")).lower()
+        
+        rank = band_rank.get(d_band, 0)
+        
+        # For Medium distinctiveness, add sub-ranking
+        if d_band == "Medium":
+            is_priority = d_broad in PRIORITY_MEDIUM_GROUPS
+            # Priority group gets rank 2.5 (between Medium 2 and High 3)
+            # Secondary group keeps rank 2.0
+            sub_rank = MEDIUM_PRIORITY_BOOST if is_priority else 0.0
+            return (-rank - sub_rank, idx)
+        
+        return (-rank, idx)
+    
+    sorted_deficits = sorted(deficits.iterrows(), key=deficit_sort_key)
+    
     # Track what each deficit received
     deficit_received = {}
     
+    # Flow log to track allocations
+    flow_log = []
+    
     # Apply trading rules to offset deficits with surpluses
-    for di, d in deficits.iterrows():
+    for di, d in sorted_deficits:
         need = abs(float(d["project_wide_change"]))
         d_band  = str(d["distinctiveness"])
         d_broad = clean_text(d.get("broad_group",""))
         d_hab   = clean_text(d.get("habitat",""))
+        
+        # Check if this is a priority Medium group
+        is_priority_medium = (d_band == "Medium" and 
+                             d_broad.lower() in PRIORITY_MEDIUM_GROUPS)
         
         deficit_key = (di, d_hab, d_broad, d_band)
         deficit_received[deficit_key] = 0.0
@@ -323,6 +375,18 @@ def apply_area_offsets(area_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
             sur.loc[i,"__remain__"] -= give
             deficit_received[deficit_key] += give
             need -= give
+            
+            # Log this allocation
+            flow_log.append({
+                "deficit_habitat": d_hab,
+                "deficit_broad_group": d_broad,
+                "deficit_distinctiveness": d_band,
+                "surplus_habitat": clean_text(sur.loc[i, "habitat"]),
+                "surplus_broad_group": clean_text(sur.loc[i, "broad_group"]),
+                "surplus_distinctiveness": str(sur.loc[i, "distinctiveness"]),
+                "units_allocated": round(give, 6),
+                "priority_medium": is_priority_medium
+            })
 
     # Calculate residual unmet deficits
     remaining_records = []
@@ -352,7 +416,8 @@ def apply_area_offsets(area_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
 
     return {
         "residual_off_site": pd.DataFrame(remaining_records).reset_index(drop=True) if remaining_records else pd.DataFrame(columns=["habitat","broad_group","distinctiveness","unmet_units_after_on_site_offset"]),
-        "surplus_after_offsets_detail": surplus_after_offsets_detail
+        "surplus_after_offsets_detail": surplus_after_offsets_detail,
+        "flow_log": flow_log
     }
 
 
@@ -589,7 +654,7 @@ def parse_metric_requirements(uploaded_file) -> Dict:
     
     This follows the metric reader logic exactly:
     1. Parse Trading Summary sheets
-    2. Apply on-site offsets (habitat trading rules)
+    2. Apply on-site offsets (habitat trading rules) with Medium hierarchy
     3. Parse headline Net Gain target from Headline Results
     4. Allocate remaining surpluses to headline
     5. Return residual off-site requirements AND remaining surplus
@@ -601,10 +666,20 @@ def parse_metric_requirements(uploaded_file) -> Dict:
     - 'baseline_info': Dict with keys 'habitat', 'hedgerow', 'watercourse'
         Each containing: target_percent, baseline_units, units_required, unit_deficit
     - 'surplus': DataFrame with columns: habitat, broad_group, distinctiveness, units_surplus
-        (NEW) Contains remaining surplus after offsetting deficits and headline
+        Contains remaining surplus after offsetting deficits and headline
+    - 'flow_log': List of allocation records from on-site offset processing
+        Each record has: deficit_habitat, deficit_broad_group, deficit_distinctiveness,
+        surplus_habitat, surplus_broad_group, surplus_distinctiveness, 
+        units_allocated, priority_medium
     
     For area: returns combined residual (habitat deficits + headline remainder)
     For hedgerows/watercourses: returns raw deficits (no trading rules applied)
+    
+    Note: Medium distinctiveness deficits are now processed with priority hierarchy:
+    Priority groups (first): Cropland, Lakes, Sparsely vegetated land, Urban, 
+                            Individual trees, Woodland and forest, Intertidal sediment,
+                            Intertidal hard structures
+    Secondary groups (after): Grassland, Heathland and shrub
     """
     try:
         xls = open_metric_workbook(uploaded_file)
@@ -642,12 +717,14 @@ def parse_metric_requirements(uploaded_file) -> Dict:
     # ========== AREA HABITATS - Full trading logic ==========
     area_requirements = []
     surplus_after_all_offsets = pd.DataFrame()
+    area_flow_log = []
     
     if not area_norm.empty:
         # Step 1: Apply on-site offsets
         alloc = apply_area_offsets(area_norm)
         residual_table = alloc["residual_off_site"]
         surplus_detail = alloc["surplus_after_offsets_detail"]
+        area_flow_log = alloc.get("flow_log", [])
         
         # Add habitat residuals
         if not residual_table.empty:
@@ -732,5 +809,6 @@ def parse_metric_requirements(uploaded_file) -> Dict:
         "hedgerows": pd.DataFrame(hedge_requirements) if hedge_requirements else pd.DataFrame(columns=["habitat", "units"]),
         "watercourses": pd.DataFrame(water_requirements) if water_requirements else pd.DataFrame(columns=["habitat", "units"]),
         "baseline_info": headline_all,
-        "surplus": surplus_after_all_offsets if not surplus_after_all_offsets.empty else pd.DataFrame(columns=["habitat", "broad_group", "distinctiveness", "units_surplus"])
+        "surplus": surplus_after_all_offsets if not surplus_after_all_offsets.empty else pd.DataFrame(columns=["habitat", "broad_group", "distinctiveness", "units_surplus"]),
+        "flow_log": area_flow_log
     }
