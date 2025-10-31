@@ -4307,6 +4307,28 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
             return f"{integer_part}.{decimal_part}"
         return formatted
     
+    # Helper function to format total row units (max 3 decimals, remove trailing zeros)
+    def format_units_total(value):
+        """
+        Format total row units with up to 3 decimal places.
+        - Maximum 3 decimal places
+        - Remove trailing zeros (but keep at least 2 decimal places)
+        """
+        if value == 0:
+            return "0.00"
+        
+        # Format with 3 decimals
+        formatted = f"{value:.3f}"
+        parts = formatted.split('.')
+        if len(parts) == 2:
+            integer_part = parts[0]
+            decimal_part = parts[1].rstrip('0')
+            # Ensure at least 2 decimal places
+            if len(decimal_part) < 2:
+                decimal_part = decimal_part.ljust(2, '0')
+            return f"{integer_part}.{decimal_part}"
+        return formatted
+    
     # Filter out removed allocation rows
     if "_row_id" not in alloc_df.columns:
         alloc_df = alloc_df.copy()
@@ -4933,10 +4955,10 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
         <tr style="background-color: #f0f0f0; font-weight: bold;">
             <td style="padding: 6px; border: 1px solid #000;">Total</td>
             <td style="padding: 6px; border: 1px solid #000;"></td>
-            <td style="padding: 6px; border: 1px solid #000; text-align: right;">{format_units_dynamic(total_demand_units)}</td>
+            <td style="padding: 6px; border: 1px solid #000; text-align: right;">{format_units_total(total_demand_units)}</td>
             <td style="padding: 6px; border: 1px solid #000;"></td>
             <td style="padding: 6px; border: 1px solid #000;"></td>
-            <td style="padding: 6px; border: 1px solid #000; text-align: right;">{format_units_dynamic(total_supply_units)}</td>
+            <td style="padding: 6px; border: 1px solid #000; text-align: right;">{format_units_total(total_supply_units)}</td>
             <td style="padding: 6px; border: 1px solid #000;"></td>
             <td style="padding: 6px; border: 1px solid #000; text-align: right;">£{total_with_admin:,.0f}</td>
         </tr>
