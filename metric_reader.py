@@ -301,6 +301,10 @@ def apply_area_offsets(area_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
         "intertidal hard structures"
     }
     
+    # Sub-ranking boost for priority Medium groups to ensure they're processed
+    # between regular Medium (2.0) and High (3.0) distinctiveness
+    MEDIUM_PRIORITY_BOOST = 0.5
+    
     # Sort deficits by:
     # 1. Distinctiveness rank (Very High > High > Medium > Low)
     # 2. For Medium: priority group first, then secondary group
@@ -317,7 +321,7 @@ def apply_area_offsets(area_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
             is_priority = d_broad in priority_medium_groups
             # Priority group gets rank 2.5 (between Medium 2 and High 3)
             # Secondary group keeps rank 2.0
-            sub_rank = 0.5 if is_priority else 0.0
+            sub_rank = MEDIUM_PRIORITY_BOOST if is_priority else 0.0
             return (-rank - sub_rank, idx)
         
         return (-rank, idx)
