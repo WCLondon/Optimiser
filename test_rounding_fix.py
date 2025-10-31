@@ -2,7 +2,7 @@
 Test script to validate the rounding and price-per-unit fix.
 
 This test validates that:
-1. Units are displayed with appropriate significant figures (not hardcoded to 2 decimals)
+1. Units are displayed with 2 decimal places
 2. Price per unit is taken from upstream (not recalculated)
 3. Offset cost is rounded to nearest pound for display
 4. Calculations are preserved from upstream
@@ -19,58 +19,28 @@ def test_format_units_dynamic():
     # For testing purposes, we'll recreate the function here with the fixed logic
     def format_units_dynamic(value):
         """
-        Format units to show appropriate significant figures.
-        - Detect how many decimal places are needed to preserve accuracy
-        - Minimum 2 decimal places, maximum 5 decimal places
-        - Remove trailing zeros after the decimal point (but keep minimum 2)
+        Format units to 2 decimal places.
+        - All calculations at 2 decimal places
         """
         if value == 0:
             return "0.00"
         
-        # Try formatting with increasing precision until we capture the value accurately
-        for decimals in range(2, 6):  # 2 to 5 decimal places
-            formatted = f"{value:.{decimals}f}"
-            # Check if this precision captures the value accurately enough
-            # (within 0.5% or better than rounding to fewer decimals)
-            rounded_value = float(formatted)
-            # Add safety check for very small values to avoid division by zero
-            if abs(value) < 1e-10:
-                return "0.00"
-            if abs(value - rounded_value) / abs(value) < 0.005:  # Within 0.5%
-                # Remove trailing zeros but keep at least 2 decimal places
-                parts = formatted.split('.')
-                if len(parts) == 2:
-                    integer_part = parts[0]
-                    decimal_part = parts[1].rstrip('0')
-                    # Ensure at least 2 decimal places
-                    if len(decimal_part) < 2:
-                        decimal_part = decimal_part.ljust(2, '0')
-                    return f"{integer_part}.{decimal_part}"
-                return formatted
-        
-        # If we need more than 5 decimals, use 5 as max, but keep at least 2 decimals
-        formatted = f"{value:.5f}"
-        parts = formatted.split('.')
-        if len(parts) == 2:
-            integer_part = parts[0]
-            decimal_part = parts[1].rstrip('0')
-            # Ensure at least 2 decimal places
-            if len(decimal_part) < 2:
-                decimal_part = decimal_part.ljust(2, '0')
-            return f"{integer_part}.{decimal_part}"
+        # Format with 2 decimals
+        formatted = f"{value:.2f}"
         return formatted
     
     # Test cases from the issue
     test_cases = [
-        (0.12387, "0.124"),  # Issue example - needs 3 sig figs
+        (0.12387, "0.12"),   # Rounds to 2 decimals
         (0.12, "0.12"),      # Already 2 decimals
-        (1.5, "1.50"),       # Keep 2 decimals minimum
-        (0.123456, "0.123"),  # Needs 3 sig figs (0.5% accuracy is sufficient)
-        (2.00, "2.00"),      # Keep trailing zeros to 2 decimals minimum
-        (0.1, "0.10"),       # Pad to 2 decimals minimum
-        (10.5, "10.50"),     # Keep 2 decimals minimum
-        (0.080, "0.08"),     # Trailing zero removed (0.080 -> 0.08 is ok)
-        (0.083, "0.083"),    # Cannot round - must show 3 decimals
+        (1.5, "1.50"),       # Keep 2 decimals
+        (0.123456, "0.12"),  # Rounds to 2 decimals
+        (2.00, "2.00"),      # Keep 2 decimals
+        (0.1, "0.10"),       # Pad to 2 decimals
+        (10.5, "10.50"),     # Keep 2 decimals
+        (0.080, "0.08"),     # Rounds to 2 decimals
+        (0.083, "0.08"),     # Rounds to 2 decimals
+        (0.126, "0.13"),     # Rounds up to 2 decimals
     ]
     
     all_passed = True
@@ -111,34 +81,10 @@ def test_issue_example():
     def format_units_dynamic(value):
         if value == 0:
             return "0.00"
-        for decimals in range(2, 6):
-            formatted = f"{value:.{decimals}f}"
-            rounded_value = float(formatted)
-            # Add safety check for very small values
-            if abs(value) < 1e-10:
-                return "0.00"
-            if abs(value - rounded_value) / abs(value) < 0.005:
-                # Remove trailing zeros but keep at least 2 decimal places
-                parts = formatted.split('.')
-                if len(parts) == 2:
-                    integer_part = parts[0]
-                    decimal_part = parts[1].rstrip('0')
-                    if len(decimal_part) < 2:
-                        decimal_part = decimal_part.ljust(2, '0')
-                    return f"{integer_part}.{decimal_part}"
-                return formatted
-        # Fallback with minimum 2 decimals
-        formatted = f"{value:.5f}"
-        parts = formatted.split('.')
-        if len(parts) == 2:
-            integer_part = parts[0]
-            decimal_part = parts[1].rstrip('0')
-            if len(decimal_part) < 2:
-                decimal_part = decimal_part.ljust(2, '0')
-            return f"{integer_part}.{decimal_part}"
+        formatted = f"{value:.2f}"
         return formatted
     
-    display_units_new = format_units_dynamic(upstream_units)  # New: 0.124
+    display_units_new = format_units_dynamic(upstream_units)  # New: 0.12
     display_price_new = round_to_50(upstream_price_per_unit)  # 22000
     display_cost_new = round(upstream_cost)  # Correct: 2725
     
@@ -146,7 +92,7 @@ def test_issue_example():
     print(f"    → CORRECT: Using upstream cost of £{display_cost_new:,.0f}")
     
     # Verify
-    expected_units = "0.124"
+    expected_units = "0.12"  # With 2 decimals
     expected_price = 22000
     expected_cost = 2725
     
@@ -205,6 +151,29 @@ def test_no_recalculation():
     return all_passed
 
 
+def test_minimum_unit_delivery():
+    """Test that minimum unit delivery is 0.01"""
+    print("\nTesting minimum unit delivery (0.01)...")
+    
+    test_cases = [
+        (0.01, True, "exactly 0.01 units - should be allowed"),
+        (0.005, False, "0.005 units - below minimum, should be rejected"),
+        (0.02, True, "0.02 units - above minimum, should be allowed"),
+        (0.0, False, "0.0 units - no delivery, should be rejected"),
+    ]
+    
+    all_passed = True
+    for value, should_pass, description in test_cases:
+        # Minimum unit delivery check
+        is_valid = value >= 0.01
+        status = "✓" if is_valid == should_pass else "✗"
+        if is_valid != should_pass:
+            all_passed = False
+        print(f"  {status} {value} units: {description}")
+    
+    return all_passed
+
+
 def main():
     print("=" * 60)
     print("Running rounding and price-per-unit fix tests")
@@ -215,6 +184,7 @@ def main():
     results.append(("format_units_dynamic", test_format_units_dynamic()))
     results.append(("issue_example", test_issue_example()))
     results.append(("no_recalculation", test_no_recalculation()))
+    results.append(("minimum_unit_delivery", test_minimum_unit_delivery()))
     
     print("\n" + "=" * 60)
     print("Test Summary")

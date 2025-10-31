@@ -3571,12 +3571,16 @@ def optimise(demand_df: pd.DataFrame,
                 prob += z[i] <= y[opt["BANK_KEY"]]
 
             # Exactly one option per demand; meet its units; bind x to z
+            # Minimum unit delivery constraint: 0.01 units
+            MIN_UNIT_DELIVERY = 0.01
             for di, idxs in idx_by_dem.items():
                 need = dem_need[di]
                 prob += pulp.lpSum([z[i] for i in idxs]) == 1
                 prob += pulp.lpSum([x[i] for i in idxs]) == need
                 for i in idxs:
                     prob += x[i] <= need * z[i]
+                    # If option i is selected (z[i] = 1), then x[i] must be at least 0.01
+                    prob += x[i] >= MIN_UNIT_DELIVERY * z[i]
 
             # Stock capacity constraints
             use_map: Dict[str, List[Tuple[int, float]]] = {}
@@ -4266,67 +4270,28 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
     # Helper function to format units with dynamic significant figures
     def format_units_dynamic(value):
         """
-        Format units to show appropriate significant figures.
-        - Detect how many decimal places are needed to preserve accuracy
-        - Minimum 2 decimal places, maximum 5 decimal places
-        - Remove trailing zeros after the decimal point (but keep minimum 2)
+        Format units to 2 decimal places.
+        - All calculations at 2 decimal places
         """
         if value == 0:
             return "0.00"
         
-        # Try formatting with increasing precision until we capture the value accurately
-        for decimals in range(2, 6):  # 2 to 5 decimal places
-            formatted = f"{value:.{decimals}f}"
-            # Check if this precision captures the value accurately enough
-            # (within 0.5% or better than rounding to fewer decimals)
-            rounded_value = float(formatted)
-            # Add safety check for very small values to avoid division by zero
-            if abs(value) < 1e-10:
-                return "0.00"
-            if abs(value - rounded_value) / abs(value) < 0.005:  # Within 0.5%
-                # Remove trailing zeros but keep at least 2 decimal places
-                parts = formatted.split('.')
-                if len(parts) == 2:
-                    integer_part = parts[0]
-                    decimal_part = parts[1].rstrip('0')
-                    # Ensure at least 2 decimal places
-                    if len(decimal_part) < 2:
-                        decimal_part = decimal_part.ljust(2, '0')
-                    return f"{integer_part}.{decimal_part}"
-                return formatted
-        
-        # If we need more than 5 decimals, use 5 as max, but keep at least 2 decimals
-        formatted = f"{value:.5f}"
-        parts = formatted.split('.')
-        if len(parts) == 2:
-            integer_part = parts[0]
-            decimal_part = parts[1].rstrip('0')
-            # Ensure at least 2 decimal places
-            if len(decimal_part) < 2:
-                decimal_part = decimal_part.ljust(2, '0')
-            return f"{integer_part}.{decimal_part}"
+        # Format with 2 decimals
+        formatted = f"{value:.2f}"
         return formatted
     
-    # Helper function to format total row units (max 3 decimals, remove trailing zeros)
+    # Helper function to format total row units (2 decimals)
     def format_units_total(value):
         """
-        Format total row units with up to 3 decimal places.
-        - Maximum 3 decimal places
-        - Remove trailing zeros (but keep at least 2 decimal places)
+        Format total row units with 2 decimal places.
+        - Exactly 2 decimal places
+        - All calculations rounded to 2 decimals
         """
         if value == 0:
             return "0.00"
         
-        # Format with 3 decimals
-        formatted = f"{value:.3f}"
-        parts = formatted.split('.')
-        if len(parts) == 2:
-            integer_part = parts[0]
-            decimal_part = parts[1].rstrip('0')
-            # Ensure at least 2 decimal places
-            if len(decimal_part) < 2:
-                decimal_part = decimal_part.ljust(2, '0')
-            return f"{integer_part}.{decimal_part}"
+        # Format with 2 decimals
+        formatted = f"{value:.2f}"
         return formatted
     
     # Filter out removed allocation rows
