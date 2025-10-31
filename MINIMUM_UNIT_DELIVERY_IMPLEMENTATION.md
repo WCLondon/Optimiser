@@ -5,46 +5,59 @@ This implementation addresses the requirements for minimum unit delivery (0.01 u
 
 ## Final Approach (Current Implementation)
 
-### 1. Minimum Unit Delivery at Optimizer Output Stage (app.py)
+### 1. Minimum Unit Delivery via Bundling & Rounding (app.py)
 
-**Location**: In the `extract()` function within the optimizer (around line 3604) and greedy fallback (around line 3717)
+**Location**: `bundle_and_round_allocations()` function applied after optimizer extraction (around line 3603)
 
-Rounding up to nearest 0.01 happens **per allocation line (supply line)** at optimizer output:
+Rounding up to nearest 0.01 happens **after bundling by supply habitat**:
 
 ```python
-def extract(xvars, zvars):
-    rows, total_cost = [], 0.0
-    for i in range(len(options)):
-        qty = xvars[i].value() or 0.0
-        sel = zvars[i].value() or 0.0
-        if sel >= 0.5 and qty > 0:
-            # Round up to nearest 0.01 (minimum unit delivery)
-            import math
-            qty_rounded = math.ceil(qty * 100) / 100
-            
-            # ... create row with qty_rounded as units_supplied
-            row = {
-                "units_supplied": qty_rounded,
-                "cost": qty_rounded * opt["unit_price"],
-                # ...
-            }
+def bundle_and_round_allocations(alloc_df):
+    """
+    Bundle allocations by supply habitat and round up to nearest 0.01.
+    
+    Groups allocations by BANK_KEY, supply_habitat, allocation_type, tier, and paired_parts.
+    Sums units_supplied for each group and rounds up to nearest 0.01.
+    Recalculates cost based on rounded units.
+    """
+    import math
+    
+    # Group by key fields that identify the same supply type
+    grouped = alloc_df.groupby([supply habitat fields]).agg({
+        "demand_habitat": lambda x: ", ".join(sorted(set(x))),  # Combine demands
+        "units_supplied": "sum",  # Sum units
+        # ...
+    })
+    
+    # Round up units_supplied to nearest 0.01
+    grouped["units_supplied"] = grouped["units_supplied"].apply(lambda x: math.ceil(x * 100) / 100)
+    
+    # Recalculate cost based on rounded units
+    grouped["cost"] = grouped["units_supplied"] * grouped["unit_price"]
 ```
 
 **Key Benefits**:
 - Metric maintains full precision (typically 4 decimal places from DEFRA metric)
 - Optimizer calculates with full precision internally
-- **Bundling works**: Multiple small requirements (e.g., 0.0034 + 0.0024 = 0.0058) can be optimized together and result in a single 0.01 unit allocation
-- Only the **final output** per supply line is rounded up to 0.01
+- **Multiple requirements that can be mitigated by the same habitat are bundled FIRST**
+- **Then the bundled total is rounded up to nearest 0.01**
+- Only one allocation line per supply habitat (unless from different banks/tiers)
 - Unit prices and costs remain accurate
 
-**Examples**:
-| Optimizer Output | Rounded Output | Description |
-|------------------|----------------|-------------|
-| 0.0058           | 0.01          | Bundled allocation (0.0034 + 0.0024) |
-| 0.001            | 0.01          | Minimum delivery |
-| 0.228            | 0.23          | Rounds up |
-| 0.121            | 0.13          | Rounds up |
-| 1.5              | 1.5           | No change |
+**Real Example from User**:
+| Requirement | Units | Action |
+|-------------|-------|--------|
+| Individual trees - Urban tree | 0.086915 | Separate allocation → 0.09 units |
+| Urban - Introduced shrub | 0.00105 | Bundle with Net Gain |
+| Net Gain (Low-equivalent) | 0.0317 | Bundle with Intro shrub |
+| **Bundled (Intro shrub + Net Gain)** | **0.03275** | **→ 0.04 units** |
+
+**Additional Examples**:
+| Requirements | Bundled Total | Rounded Output | Description |
+|--------------|---------------|----------------|-------------|
+| 0.0034 + 0.0024 | 0.0058 | 0.01 | Two small requirements bundled |
+| 0.001 (alone) | 0.001 | 0.01 | Single minimum delivery |
+| 0.228 (alone) | 0.228 | 0.23 | Single requirement rounded up |
 
 ### 2. Format Functions Updated (app.py)
 

@@ -3601,16 +3601,49 @@ def optimise(demand_df: pd.DataFrame,
             raise RuntimeError("Optimiser infeasible.")
         best_cost = pulp.value(pulp.lpSum([options[i]["unit_price"] * xA[i] for i in range(len(options))])) or 0.0
 
+        def bundle_and_round_allocations(alloc_df):
+            """
+            Bundle allocations by supply habitat and round up to nearest 0.01.
+            
+            Groups allocations by BANK_KEY, supply_habitat, allocation_type, tier, and paired_parts.
+            Sums units_supplied for each group and rounds up to nearest 0.01.
+            Recalculates cost based on rounded units.
+            """
+            import math
+            
+            if alloc_df.empty:
+                return alloc_df, 0.0
+            
+            # Group by key fields that identify the same supply type
+            group_cols = ["BANK_KEY", "bank_name", "bank_id", "supply_habitat", "allocation_type", "tier", "price_source", "price_habitat"]
+            if "paired_parts" in alloc_df.columns:
+                group_cols.append("paired_parts")
+            
+            # Also track demand habitats as a list for reference
+            grouped = alloc_df.groupby([col for col in group_cols if col in alloc_df.columns], dropna=False).agg({
+                "demand_habitat": lambda x: ", ".join(sorted(set(x))),  # Combine demand habitats
+                "units_supplied": "sum",  # Sum units
+                "unit_price": "first",  # Take first unit price (should be same within group)
+                "cost": "sum"  # Sum original costs
+            }).reset_index()
+            
+            # Round up units_supplied to nearest 0.01
+            grouped["units_supplied"] = grouped["units_supplied"].apply(lambda x: math.ceil(x * 100) / 100)
+            
+            # Recalculate cost based on rounded units
+            grouped["cost"] = grouped["units_supplied"] * grouped["unit_price"]
+            
+            # Calculate total cost
+            total_cost = float(grouped["cost"].sum())
+            
+            return grouped, total_cost
+
         def extract(xvars, zvars):
             rows, total_cost = [], 0.0
             for i in range(len(options)):
                 qty = xvars[i].value() or 0.0
                 sel = zvars[i].value() or 0.0
                 if sel >= 0.5 and qty > 0:
-                    # Round up to nearest 0.01 (minimum unit delivery)
-                    import math
-                    qty_rounded = math.ceil(qty * 100) / 100
-                    
                     opt = options[i]
                     row = {
                         "demand_habitat": opt["demand_habitat"],
@@ -3620,19 +3653,21 @@ def optimise(demand_df: pd.DataFrame,
                         "supply_habitat": opt["supply_habitat"],
                         "allocation_type": opt.get("type", "normal"),
                         "tier": opt["tier"],
-                        "units_supplied": qty_rounded,
+                        "units_supplied": qty,
                         "unit_price": opt["unit_price"],
-                        "cost": qty_rounded * opt["unit_price"],
+                        "cost": qty * opt["unit_price"],
                         "price_source": opt.get("price_source",""),
                         "price_habitat": opt.get("price_habitat",""),
                     }
                     if opt.get("type") == "paired" and "paired_parts" in opt:
                         row["paired_parts"] = json.dumps(opt["paired_parts"])
                     rows.append(row)
-                    total_cost += qty_rounded * opt["unit_price"]
+                    total_cost += qty * opt["unit_price"]
             return pd.DataFrame(rows), float(total_cost)
 
         allocA, costA = extract(xA, zA)
+        # Bundle and round allocations
+        allocA, costA = bundle_and_round_allocations(allocA)
 
         # Stage B: minimise #banks, but only if cost stays within numerical precision of Stage A
         # Use a very tight threshold (£10 or 0.01%, whichever is smaller) to ensure we prioritize
@@ -3644,6 +3679,8 @@ def optimise(demand_df: pd.DataFrame,
 
         if statusB in ("Optimal", "Feasible"):
             allocB, costB = extract(xB, zB)
+            # Bundle and round allocations
+            allocB, costB = bundle_and_round_allocations(allocB)
 
             def bank_count(df):
                 return df["BANK_KEY"].nunique() if not df.empty else 0
@@ -3659,6 +3696,8 @@ def optimise(demand_df: pd.DataFrame,
                 statusC = pulp.LpStatus[probC.status]
                 if statusC in ("Optimal", "Feasible"):
                     allocC, costC = extract(xC, zC)
+                    # Bundle and round allocations
+                    allocC, costC = bundle_and_round_allocations(allocC)
                     return allocC, costC, chosen_size
                 return allocB, costB, chosen_size
 
@@ -3721,10 +3760,6 @@ def optimise(demand_df: pd.DataFrame,
             if bkey not in used_banks:
                 used_banks.append(bkey)
 
-            # Round up to nearest 0.01 (minimum unit delivery)
-            import math
-            need_rounded = math.ceil(need * 100) / 100
-
             row = {
                 "demand_habitat": opt["demand_habitat"],
                 "BANK_KEY": opt["BANK_KEY"],
@@ -3733,18 +3768,21 @@ def optimise(demand_df: pd.DataFrame,
                 "supply_habitat": opt["supply_habitat"],
                 "allocation_type": opt.get("type", "normal"),
                 "tier": opt["tier"],
-                "units_supplied": need_rounded,
+                "units_supplied": need,
                 "unit_price": opt["unit_price"],
-                "cost": need_rounded * opt["unit_price"],
+                "cost": need * opt["unit_price"],
                 "price_source": opt.get("price_source",""),
                 "price_habitat": opt.get("price_habitat",""),
             }
             if opt.get("type") == "paired" and "paired_parts" in opt:
                 row["paired_parts"] = json.dumps(opt["paired_parts"])
             rows.append(row)
-            total_cost += need_rounded * opt["unit_price"]
+            total_cost += need * opt["unit_price"]
 
-        return pd.DataFrame(rows), float(total_cost), chosen_size
+        # Bundle and round allocations for greedy fallback
+        alloc_df = pd.DataFrame(rows)
+        alloc_df, total_cost = bundle_and_round_allocations(alloc_df)
+        return alloc_df, float(total_cost), chosen_size
 
 # ================= Run optimiser UI =================
 st.subheader("3) Run optimiser")
