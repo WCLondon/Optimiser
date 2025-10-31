@@ -592,7 +592,7 @@ def parse_metric_requirements(uploaded_file) -> Dict:
     2. Apply on-site offsets (habitat trading rules)
     3. Parse headline Net Gain target from Headline Results
     4. Allocate remaining surpluses to headline
-    5. Return residual off-site requirements
+    5. Return residual off-site requirements AND remaining surplus
     
     Returns dict with keys: 
     - 'area': DataFrame with columns: habitat, units
@@ -600,6 +600,8 @@ def parse_metric_requirements(uploaded_file) -> Dict:
     - 'watercourses': DataFrame with columns: habitat, units
     - 'baseline_info': Dict with keys 'habitat', 'hedgerow', 'watercourse'
         Each containing: target_percent, baseline_units, units_required, unit_deficit
+    - 'surplus': DataFrame with columns: habitat, broad_group, distinctiveness, units_surplus
+        (NEW) Contains remaining surplus after offsetting deficits and headline
     
     For area: returns combined residual (habitat deficits + headline remainder)
     For hedgerows/watercourses: returns raw deficits (no trading rules applied)
@@ -639,6 +641,7 @@ def parse_metric_requirements(uploaded_file) -> Dict:
     
     # ========== AREA HABITATS - Full trading logic ==========
     area_requirements = []
+    surplus_after_all_offsets = pd.DataFrame()
     
     if not area_norm.empty:
         # Step 1: Apply on-site offsets
@@ -660,8 +663,31 @@ def parse_metric_requirements(uploaded_file) -> Dict:
         baseline_units = habitat_info["baseline_units"]
         headline_requirement = baseline_units * target_pct
         
-        # Step 3: Allocate surpluses to headline
-        applied_to_headline = allocate_to_headline(headline_requirement, surplus_detail)
+        # Step 3: Allocate surpluses to headline (track what's used)
+        # Make a copy to track remaining surplus after headline allocation
+        surplus_remaining = surplus_detail.copy()
+        surplus_remaining["surplus_remaining_units"] = pd.to_numeric(
+            surplus_remaining["surplus_remaining_units"], errors="coerce"
+        ).fillna(0.0)
+        
+        # Allocate to headline
+        band_rank = {"Very High": 4, "High": 3, "Medium": 2, "Low": 1}
+        surs = surplus_remaining.copy()
+        surs = surs[surs["surplus_remaining_units"] > 1e-9]
+        surs["__rank__"] = surs["distinctiveness"].map(lambda b: band_rank.get(str(b), 0))
+        surs = surs.sort_values(by=["__rank__", "surplus_remaining_units"], ascending=[False, False])
+        
+        to_cover = headline_requirement
+        for idx, s in surs.iterrows():
+            if to_cover <= 1e-9:
+                break
+            give = min(to_cover, float(s["surplus_remaining_units"]))
+            if give <= 1e-9:
+                continue
+            surplus_remaining.loc[idx, "surplus_remaining_units"] -= give
+            to_cover -= give
+        
+        applied_to_headline = headline_requirement - to_cover
         
         # Step 4: Calculate headline remainder
         residual_headline = max(headline_requirement - applied_to_headline, 0.0)
@@ -673,6 +699,11 @@ def parse_metric_requirements(uploaded_file) -> Dict:
                 "habitat": "Net Gain (Low-equivalent)",
                 "units": round(residual_headline, 4)
             })
+        
+        # Keep only non-zero surplus
+        surplus_after_all_offsets = surplus_remaining[
+            surplus_remaining["surplus_remaining_units"] > 1e-9
+        ].rename(columns={"surplus_remaining_units": "units_surplus"}).copy()
     
     # ========== HEDGEROWS - Simple deficits ==========
     hedge_requirements = []
@@ -700,5 +731,6 @@ def parse_metric_requirements(uploaded_file) -> Dict:
         "area": pd.DataFrame(area_requirements) if area_requirements else pd.DataFrame(columns=["habitat", "units"]),
         "hedgerows": pd.DataFrame(hedge_requirements) if hedge_requirements else pd.DataFrame(columns=["habitat", "units"]),
         "watercourses": pd.DataFrame(water_requirements) if water_requirements else pd.DataFrame(columns=["habitat", "units"]),
-        "baseline_info": headline_all
+        "baseline_info": headline_all,
+        "surplus": surplus_after_all_offsets if not surplus_after_all_offsets.empty else pd.DataFrame(columns=["habitat", "broad_group", "distinctiveness", "units_surplus"])
     }

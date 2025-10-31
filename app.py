@@ -45,6 +45,9 @@ import repo
 # BNG Metric reader
 import metric_reader
 
+# Surplus Uplift Offset (SUO)
+import suo
+
 # ================= Config / constants =================
 ADMIN_FEE_GBP = 500.0
 SINGLE_BANK_SOFT_PCT = 0.01
@@ -122,7 +125,11 @@ def init_session_state():
         "all_lpas_list": None,  # Cache for complete LPA list from ArcGIS
         "all_ncas_list": None,   # Cache for complete NCA list from ArcGIS
         "enriched_banks_cache": None,  # Cache for enriched banks data with LPA/NCA
-        "enriched_banks_timestamp": None  # Timestamp when banks were last enriched
+        "enriched_banks_timestamp": None,  # Timestamp when banks were last enriched
+        "suo_enabled": True,  # SUO toggle (enabled by default)
+        "suo_results": None,  # SUO computation results
+        "suo_applicable": False,  # Whether SUO can be applied
+        "metric_surplus": None,  # Surplus from metric file
     }
     
     for key, value in defaults.items():
@@ -2516,6 +2523,32 @@ with st.expander("📄 Import from BNG Metric File", expanded=False):
                     st.session_state._next_row_id = next_id
                     st.session_state["_last_imported_file"] = uploaded_file_name
                     
+                    # Store surplus for SUO and check if usable
+                    if "surplus" in requirements and not requirements["surplus"].empty:
+                        st.session_state["metric_surplus"] = requirements["surplus"].copy()
+                        
+                        # Check if there's usable surplus (Medium+ distinctiveness)
+                        distinctiveness_order = {"Very Low": 0, "Low": 1, "Medium": 2, "High": 3, "Very High": 4}
+                        eligible_surplus = requirements["surplus"][
+                            requirements["surplus"]["distinctiveness"].apply(
+                                lambda d: distinctiveness_order.get(str(d), 0) >= 2
+                            )
+                        ]
+                        
+                        if not eligible_surplus.empty:
+                            total_eligible = eligible_surplus["units_surplus"].sum()
+                            usable_surplus = total_eligible * 0.5  # 50% headroom
+                            st.success(
+                                f"🎯 **Surplus Uplift Offset Available!** "
+                                f"{total_eligible:.2f} units of Medium+ surplus found. "
+                                f"Up to {usable_surplus:.2f} units (50% headroom) can provide a cost discount after optimization."
+                            )
+                        else:
+                            st.info(f"ℹ️ Found {len(requirements['surplus'])} surplus habitat(s), but none are Medium+ distinctiveness (no SUO discount available)")
+                    else:
+                        st.session_state["metric_surplus"] = None
+                        st.info("ℹ️ No surplus found in metric file (no SUO discount available)")
+                    
                     if st.session_state.demand_rows:
                         st.info(f"ℹ️ Automatically populated {len(st.session_state.demand_rows)} requirements in demand table below.")
                         st.rerun()
@@ -3910,6 +3943,73 @@ with st.expander("💷 Pricing completeness (this contract size)", expanded=Fals
     except Exception as e:
         st.error(f"Pricing completeness error: {e}")
 
+# ================= SUO Helper Function =================
+def compute_suo_discount(alloc_df: pd.DataFrame, backend: Dict[str, pd.DataFrame]) -> Optional[Dict]:
+    """
+    Compute Surplus Uplift Offset (SUO) discount after optimization.
+    
+    SUO provides a cost discount based on surplus habitat from the metric file.
+    The discount accounts for:
+    - Only Medium+ distinctiveness surplus (50% headroom)
+    - SRMs of the actual banks used in the allocation
+    
+    Returns dict with:
+        - applicable: bool - whether SUO discount can be applied
+        - discount_fraction: float - percentage discount (0.0 to 1.0)
+        - eligible_surplus: float - total eligible surplus units
+        - usable_surplus: float - surplus after 50% headroom
+        - effective_offset: float - surplus adjusted for bank SRMs
+        - total_units_purchased: float - total units allocated
+        - cost_saving: float - estimated cost savings
+    """
+    try:
+        # Get surplus from metric (stored in session state when metric was uploaded)
+        metric_surplus = st.session_state.get("metric_surplus")
+        
+        if metric_surplus is None or metric_surplus.empty:
+            return {"applicable": False, "reason": "No surplus from metric file"}
+        
+        # Filter to Medium+ distinctiveness only
+        distinctiveness_order = {"Very Low": 0, "Low": 1, "Medium": 2, "High": 3, "Very High": 4}
+        eligible_surplus = metric_surplus[
+            metric_surplus["distinctiveness"].apply(
+                lambda d: distinctiveness_order.get(str(d), 0) >= 2
+            )
+        ].copy()
+        
+        if eligible_surplus.empty:
+            return {"applicable": False, "reason": "No Medium+ distinctiveness surplus"}
+        
+        # Calculate total eligible surplus
+        total_eligible = eligible_surplus["units_surplus"].sum()
+        
+        # Apply 50% headroom
+        usable_surplus = total_eligible * 0.5
+        
+        # Calculate total units purchased (this is what we need to mitigate)
+        total_units = alloc_df["units_supplied"].sum()
+        
+        # Calculate discount fraction: usable_surplus / total_units_to_mitigate
+        # Note: We do NOT adjust for SRM here - the discount is simply based on surplus vs units needed
+        discount_fraction = min(usable_surplus / total_units, 1.0) if total_units > 0 else 0.0
+        
+        if discount_fraction > 0:
+            return {
+                "applicable": True,
+                "discount_fraction": discount_fraction,
+                "eligible_surplus": total_eligible,
+                "usable_surplus": usable_surplus,
+                "total_units_purchased": total_units
+            }
+        else:
+            return {"applicable": False, "reason": "No discount possible (insufficient surplus)"}
+            
+    except Exception as e:
+        st.warning(f"SUO computation error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"applicable": False, "reason": f"Error: {e}"}
+
 # ================= Run optimiser & compute results =================
 # ================= Run optimiser & compute results =================
 if run:
@@ -4106,6 +4206,18 @@ if run:
             {"Item": "Grand total",      "Amount £": round(total_with_admin, 2)},
         ])
         
+        # Compute SUO (Surplus Uplift Offset) discount after optimization
+        suo_results = compute_suo_discount(alloc_df, backend)
+        if suo_results and suo_results.get("applicable", False):
+            st.session_state["suo_results"] = suo_results
+            st.session_state["suo_applicable"] = True
+            # Initialize discount for report (defaults to enabled since checkbox defaults to True)
+            st.session_state["suo_discount_for_report"] = suo_results.get("discount_fraction", 0.0)
+        else:
+            st.session_state["suo_results"] = None
+            st.session_state["suo_applicable"] = False
+            st.session_state["suo_discount_for_report"] = 0.0
+        
         # Save summary data to session state for persistence
         st.session_state["site_hab_totals"] = site_hab_totals.copy()
         st.session_state["by_bank"] = by_bank.copy()
@@ -4134,7 +4246,8 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                                        removed_allocation_rows: List[int] = None,
                                        promoter_name: str = None,
                                        promoter_discount_type: str = None,
-                                       promoter_discount_value: float = None) -> Tuple[pd.DataFrame, str]:
+                                       promoter_discount_value: float = None,
+                                       suo_discount_fraction: float = 0.0) -> Tuple[pd.DataFrame, str]:
     """Generate the client-facing report table and email body matching exact template with improved styling"""
     
     if manual_hedgerow_rows is None:
@@ -4145,6 +4258,10 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
         manual_area_rows = []
     if removed_allocation_rows is None:
         removed_allocation_rows = []
+    
+    # Helper function to round unit price to nearest £50
+    def round_to_50(price):
+        return round(price / 50) * 50
     
     # Filter out removed allocation rows
     if "_row_id" not in alloc_df.columns:
@@ -4191,6 +4308,16 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
             supply_units = alloc_row["units_supplied"]
             unit_price = alloc_row["unit_price"]
             offset_cost = alloc_row["cost"]
+            
+            # Apply SUO discount to unit price and offset cost
+            if suo_discount_fraction > 0:
+                unit_price = unit_price * (1 - suo_discount_fraction)
+                offset_cost = offset_cost * (1 - suo_discount_fraction)
+            
+            # Round unit price to nearest £50
+            unit_price = round_to_50(unit_price)
+            # Recalculate offset cost with rounded unit price
+            offset_cost = unit_price * supply_units
             
             # For paired allocations, show only the highest distinctiveness habitat
             allocation_type = sstr(alloc_row.get("allocation_type", "normal"))
@@ -4276,6 +4403,8 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
         price_per_unit = float(row.get("price_per_unit", 0.0) or 0.0)
         
         if habitat_name and units > 0:
+            # Round price to nearest £50
+            price_per_unit = round_to_50(price_per_unit)
             offset_cost = units * price_per_unit
             manual_hedgerow_cost += offset_cost
             
@@ -4332,6 +4461,8 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
         price_per_unit = float(row.get("price_per_unit", 0.0) or 0.0)
         
         if habitat_name and units > 0:
+            # Round price to nearest £50
+            price_per_unit = round_to_50(price_per_unit)
             offset_cost = units * price_per_unit
             manual_watercourse_cost += offset_cost
             
@@ -4402,6 +4533,10 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                 # Calculate units for each habitat
                 demand_units = units * demand_stock
                 companion_units = units * companion_stock
+                
+                # Round prices to nearest £50
+                demand_price = round_to_50(demand_price)
+                companion_price = round_to_50(companion_price)
                 
                 # Calculate costs
                 demand_cost = demand_units * demand_price
@@ -4482,6 +4617,8 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                 price_per_unit = float(row.get("price_per_unit", 0.0) or 0.0)
                 
                 if habitat_name:
+                    # Round price to nearest £50
+                    price_per_unit = round_to_50(price_per_unit)
                     offset_cost = units * price_per_unit
                     manual_area_cost += offset_cost
                     
@@ -4523,8 +4660,16 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                     }
                     area_habitats.append(row_data)
     
-    # Update total cost to include manual entries
-    total_cost_with_manual = total_cost + manual_hedgerow_cost + manual_watercourse_cost + manual_area_cost
+    # Calculate total cost from actual line items (which have SUO discount already applied)
+    # Sum up all offset costs from the line items
+    optimizer_cost = 0.0
+    for habitat_list in [area_habitats, hedgerow_habitats, watercourse_habitats]:
+        for row in habitat_list:
+            cost_str = row["Offset Cost"].replace("£", "").replace(",", "")
+            optimizer_cost += float(cost_str)
+    
+    # Add manual entries
+    total_cost_with_manual = optimizer_cost + manual_hedgerow_cost + manual_watercourse_cost + manual_area_cost
     total_with_admin = total_cost_with_manual + admin_fee
     
     # Bundle Low + 10% Net Gain rows together for each habitat type
@@ -4919,6 +5064,104 @@ if st.session_state.get("optimization_complete", False) and st.session_state.get
     if st.session_state.get("summary_df") is not None:
         with st.expander("💰 Order summary (with admin fee)", expanded=True):
             st.dataframe(st.session_state["summary_df"], hide_index=True, use_container_width=True)
+    
+    # ========== SURPLUS UPLIFT OFFSET (SUO) SECTION ==========
+    if st.session_state.get("suo_applicable", False) and st.session_state.get("suo_results") is not None:
+        st.markdown("---")
+        st.markdown("### 🎯 Surplus Uplift Offset (SUO) - Cost Discount")
+        
+        suo_results = st.session_state["suo_results"]
+        
+        # SUO toggle checkbox
+        suo_enabled = st.checkbox(
+            "✅ Apply Surplus Uplift Offset Discount",
+            value=st.session_state.get("suo_enabled", True),
+            key="suo_toggle",
+            help="Apply cost discount based on eligible surplus (Medium+ distinctiveness, 50% headroom) from your development site"
+        )
+        st.session_state["suo_enabled"] = suo_enabled
+        
+        # Store the actual discount to use for emails/reports
+        # This ensures the email matches what the user sees in the UI
+        if suo_enabled:
+            st.session_state["suo_discount_for_report"] = suo_results['discount_fraction']
+        else:
+            st.session_state["suo_discount_for_report"] = 0.0
+        
+        if suo_enabled:
+            discount_pct = suo_results['discount_fraction'] * 100
+            st.success(f"✅ SUO Discount Applied: {discount_pct:.1f}% cost reduction")
+            
+            # Calculate discounted costs
+            # Get current allocation cost
+            alloc_df_temp = st.session_state["last_alloc_df"].copy()
+            if "_row_id" not in alloc_df_temp.columns:
+                alloc_df_temp["_row_id"] = range(len(alloc_df_temp))
+            removed_ids = st.session_state.get("removed_allocation_rows", [])
+            active_alloc_df = alloc_df_temp[~alloc_df_temp["_row_id"].isin(removed_ids)]
+            
+            original_allocation_cost = active_alloc_df["cost"].sum() if not active_alloc_df.empty else 0.0
+            discounted_allocation_cost = original_allocation_cost * (1 - suo_results['discount_fraction'])
+            cost_savings = original_allocation_cost - discounted_allocation_cost
+            
+            # Add manual costs (not discounted)
+            manual_hedge_cost = sum(float(r.get("units", 0.0) or 0.0) * float(r.get("price_per_unit", 0.0) or 0.0) 
+                                   for r in st.session_state.get("manual_hedgerow_rows", []))
+            manual_water_cost = sum(float(r.get("units", 0.0) or 0.0) * float(r.get("price_per_unit", 0.0) or 0.0) 
+                                   for r in st.session_state.get("manual_watercourse_rows", []))
+            manual_area_cost = 0.0
+            for r in st.session_state.get("manual_area_rows", []):
+                if r.get("paired", False):
+                    units = float(r.get("units", 0.0) or 0.0)
+                    demand_stock = float(r.get("demand_stock_use", 0.5))
+                    companion_stock = 1.0 - demand_stock
+                    demand_price = float(r.get("demand_price", 0.0) or 0.0)
+                    companion_price = float(r.get("companion_price", 0.0) or 0.0)
+                    demand_units = units * demand_stock
+                    companion_units = units * companion_stock
+                    manual_area_cost += (demand_units * demand_price) + (companion_units * companion_price)
+                else:
+                    units = float(r.get("units", 0.0) or 0.0)
+                    price = float(r.get("price_per_unit", 0.0) or 0.0)
+                    manual_area_cost += units * price
+            
+            total_discounted_cost = discounted_allocation_cost + manual_hedge_cost + manual_water_cost + manual_area_cost
+            total_with_admin_discounted = total_discounted_cost + ADMIN_FEE_GBP
+            
+            # Show SUO summary metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Eligible Surplus", f"{suo_results['eligible_surplus']:.2f} units", 
+                         help="Total surplus from Medium+ distinctiveness habitats")
+            with col2:
+                st.metric("Usable (50% headroom)", f"{suo_results['usable_surplus']:.2f} units",
+                         help="50% of eligible surplus available for offset")
+            with col3:
+                st.metric("Discount Applied", f"{discount_pct:.1f}%",
+                         help="Percentage discount on allocation costs")
+            
+            # Show cost comparison
+            with st.expander("💰 Cost Comparison (Before vs After SUO)", expanded=True):
+                comparison_df = pd.DataFrame([
+                    {"Cost Item": "Allocation Cost (optimizer)", "Before SUO": f"£{original_allocation_cost:,.2f}", 
+                     "After SUO": f"£{discounted_allocation_cost:,.2f}", "Savings": f"£{cost_savings:,.2f}"},
+                    {"Cost Item": "Manual Additions", "Before SUO": f"£{manual_hedge_cost + manual_water_cost + manual_area_cost:,.2f}", 
+                     "After SUO": f"£{manual_hedge_cost + manual_water_cost + manual_area_cost:,.2f}", "Savings": "£0.00"},
+                    {"Cost Item": "Admin Fee", "Before SUO": f"£{ADMIN_FEE_GBP:,.2f}", 
+                     "After SUO": f"£{ADMIN_FEE_GBP:,.2f}", "Savings": "£0.00"},
+                    {"Cost Item": "TOTAL", "Before SUO": f"£{original_allocation_cost + manual_hedge_cost + manual_water_cost + manual_area_cost + ADMIN_FEE_GBP:,.2f}",
+                     "After SUO": f"£{total_with_admin_discounted:,.2f}", "Savings": f"£{cost_savings:,.2f}"}
+                ])
+                st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+                
+                st.info(f"**Total savings: £{cost_savings:,.2f} ({discount_pct:.1f}% discount on allocation costs)**")
+            
+            # Update the displayed total at the top
+            st.info(f"ℹ️ **With SUO Discount**: Subtotal: £{total_discounted_cost:,.0f} | Admin: £{ADMIN_FEE_GBP:,.0f} | **Grand Total: £{total_with_admin_discounted:,.0f}**")
+            
+        else:
+            discount_pct = suo_results['discount_fraction'] * 100
+            st.info(f"ℹ️ SUO discount available ({discount_pct:.1f}% off) but not applied. Check the box above to apply the discount.")
 
 # ========== MANUAL AREA/HEDGEROW/WATERCOURSE ENTRIES (PERSISTENT) ==========
 # This section persists across reruns because it's outside the "if run:" block
@@ -5533,7 +5776,12 @@ if has_optimizer_results or has_manual_entries:
                         promoter_name=st.session_state.get("selected_promoter"),
                         promoter_discount_type=st.session_state.get("promoter_discount_type"),
                         promoter_discount_value=st.session_state.get("promoter_discount_value"),
-                        customer_id=customer_id
+                        customer_id=customer_id,
+                        suo_enabled=st.session_state.get("suo_enabled", False),
+                        suo_discount_fraction=(st.session_state.get("suo_results") or {}).get("discount_fraction"),
+                        suo_eligible_surplus=(st.session_state.get("suo_results") or {}).get("eligible_surplus"),
+                        suo_usable_surplus=(st.session_state.get("suo_results") or {}).get("usable_surplus"),
+                        suo_total_units=(st.session_state.get("suo_results") or {}).get("total_units_purchased")
                     )
                     st.success(f"✅ Quote saved to database! Submission ID: {submission_id}")
                     st.info(f"📊 Client: {form_client_name} | Reference: {form_ref_number} | Total: £{session_total_cost + ADMIN_FEE_GBP:,.0f}")
@@ -5558,7 +5806,8 @@ if has_optimizer_results or has_manual_entries:
             st.session_state.get("removed_allocation_rows", []),
             st.session_state.get("selected_promoter"),
             st.session_state.get("promoter_discount_type"),
-            st.session_state.get("promoter_discount_value")
+            st.session_state.get("promoter_discount_value"),
+            st.session_state.get("suo_discount_for_report", 0.0)
         )
         
         # Display the table
