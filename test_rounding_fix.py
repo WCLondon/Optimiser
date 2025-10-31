@@ -16,13 +16,13 @@ def test_format_units_dynamic():
     print("Testing format_units_dynamic...")
     
     # Import the function from app.py by extracting it
-    # For testing purposes, we'll recreate the function here
+    # For testing purposes, we'll recreate the function here with the fixed logic
     def format_units_dynamic(value):
         """
         Format units to show appropriate significant figures.
         - Detect how many decimal places are needed to preserve accuracy
         - Minimum 2 decimal places, maximum 5 decimal places
-        - Remove trailing zeros after the decimal point
+        - Remove trailing zeros after the decimal point (but keep minimum 2)
         """
         if value == 0:
             return "0.00"
@@ -35,16 +35,27 @@ def test_format_units_dynamic():
             rounded_value = float(formatted)
             if abs(value - rounded_value) / value < 0.005:  # Within 0.5%
                 # Remove trailing zeros but keep at least 2 decimal places
-                formatted = formatted.rstrip('0')
-                # Ensure at least 2 decimal places
-                if '.' in formatted:
-                    decimal_part = formatted.split('.')[1]
+                parts = formatted.split('.')
+                if len(parts) == 2:
+                    integer_part = parts[0]
+                    decimal_part = parts[1].rstrip('0')
+                    # Ensure at least 2 decimal places
                     if len(decimal_part) < 2:
-                        formatted = f"{value:.2f}"
+                        decimal_part = decimal_part.ljust(2, '0')
+                    return f"{integer_part}.{decimal_part}"
                 return formatted
         
-        # If we need more than 5 decimals, use 5 as max
-        return f"{value:.5f}".rstrip('0').rstrip('.')
+        # If we need more than 5 decimals, use 5 as max, but keep at least 2 decimals
+        formatted = f"{value:.5f}"
+        parts = formatted.split('.')
+        if len(parts) == 2:
+            integer_part = parts[0]
+            decimal_part = parts[1].rstrip('0')
+            # Ensure at least 2 decimal places
+            if len(decimal_part) < 2:
+                decimal_part = decimal_part.ljust(2, '0')
+            return f"{integer_part}.{decimal_part}"
+        return formatted
     
     # Test cases from the issue
     test_cases = [
@@ -101,13 +112,25 @@ def test_issue_example():
             formatted = f"{value:.{decimals}f}"
             rounded_value = float(formatted)
             if abs(value - rounded_value) / value < 0.005:
-                formatted = formatted.rstrip('0')
-                if '.' in formatted:
-                    decimal_part = formatted.split('.')[1]
+                # Remove trailing zeros but keep at least 2 decimal places
+                parts = formatted.split('.')
+                if len(parts) == 2:
+                    integer_part = parts[0]
+                    decimal_part = parts[1].rstrip('0')
                     if len(decimal_part) < 2:
-                        formatted = f"{value:.2f}"
+                        decimal_part = decimal_part.ljust(2, '0')
+                    return f"{integer_part}.{decimal_part}"
                 return formatted
-        return f"{value:.5f}".rstrip('0').rstrip('.')
+        # Fallback with minimum 2 decimals
+        formatted = f"{value:.5f}"
+        parts = formatted.split('.')
+        if len(parts) == 2:
+            integer_part = parts[0]
+            decimal_part = parts[1].rstrip('0')
+            if len(decimal_part) < 2:
+                decimal_part = decimal_part.ljust(2, '0')
+            return f"{integer_part}.{decimal_part}"
+        return formatted
     
     display_units_new = format_units_dynamic(upstream_units)  # New: 0.124
     display_price_new = round_to_50(upstream_price_per_unit)  # 22000
