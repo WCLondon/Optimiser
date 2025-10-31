@@ -646,7 +646,7 @@ def parse_metric_requirements(uploaded_file) -> Dict:
     
     This follows the metric reader logic exactly:
     1. Parse Trading Summary sheets
-    2. Apply on-site offsets (habitat trading rules)
+    2. Apply on-site offsets (habitat trading rules) with Medium hierarchy
     3. Parse headline Net Gain target from Headline Results
     4. Allocate remaining surpluses to headline
     5. Return residual off-site requirements AND remaining surplus
@@ -658,10 +658,20 @@ def parse_metric_requirements(uploaded_file) -> Dict:
     - 'baseline_info': Dict with keys 'habitat', 'hedgerow', 'watercourse'
         Each containing: target_percent, baseline_units, units_required, unit_deficit
     - 'surplus': DataFrame with columns: habitat, broad_group, distinctiveness, units_surplus
-        (NEW) Contains remaining surplus after offsetting deficits and headline
+        Contains remaining surplus after offsetting deficits and headline
+    - 'flow_log': List of allocation records from on-site offset processing
+        Each record has: deficit_habitat, deficit_broad_group, deficit_distinctiveness,
+        surplus_habitat, surplus_broad_group, surplus_distinctiveness, 
+        units_allocated, priority_medium
     
     For area: returns combined residual (habitat deficits + headline remainder)
     For hedgerows/watercourses: returns raw deficits (no trading rules applied)
+    
+    Note: Medium distinctiveness deficits are now processed with priority hierarchy:
+    Priority groups (first): Cropland, Lakes, Sparsely vegetated land, Urban, 
+                            Individual trees, Woodland and forest, Intertidal sediment,
+                            Intertidal hard structures
+    Secondary groups (after): Grassland, Heathland and shrub
     """
     try:
         xls = open_metric_workbook(uploaded_file)
@@ -699,12 +709,14 @@ def parse_metric_requirements(uploaded_file) -> Dict:
     # ========== AREA HABITATS - Full trading logic ==========
     area_requirements = []
     surplus_after_all_offsets = pd.DataFrame()
+    area_flow_log = []
     
     if not area_norm.empty:
         # Step 1: Apply on-site offsets
         alloc = apply_area_offsets(area_norm)
         residual_table = alloc["residual_off_site"]
         surplus_detail = alloc["surplus_after_offsets_detail"]
+        area_flow_log = alloc.get("flow_log", [])
         
         # Add habitat residuals
         if not residual_table.empty:
@@ -789,5 +801,6 @@ def parse_metric_requirements(uploaded_file) -> Dict:
         "hedgerows": pd.DataFrame(hedge_requirements) if hedge_requirements else pd.DataFrame(columns=["habitat", "units"]),
         "watercourses": pd.DataFrame(water_requirements) if water_requirements else pd.DataFrame(columns=["habitat", "units"]),
         "baseline_info": headline_all,
-        "surplus": surplus_after_all_offsets if not surplus_after_all_offsets.empty else pd.DataFrame(columns=["habitat", "broad_group", "distinctiveness", "units_surplus"])
+        "surplus": surplus_after_all_offsets if not surplus_after_all_offsets.empty else pd.DataFrame(columns=["habitat", "broad_group", "distinctiveness", "units_surplus"]),
+        "flow_log": area_flow_log
     }
