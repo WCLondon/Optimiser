@@ -3601,6 +3601,57 @@ def optimise(demand_df: pd.DataFrame,
             raise RuntimeError("Optimiser infeasible.")
         best_cost = pulp.value(pulp.lpSum([options[i]["unit_price"] * xA[i] for i in range(len(options))])) or 0.0
 
+        def bundle_and_round_allocations(alloc_df):
+            """
+            Bundle allocations by supply habitat and round up to nearest 0.01.
+            
+            Groups allocations by BANK_KEY, supply_habitat, allocation_type, tier, and paired_parts.
+            Sums units_supplied for each group and rounds up to nearest 0.01.
+            Then creates individual rows for each demand habitat with proportional allocation.
+            """
+            import math
+            
+            if alloc_df.empty:
+                return alloc_df, 0.0
+            
+            # Group by key fields that identify the same supply type
+            group_cols = ["BANK_KEY", "bank_name", "bank_id", "supply_habitat", "allocation_type", "tier", "price_source", "price_habitat"]
+            if "paired_parts" in alloc_df.columns:
+                group_cols.append("paired_parts")
+            
+            # Create a bundle key for grouping
+            alloc_df = alloc_df.copy()
+            alloc_df["_bundle_key"] = alloc_df[[col for col in group_cols if col in alloc_df.columns]].astype(str).agg("||".join, axis=1)
+            
+            # Calculate bundled totals per bundle key
+            bundle_totals = alloc_df.groupby("_bundle_key").agg({
+                "units_supplied": "sum",
+                "cost": "sum"
+            }).reset_index()
+            
+            # Round up bundled units to nearest 0.01
+            bundle_totals["units_supplied_rounded"] = bundle_totals["units_supplied"].apply(lambda x: math.ceil(x * 100) / 100)
+            
+            # Join back to original rows
+            alloc_df = alloc_df.merge(bundle_totals[["_bundle_key", "units_supplied_rounded"]], on="_bundle_key", how="left")
+            
+            # Calculate each row's proportion of the bundle
+            alloc_df["_proportion"] = alloc_df["units_supplied"] / alloc_df.groupby("_bundle_key")["units_supplied"].transform("sum")
+            
+            # Distribute rounded units proportionally
+            alloc_df["units_supplied"] = alloc_df["units_supplied_rounded"] * alloc_df["_proportion"]
+            
+            # Recalculate cost based on new units_supplied
+            alloc_df["cost"] = alloc_df["units_supplied"] * alloc_df["unit_price"]
+            
+            # Clean up temporary columns
+            alloc_df = alloc_df.drop(columns=["_bundle_key", "units_supplied_rounded", "_proportion"])
+            
+            # Calculate total cost
+            total_cost = float(alloc_df["cost"].sum())
+            
+            return alloc_df, total_cost
+
         def extract(xvars, zvars):
             rows, total_cost = [], 0.0
             for i in range(len(options)):
@@ -3629,6 +3680,8 @@ def optimise(demand_df: pd.DataFrame,
             return pd.DataFrame(rows), float(total_cost)
 
         allocA, costA = extract(xA, zA)
+        # Bundle and round allocations
+        allocA, costA = bundle_and_round_allocations(allocA)
 
         # Stage B: minimise #banks, but only if cost stays within numerical precision of Stage A
         # Use a very tight threshold (£10 or 0.01%, whichever is smaller) to ensure we prioritize
@@ -3640,6 +3693,8 @@ def optimise(demand_df: pd.DataFrame,
 
         if statusB in ("Optimal", "Feasible"):
             allocB, costB = extract(xB, zB)
+            # Bundle and round allocations
+            allocB, costB = bundle_and_round_allocations(allocB)
 
             def bank_count(df):
                 return df["BANK_KEY"].nunique() if not df.empty else 0
@@ -3655,6 +3710,8 @@ def optimise(demand_df: pd.DataFrame,
                 statusC = pulp.LpStatus[probC.status]
                 if statusC in ("Optimal", "Feasible"):
                     allocC, costC = extract(xC, zC)
+                    # Bundle and round allocations
+                    allocC, costC = bundle_and_round_allocations(allocC)
                     return allocC, costC, chosen_size
                 return allocB, costB, chosen_size
 
@@ -3736,7 +3793,10 @@ def optimise(demand_df: pd.DataFrame,
             rows.append(row)
             total_cost += need * opt["unit_price"]
 
-        return pd.DataFrame(rows), float(total_cost), chosen_size
+        # Bundle and round allocations for greedy fallback
+        alloc_df = pd.DataFrame(rows)
+        alloc_df, total_cost = bundle_and_round_allocations(alloc_df)
+        return alloc_df, float(total_cost), chosen_size
 
 # ================= Run optimiser UI =================
 st.subheader("3) Run optimiser")
@@ -4266,67 +4326,28 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
     # Helper function to format units with dynamic significant figures
     def format_units_dynamic(value):
         """
-        Format units to show appropriate significant figures.
-        - Detect how many decimal places are needed to preserve accuracy
-        - Minimum 2 decimal places, maximum 5 decimal places
-        - Remove trailing zeros after the decimal point (but keep minimum 2)
+        Format units to 2 decimal places.
+        - All calculations at 2 decimal places
         """
         if value == 0:
             return "0.00"
         
-        # Try formatting with increasing precision until we capture the value accurately
-        for decimals in range(2, 6):  # 2 to 5 decimal places
-            formatted = f"{value:.{decimals}f}"
-            # Check if this precision captures the value accurately enough
-            # (within 0.5% or better than rounding to fewer decimals)
-            rounded_value = float(formatted)
-            # Add safety check for very small values to avoid division by zero
-            if abs(value) < 1e-10:
-                return "0.00"
-            if abs(value - rounded_value) / abs(value) < 0.005:  # Within 0.5%
-                # Remove trailing zeros but keep at least 2 decimal places
-                parts = formatted.split('.')
-                if len(parts) == 2:
-                    integer_part = parts[0]
-                    decimal_part = parts[1].rstrip('0')
-                    # Ensure at least 2 decimal places
-                    if len(decimal_part) < 2:
-                        decimal_part = decimal_part.ljust(2, '0')
-                    return f"{integer_part}.{decimal_part}"
-                return formatted
-        
-        # If we need more than 5 decimals, use 5 as max, but keep at least 2 decimals
-        formatted = f"{value:.5f}"
-        parts = formatted.split('.')
-        if len(parts) == 2:
-            integer_part = parts[0]
-            decimal_part = parts[1].rstrip('0')
-            # Ensure at least 2 decimal places
-            if len(decimal_part) < 2:
-                decimal_part = decimal_part.ljust(2, '0')
-            return f"{integer_part}.{decimal_part}"
+        # Format with 2 decimals
+        formatted = f"{value:.2f}"
         return formatted
     
-    # Helper function to format total row units (max 3 decimals, remove trailing zeros)
+    # Helper function to format total row units (2 decimals)
     def format_units_total(value):
         """
-        Format total row units with up to 3 decimal places.
-        - Maximum 3 decimal places
-        - Remove trailing zeros (but keep at least 2 decimal places)
+        Format total row units with 2 decimal places.
+        - Exactly 2 decimal places
+        - All calculations rounded to 2 decimals
         """
         if value == 0:
             return "0.00"
         
-        # Format with 3 decimals
-        formatted = f"{value:.3f}"
-        parts = formatted.split('.')
-        if len(parts) == 2:
-            integer_part = parts[0]
-            decimal_part = parts[1].rstrip('0')
-            # Ensure at least 2 decimal places
-            if len(decimal_part) < 2:
-                decimal_part = decimal_part.ljust(2, '0')
-            return f"{integer_part}.{decimal_part}"
+        # Format with 2 decimals
+        formatted = f"{value:.2f}"
         return formatted
     
     # Filter out removed allocation rows
@@ -4444,7 +4465,7 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
             row_data = {
                 "Distinctiveness": demand_distinctiveness,
                 "Habitats Lost": demand_habitat_display,
-                "# Units": format_units_dynamic(demand_units),
+                "# Units": format_units_dynamic(supply_units),  # Use supply units (bundled & rounded)
                 "Distinctiveness_Supply": supply_distinctiveness,
                 "Habitats Supplied": supply_habitat,
                 "# Units_Supply": format_units_dynamic(supply_units),

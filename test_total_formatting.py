@@ -1,26 +1,18 @@
 """
-Test script to validate total row formatting (3 decimals max, remove trailing zeros).
+Test script to validate total row formatting (2 decimals).
 """
 
 def format_units_total(value):
     """
-    Format total row units with up to 3 decimal places.
-    - Maximum 3 decimal places
-    - Remove trailing zeros (but keep at least 2 decimal places)
+    Format total row units with 2 decimal places.
+    - Exactly 2 decimal places
+    - All calculations rounded to 2 decimals
     """
     if value == 0:
         return "0.00"
     
-    # Format with 3 decimals
-    formatted = f"{value:.3f}"
-    parts = formatted.split('.')
-    if len(parts) == 2:
-        integer_part = parts[0]
-        decimal_part = parts[1].rstrip('0')
-        # Ensure at least 2 decimal places
-        if len(decimal_part) < 2:
-            decimal_part = decimal_part.ljust(2, '0')
-        return f"{integer_part}.{decimal_part}"
+    # Format with 2 decimals
+    formatted = f"{value:.2f}"
     return formatted
 
 
@@ -30,20 +22,20 @@ def test_format_units_total():
     
     test_cases = [
         # (input, expected_output, description)
-        (0.349, "0.349", "3 significant digits, no trailing zero"),
-        (0.350, "0.35", "trailing zero removed"),
+        (0.349, "0.35", "rounds to 2 decimals"),
+        (0.350, "0.35", "2 decimals"),
         (0.35, "0.35", "already 2 decimals"),
-        (0.228, "0.228", "3 decimals"),
-        (0.121, "0.121", "3 decimals"),
+        (0.228, "0.23", "rounds to 2 decimals"),
+        (0.121, "0.12", "rounds to 2 decimals"),
         (0.12, "0.12", "2 decimals"),
-        (1.5, "1.50", "minimum 2 decimals"),
-        (2.0, "2.00", "minimum 2 decimals"),
-        (0.080, "0.08", "trailing zero removed"),
-        (0.083, "0.083", "3 decimals, no trailing zero"),
+        (1.5, "1.50", "2 decimals"),
+        (2.0, "2.00", "2 decimals"),
+        (0.080, "0.08", "2 decimals"),
+        (0.083, "0.08", "rounds to 2 decimals"),
         (0.0, "0.00", "zero case"),
-        (0.3456, "0.346", "rounds to 3 decimals"),
-        (10.123, "10.123", "integer > 1 with 3 decimals"),
-        (10.120, "10.12", "integer > 1 with trailing zero"),
+        (0.3456, "0.35", "rounds to 2 decimals"),
+        (10.123, "10.12", "rounds to 2 decimals"),
+        (10.126, "10.13", "rounds up to 2 decimals"),
     ]
     
     all_passed = True
@@ -69,12 +61,8 @@ def test_user_example():
     
     print(f"  Formatted total: {formatted_total}")
     
-    # The user's example shows "0.35" in the total row, which suggests rounding
-    # But the comment says "keep the total rows as 3 decimal places (unless there are trailing zeros)"
-    # So 0.349 should display as "0.349" (3 decimals, no trailing zero)
-    # But 0.350 should display as "0.35" (trailing zero removed)
-    
-    expected = "0.349"  # 3 decimals, no trailing zero
+    # With 2 decimal places, 0.349 should round to 0.35
+    expected = "0.35"  # 2 decimals
     if formatted_total == expected:
         print(f"  ✓ Correct: {formatted_total} matches expected {expected}")
         return True
@@ -85,7 +73,7 @@ def test_user_example():
 
 def main():
     print("=" * 60)
-    print("Total Row Formatting Tests")
+    print("Total Row Formatting Tests (2 decimals)")
     print("=" * 60)
     
     test1_passed = test_format_units_total()
