@@ -1,11 +1,26 @@
-streamlit>=1.37
+# Shiny for Python
+shiny>=0.7
+shinywidgets>=0.3
+
+# Data processing
 pandas>=2.1
-requests>=2.31
-streamlit-folium>=0.18
+numpy>=1.24
+
+# Visualization
+plotly>=5.14
 folium>=0.16
-pulp>=2.7   # optional; app falls back to greedy if not present
+
+# HTTP requests
+requests>=2.31
+
+# Optimization (optional)
+pulp>=2.7
+
+# Database
 sqlalchemy>=2.0
 psycopg[binary]>=3.1
 tenacity>=8.0
-openpyxl>=3.1   # for BNG metric Excel reading
-pyxlsb>=1.0     # for BNG metric .xlsb files
+
+# Excel file support
+openpyxl>=3.1
+pyxlsb>=1.0

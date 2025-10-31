@@ -28,7 +28,7 @@ See [DATABASE_FEATURE.md](DATABASE_FEATURE.md) for database feature documentatio
 ## Requirements
 
 - Python 3.8+
-- Streamlit 1.37+
+- Shiny for Python 0.7+
 - PostgreSQL 12+ (for production deployment)
 - See `requirements.txt` for full dependencies
 
@@ -45,29 +45,31 @@ cd Optimiser
 pip install -r requirements.txt
 ```
 
-3. Configure database and authentication:
-Create `.streamlit/secrets.toml`:
-```toml
-[database]
-url = "postgresql://user:password@host:port/database"
-
-[auth]
-username = "your_username"
-password = "your_password"
-
-[admin]
-password = "admin_password"
+3. Configure environment variables:
+Copy `.env.example` to `.env` and update with your settings:
+```bash
+cp .env.example .env
 ```
+
+Edit `.env` to set your database URL and credentials.
 
 ## Usage
 
-### Running the Application
+### Run with Shiny
+
+Start the application with auto-reload for development:
 
 ```bash
-streamlit run app.py
+shiny run --reload app.py
 ```
 
-The app will open in your default web browser at `http://localhost:8501`
+Or use the Makefile:
+
+```bash
+make run
+```
+
+The app will be available at `http://localhost:8000`
 
 ### Basic Workflow
 
