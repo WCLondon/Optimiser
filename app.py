@@ -4259,9 +4259,9 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
     if removed_allocation_rows is None:
         removed_allocation_rows = []
     
-    # Helper function to round unit price to nearest £100
-    def round_to_100(price):
-        return round(price / 100) * 100
+    # Helper function to round unit price to nearest £50
+    def round_to_50(price):
+        return round(price / 50) * 50
     
     # Filter out removed allocation rows
     if "_row_id" not in alloc_df.columns:
@@ -4314,8 +4314,8 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                 unit_price = unit_price * (1 - suo_discount_fraction)
                 offset_cost = offset_cost * (1 - suo_discount_fraction)
             
-            # Round unit price to nearest £100
-            unit_price = round_to_100(unit_price)
+            # Round unit price to nearest £50
+            unit_price = round_to_50(unit_price)
             # Recalculate offset cost with rounded unit price
             offset_cost = unit_price * supply_units
             
@@ -4403,6 +4403,8 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
         price_per_unit = float(row.get("price_per_unit", 0.0) or 0.0)
         
         if habitat_name and units > 0:
+            # Round price to nearest £50
+            price_per_unit = round_to_50(price_per_unit)
             offset_cost = units * price_per_unit
             manual_hedgerow_cost += offset_cost
             
@@ -4459,6 +4461,8 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
         price_per_unit = float(row.get("price_per_unit", 0.0) or 0.0)
         
         if habitat_name and units > 0:
+            # Round price to nearest £50
+            price_per_unit = round_to_50(price_per_unit)
             offset_cost = units * price_per_unit
             manual_watercourse_cost += offset_cost
             
@@ -4529,6 +4533,10 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                 # Calculate units for each habitat
                 demand_units = units * demand_stock
                 companion_units = units * companion_stock
+                
+                # Round prices to nearest £50
+                demand_price = round_to_50(demand_price)
+                companion_price = round_to_50(companion_price)
                 
                 # Calculate costs
                 demand_cost = demand_units * demand_price
@@ -4609,6 +4617,8 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                 price_per_unit = float(row.get("price_per_unit", 0.0) or 0.0)
                 
                 if habitat_name:
+                    # Round price to nearest £50
+                    price_per_unit = round_to_50(price_per_unit)
                     offset_cost = units * price_per_unit
                     manual_area_cost += offset_cost
                     
