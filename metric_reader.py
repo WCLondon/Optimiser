@@ -4,11 +4,31 @@ Extracts requirements from DEFRA BNG metric Excel files
 """
 
 import io
+import math
 import os
 import re
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
+
+
+def round_up_to_nearest_hundredth(value: float) -> float:
+    """
+    Round up to the nearest 0.01 (hundredth).
+    Minimum unit delivery is 0.01 units.
+    
+    Examples:
+        0.001 -> 0.01
+        0.005 -> 0.01
+        0.01 -> 0.01
+        0.011 -> 0.02
+        0.228 -> 0.23
+        1.501 -> 1.51
+    """
+    if value <= 0:
+        return 0.0
+    # Round up to nearest 0.01
+    return math.ceil(value * 100) / 100
 
 
 # ------------- Medium distinctiveness hierarchy -------------
@@ -406,7 +426,7 @@ def apply_area_offsets(area_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
                 "habitat": d_hab,
                 "broad_group": d_broad,
                 "distinctiveness": d_band,
-                "unmet_units_after_on_site_offset": round(unmet, 6)
+                "unmet_units_after_on_site_offset": round_up_to_nearest_hundredth(unmet)
             })
 
     # Detail table of remaining surpluses (for headline allocation)
@@ -731,7 +751,7 @@ def parse_metric_requirements(uploaded_file) -> Dict:
             for _, row in residual_table.iterrows():
                 area_requirements.append({
                     "habitat": clean_text(row["habitat"]),
-                    "units": float(row["unmet_units_after_on_site_offset"])
+                    "units": round_up_to_nearest_hundredth(float(row["unmet_units_after_on_site_offset"]))
                 })
         
         # Step 2: Parse headline target
@@ -774,7 +794,7 @@ def parse_metric_requirements(uploaded_file) -> Dict:
         if residual_headline > 1e-9:
             area_requirements.append({
                 "habitat": "Net Gain (Low-equivalent)",
-                "units": round(residual_headline, 4)
+                "units": round_up_to_nearest_hundredth(residual_headline)
             })
         
         # Keep only non-zero surplus
@@ -790,7 +810,7 @@ def parse_metric_requirements(uploaded_file) -> Dict:
         for _, row in deficits.iterrows():
             hedge_requirements.append({
                 "habitat": clean_text(row["habitat"]),
-                "units": abs(float(row["project_wide_change"]))
+                "units": round_up_to_nearest_hundredth(abs(float(row["project_wide_change"])))
             })
     
     # ========== WATERCOURSES - Simple deficits ==========
@@ -801,7 +821,7 @@ def parse_metric_requirements(uploaded_file) -> Dict:
         for _, row in deficits.iterrows():
             water_requirements.append({
                 "habitat": clean_text(row["habitat"]),
-                "units": abs(float(row["project_wide_change"]))
+                "units": round_up_to_nearest_hundredth(abs(float(row["project_wide_change"])))
             })
     
     return {

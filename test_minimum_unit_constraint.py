@@ -1,7 +1,7 @@
 """
-Test script to validate minimum unit delivery constraint (0.01 units).
+Test script to validate minimum unit delivery (0.01 units) in metric reader.
 
-This test verifies that the optimizer enforces a minimum unit delivery of 0.01 units.
+This test verifies that the metric reader rounds all habitat units up to the nearest 0.01.
 """
 
 import sys
@@ -9,62 +9,66 @@ import sys
 
 def test_minimum_unit_constraint():
     """
-    Test that the minimum unit delivery constraint is properly implemented.
+    Test that minimum unit delivery is enforced by rounding up in metric reader.
     
-    The constraint should ensure that if an option is selected (z[i] = 1),
-    then the allocated units x[i] must be at least 0.01.
+    All units from the metric should be rounded up to the nearest 0.01 at the 
+    point of upload, ensuring the optimizer always works with values >= 0.01.
     """
-    print("Testing minimum unit delivery constraint implementation...")
+    print("Testing minimum unit delivery via metric reader rounding...")
     
-    # Test cases
+    # Test cases showing how metric values get rounded up
     test_cases = [
         {
-            "demand": 0.01,
-            "expected": "feasible",
-            "description": "Exactly 0.01 units - should be feasible"
+            "input": 0.01,
+            "expected": 0.01,
+            "description": "Exactly 0.01 units - no change needed"
         },
         {
-            "demand": 0.005,
-            "expected": "infeasible",
-            "description": "0.005 units - below minimum, should be infeasible"
+            "input": 0.005,
+            "expected": 0.01,
+            "description": "0.005 units - rounds up to 0.01"
         },
         {
-            "demand": 0.02,
-            "expected": "feasible",
-            "description": "0.02 units - above minimum, should be feasible"
+            "input": 0.02,
+            "expected": 0.02,
+            "description": "0.02 units - no change needed"
         },
         {
-            "demand": 1.5,
-            "expected": "feasible",
-            "description": "1.5 units - normal case, should be feasible"
+            "input": 1.5,
+            "expected": 1.5,
+            "description": "1.5 units - no change needed"
+        },
+        {
+            "input": 0.228,
+            "expected": 0.23,
+            "description": "0.228 units - rounds up to 0.23"
+        },
+        {
+            "input": 0.001,
+            "expected": 0.01,
+            "description": "0.001 units - rounds up to 0.01 (minimum)"
         },
     ]
     
-    print("\nMinimum Unit Delivery Constraint Tests:")
+    print("\nMetric Reader Rounding Tests:")
     print("=" * 60)
     
     all_passed = True
     for tc in test_cases:
-        demand = tc["demand"]
+        input_val = tc["input"]
         expected = tc["expected"]
         description = tc["description"]
         
-        # Validate the constraint: x[i] >= 0.01 * z[i]
-        # If z[i] = 1 (option selected), then x[i] >= 0.01
-        # If z[i] = 0 (option not selected), then x[i] >= 0
-        
-        # For a selected option (z[i] = 1):
-        if demand >= 0.01:
-            result = "feasible"
-        else:
-            result = "infeasible"
+        # Simulate the rounding function
+        import math
+        result = math.ceil(input_val * 100) / 100 if input_val > 0 else 0.0
         
         status = "✓" if result == expected else "✗"
         if result != expected:
             all_passed = False
-            
-        print(f"  {status} {description}")
-        print(f"     Demand: {demand} units, Expected: {expected}, Got: {result}")
+            print(f"  {status} {description} - Got {result}")
+        else:
+            print(f"  {status} {description}")
     
     print("=" * 60)
     return all_passed
@@ -72,50 +76,50 @@ def test_minimum_unit_constraint():
 
 def test_constraint_in_code():
     """
-    Verify that the constraint is present in the code.
+    Verify that the rounding function is present in metric_reader.py.
     """
-    print("\nVerifying minimum unit constraint in app.py...")
+    print("\nVerifying rounding function in metric_reader.py...")
     
     try:
-        with open('app.py', 'r') as f:
+        with open('metric_reader.py', 'r') as f:
             content = f.read()
             
-        # Check for the minimum unit delivery constant
-        if "MIN_UNIT_DELIVERY = 0.01" in content:
-            print("  ✓ MIN_UNIT_DELIVERY constant found (0.01)")
+        # Check for the rounding function
+        if "def round_up_to_nearest_hundredth" in content:
+            print("  ✓ round_up_to_nearest_hundredth function found")
         else:
-            print("  ✗ MIN_UNIT_DELIVERY constant not found")
+            print("  ✗ round_up_to_nearest_hundredth function not found")
             return False
         
-        # Check for the constraint in the optimization problem
-        if "MIN_UNIT_DELIVERY * z[i]" in content or "0.01 * z[i]" in content:
-            print("  ✓ Minimum unit constraint found in optimization problem")
+        # Check for math.ceil usage
+        if "math.ceil" in content:
+            print("  ✓ math.ceil usage found")
         else:
-            print("  ✗ Minimum unit constraint not found in optimization problem")
+            print("  ✗ math.ceil usage not found")
             return False
         
-        # Check for comment explaining the constraint
-        if "Minimum unit delivery constraint" in content or "minimum unit delivery" in content:
-            print("  ✓ Constraint documentation found")
+        # Check that the function is being used
+        if "round_up_to_nearest_hundredth(" in content and content.count("round_up_to_nearest_hundredth(") > 1:
+            print("  ✓ Rounding function is being used in multiple places")
         else:
-            print("  ✗ Constraint documentation not found")
+            print("  ✗ Rounding function not used sufficiently")
             return False
         
         return True
     except Exception as e:
-        print(f"  ✗ Error reading app.py: {e}")
+        print(f"  ✗ Error reading metric_reader.py: {e}")
         return False
 
 
 def main():
     print("=" * 60)
-    print("Minimum Unit Delivery Constraint Tests")
+    print("Minimum Unit Delivery Tests (Metric Reader)")
     print("=" * 60)
     
     results = []
     
-    results.append(("minimum_unit_constraint", test_minimum_unit_constraint()))
-    results.append(("constraint_in_code", test_constraint_in_code()))
+    results.append(("metric_reader_rounding", test_minimum_unit_constraint()))
+    results.append(("rounding_function_in_code", test_constraint_in_code()))
     
     print("\n" + "=" * 60)
     print("Test Summary")

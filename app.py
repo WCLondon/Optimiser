@@ -3571,16 +3571,12 @@ def optimise(demand_df: pd.DataFrame,
                 prob += z[i] <= y[opt["BANK_KEY"]]
 
             # Exactly one option per demand; meet its units; bind x to z
-            # Minimum unit delivery constraint: 0.01 units
-            MIN_UNIT_DELIVERY = 0.01
             for di, idxs in idx_by_dem.items():
                 need = dem_need[di]
                 prob += pulp.lpSum([z[i] for i in idxs]) == 1
                 prob += pulp.lpSum([x[i] for i in idxs]) == need
                 for i in idxs:
                     prob += x[i] <= need * z[i]
-                    # If option i is selected (z[i] = 1), then x[i] must be at least 0.01
-                    prob += x[i] >= MIN_UNIT_DELIVERY * z[i]
 
             # Stock capacity constraints
             use_map: Dict[str, List[Tuple[int, float]]] = {}

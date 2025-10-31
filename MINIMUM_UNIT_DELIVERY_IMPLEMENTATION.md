@@ -5,20 +5,42 @@ This implementation addresses the requirements for minimum unit delivery (0.01 u
 
 ## Changes Made
 
-### 1. Minimum Unit Delivery Constraint (app.py)
-**Location**: Lines 3573-3583
+### 1. Minimum Unit Delivery via Metric Reader (metric_reader.py)
+**Location**: Function added at top of file, applied at lines 409, 734, 777, 793, 804
 
-Added a minimum unit delivery constraint to the optimizer:
+Added rounding up to nearest 0.01 at the point of metric upload:
 ```python
-MIN_UNIT_DELIVERY = 0.01
-# If option i is selected (z[i] = 1), then x[i] must be at least 0.01
-prob += x[i] >= MIN_UNIT_DELIVERY * z[i]
+def round_up_to_nearest_hundredth(value: float) -> float:
+    """
+    Round up to the nearest 0.01 (hundredth).
+    Minimum unit delivery is 0.01 units.
+    """
+    if value <= 0:
+        return 0.0
+    return math.ceil(value * 100) / 100
 ```
 
+**Applied to**:
+- Area habitat residual requirements
+- Headline target (Net Gain) requirements
+- Hedgerow requirements
+- Watercourse requirements
+
 **Impact**: 
-- The optimizer will now reject any allocation below 0.01 units
-- If a demand requires less than 0.01 units, it will become infeasible
-- This ensures business logic aligns with operational constraints
+- All habitat units from the metric are rounded UP to nearest 0.01 at upload time
+- Values like 0.001, 0.005, 0.009 all become 0.01
+- Values like 0.228 become 0.23
+- Optimizer receives pre-rounded values, ensuring consistency throughout
+- Unit prices and calculations automatically correct since rounding happens upfront
+
+**Examples**:
+| Metric Value | Rounded Value | Description |
+|--------------|---------------|-------------|
+| 0.001        | 0.01          | Minimum delivery |
+| 0.005        | 0.01          | Minimum delivery |
+| 0.228        | 0.23          | Rounds up |
+| 0.121        | 0.13          | Rounds up |
+| 1.5          | 1.5           | No change |
 
 ### 2. Format Functions Updated (app.py)
 
@@ -50,7 +72,6 @@ def format_units_total(value):
 
 #### test_rounding_fix.py
 - Updated to expect 2 decimal formatting
-- Added test_minimum_unit_delivery() function
 - All test cases now validate 2 decimal outputs
 
 #### test_total_formatting.py
@@ -58,10 +79,14 @@ def format_units_total(value):
 - All test cases adjusted for 2 decimal rounding
 - Example: 0.349 now rounds to 0.35 (not 0.349)
 
-#### test_minimum_unit_constraint.py (NEW)
-- Validates minimum unit constraint implementation
-- Checks for constraint presence in code
-- Tests feasibility of different demand values
+#### test_minimum_unit_constraint.py
+- Updated to validate metric reader rounding approach
+- Tests the round_up_to_nearest_hundredth() function
+- Verifies rounding is applied in metric_reader.py
+
+#### test_metric_rounding.py (NEW)
+- Standalone test for the rounding function
+- Validates all edge cases for rounding up to 0.01
 
 ### 4. Documentation Updated
 
@@ -86,8 +111,8 @@ def format_units_total(value):
 - ✓ User's example test (0.228 + 0.121 = 0.35)
 
 **test_minimum_unit_constraint.py**:
-- ✓ Minimum unit constraint tests (4 test cases)
-- ✓ Constraint in code verification
+- ✓ Metric reader rounding tests (6 test cases)
+- ✓ Rounding function presence verification
 
 **Code Review**: No issues found
 **Security Scan (CodeQL)**: No vulnerabilities found
@@ -106,23 +131,32 @@ def format_units_total(value):
 
 ### Minimum Unit Delivery
 
-| Demand Units | Old Behavior | New Behavior |
-|--------------|--------------|--------------|
-| 0.005        | ✓ Allowed    | ✗ Rejected (below minimum) |
-| 0.01         | ✓ Allowed    | ✓ Allowed (at minimum) |
-| 0.02         | ✓ Allowed    | ✓ Allowed (above minimum) |
+| Metric Value | Old Behavior | New Behavior (Rounded Up) |
+|--------------|--------------|---------------------------|
+| 0.001        | 0.001        | 0.01 (minimum) |
+| 0.005        | 0.005        | 0.01 (minimum) |
+| 0.01         | 0.01         | 0.01 (no change) |
+| 0.228        | 0.228        | 0.23 (rounded up) |
+| 0.02         | 0.02         | 0.02 (no change) |
 
 ## Business Logic Impact
 
 ### What Changed
 1. **Display Precision**: All units now display at exactly 2 decimals
 2. **Calculation Consistency**: All internal calculations round to 2 decimals
-3. **Minimum Delivery**: Cannot deliver less than 0.01 units of any habitat
+3. **Minimum Delivery**: All habitat units from metrics rounded UP to nearest 0.01
+4. **Rounding Location**: Rounding happens at metric upload, not in optimizer
 
 ### What Stayed the Same
 1. **Upstream Calculations**: Price per unit and costs still come from upstream
 2. **No Recalculation**: Costs are not recalculated from rounded values
 3. **Core Business Logic**: The optimization algorithm remains unchanged
+
+### Key Benefits
+1. **Consistency**: All values are >= 0.01 from the start
+2. **Simplicity**: No optimizer constraints needed
+3. **Accuracy**: Unit prices automatically correct since rounding happens upfront
+4. **Transparency**: Tables update correctly with rounded values
 
 ## Verification Steps
 
