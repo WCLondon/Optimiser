@@ -16,6 +16,7 @@ help:
 	@echo "BNG Optimiser Deployment"
 	@echo ""
 	@echo "Local Development:"
+	@echo "  make run               - Run Shiny app with auto-reload"
 	@echo "  make local-up          - Start all services locally with docker-compose"
 	@echo "  make local-down        - Stop all services"
 	@echo "  make local-logs        - View logs from all services"
@@ -38,6 +39,11 @@ help:
 	@echo "Configuration:"
 	@echo "  PROJECT_ID=$(PROJECT_ID)"
 	@echo "  REGION=$(REGION)"
+
+# Shiny Development
+.PHONY: run
+run:
+	shiny run --reload app.py
 
 # Local Development
 .PHONY: local-up

@@ -7,9 +7,9 @@ from sqlalchemy import create_engine, text, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import NullPool
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-import streamlit as st
 from typing import Optional
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -23,21 +23,24 @@ class DatabaseConnection:
     def get_engine(cls) -> Engine:
         """
         Get or create the SQLAlchemy engine.
-        Reads connection string from Streamlit secrets.
+        Reads connection string from environment variable.
         """
         if cls._engine is None:
-            # Get database URL from Streamlit secrets
-            try:
-                db_url = st.secrets.get("database", {}).get("url")
-                if not db_url:
-                    raise ValueError(
-                        "Database URL not found in Streamlit secrets. "
-                        "Please add [database] url = 'postgresql://...' to secrets.toml"
-                    )
-            except Exception as e:
+            # Get database URL from environment variable
+            db_url = os.getenv("DATABASE_URL")
+            
+            # Fallback: try to load from Streamlit secrets if available
+            if not db_url:
+                try:
+                    import streamlit as st
+                    db_url = st.secrets.get("database", {}).get("url")
+                except ImportError:
+                    pass
+            
+            if not db_url:
                 raise ValueError(
-                    f"Failed to read database URL from secrets: {e}. "
-                    "Please configure [database] url in .streamlit/secrets.toml"
+                    "Database URL not found. "
+                    "Please set DATABASE_URL environment variable or configure in secrets"
                 )
             
             # Create engine with connection pooling

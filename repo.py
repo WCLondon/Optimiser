@@ -4,7 +4,7 @@ Reads all reference data from Supabase Postgres tables via SQLAlchemy Core.
 All table names and column names match the Excel tab names exactly.
 """
 
-import streamlit as st
+from functools import lru_cache
 import pandas as pd
 from sqlalchemy import text, MetaData, Table
 from typing import Dict, Optional
@@ -15,11 +15,9 @@ from db import DatabaseConnection
 logger = logging.getLogger(__name__)
 
 
-@st.cache_resource
 def get_db_engine():
     """
     Get the SQLAlchemy engine for database connections.
-    Cached as a resource to reuse across app reruns.
     
     Returns:
         SQLAlchemy Engine instance
@@ -27,7 +25,7 @@ def get_db_engine():
     return DatabaseConnection.get_engine()
 
 
-@st.cache_data(ttl=600)
+@lru_cache(maxsize=1)
 def fetch_banks() -> pd.DataFrame:
     """
     Fetch Banks reference table from Supabase.
@@ -57,7 +55,7 @@ def fetch_banks() -> pd.DataFrame:
         raise RuntimeError(f"Failed to fetch Banks table from database: {e}")
 
 
-@st.cache_data(ttl=600)
+@lru_cache(maxsize=1)
 def fetch_pricing() -> pd.DataFrame:
     """
     Fetch Pricing reference table from Supabase.
@@ -86,7 +84,7 @@ def fetch_pricing() -> pd.DataFrame:
         raise RuntimeError(f"Failed to fetch Pricing table from database: {e}")
 
 
-@st.cache_data(ttl=600)
+@lru_cache(maxsize=1)
 def fetch_habitat_catalog() -> pd.DataFrame:
     """
     Fetch HabitatCatalog reference table from Supabase.
@@ -112,7 +110,7 @@ def fetch_habitat_catalog() -> pd.DataFrame:
         raise RuntimeError(f"Failed to fetch HabitatCatalog table from database: {e}")
 
 
-@st.cache_data(ttl=600)
+@lru_cache(maxsize=1)
 def fetch_stock() -> pd.DataFrame:
     """
     Fetch Stock reference table from Supabase.
@@ -138,7 +136,7 @@ def fetch_stock() -> pd.DataFrame:
         raise RuntimeError(f"Failed to fetch Stock table from database: {e}")
 
 
-@st.cache_data(ttl=600)
+@lru_cache(maxsize=1)
 def fetch_distinctiveness_levels() -> pd.DataFrame:
     """
     Fetch DistinctivenessLevels reference table from Supabase.
@@ -162,7 +160,7 @@ def fetch_distinctiveness_levels() -> pd.DataFrame:
         raise RuntimeError(f"Failed to fetch DistinctivenessLevels table from database: {e}")
 
 
-@st.cache_data(ttl=600)
+@lru_cache(maxsize=1)
 def fetch_srm() -> pd.DataFrame:
     """
     Fetch SRM (Strategic Resource Multipliers) reference table from Supabase.
@@ -186,7 +184,7 @@ def fetch_srm() -> pd.DataFrame:
         raise RuntimeError(f"Failed to fetch SRM table from database: {e}")
 
 
-@st.cache_data(ttl=600)
+@lru_cache(maxsize=1)
 def fetch_trading_rules() -> pd.DataFrame:
     """
     Fetch TradingRules reference table from Supabase (optional).
