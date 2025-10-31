@@ -4263,6 +4263,72 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
     def round_to_50(price):
         return round(price / 50) * 50
     
+    # Helper function to format units with dynamic significant figures
+    def format_units_dynamic(value):
+        """
+        Format units to show appropriate significant figures.
+        - Detect how many decimal places are needed to preserve accuracy
+        - Minimum 2 decimal places, maximum 5 decimal places
+        - Remove trailing zeros after the decimal point (but keep minimum 2)
+        """
+        if value == 0:
+            return "0.00"
+        
+        # Try formatting with increasing precision until we capture the value accurately
+        for decimals in range(2, 6):  # 2 to 5 decimal places
+            formatted = f"{value:.{decimals}f}"
+            # Check if this precision captures the value accurately enough
+            # (within 0.5% or better than rounding to fewer decimals)
+            rounded_value = float(formatted)
+            # Add safety check for very small values to avoid division by zero
+            if abs(value) < 1e-10:
+                return "0.00"
+            if abs(value - rounded_value) / abs(value) < 0.005:  # Within 0.5%
+                # Remove trailing zeros but keep at least 2 decimal places
+                parts = formatted.split('.')
+                if len(parts) == 2:
+                    integer_part = parts[0]
+                    decimal_part = parts[1].rstrip('0')
+                    # Ensure at least 2 decimal places
+                    if len(decimal_part) < 2:
+                        decimal_part = decimal_part.ljust(2, '0')
+                    return f"{integer_part}.{decimal_part}"
+                return formatted
+        
+        # If we need more than 5 decimals, use 5 as max, but keep at least 2 decimals
+        formatted = f"{value:.5f}"
+        parts = formatted.split('.')
+        if len(parts) == 2:
+            integer_part = parts[0]
+            decimal_part = parts[1].rstrip('0')
+            # Ensure at least 2 decimal places
+            if len(decimal_part) < 2:
+                decimal_part = decimal_part.ljust(2, '0')
+            return f"{integer_part}.{decimal_part}"
+        return formatted
+    
+    # Helper function to format total row units (max 3 decimals, remove trailing zeros)
+    def format_units_total(value):
+        """
+        Format total row units with up to 3 decimal places.
+        - Maximum 3 decimal places
+        - Remove trailing zeros (but keep at least 2 decimal places)
+        """
+        if value == 0:
+            return "0.00"
+        
+        # Format with 3 decimals
+        formatted = f"{value:.3f}"
+        parts = formatted.split('.')
+        if len(parts) == 2:
+            integer_part = parts[0]
+            decimal_part = parts[1].rstrip('0')
+            # Ensure at least 2 decimal places
+            if len(decimal_part) < 2:
+                decimal_part = decimal_part.ljust(2, '0')
+            return f"{integer_part}.{decimal_part}"
+        return formatted
+    
     # Filter out removed allocation rows
     if "_row_id" not in alloc_df.columns:
         alloc_df = alloc_df.copy()
@@ -4314,10 +4380,10 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                 unit_price = unit_price * (1 - suo_discount_fraction)
                 offset_cost = offset_cost * (1 - suo_discount_fraction)
             
-            # Round unit price to nearest £50
-            unit_price = round_to_50(unit_price)
-            # Recalculate offset cost with rounded unit price
-            offset_cost = unit_price * supply_units
+            # Round unit price to nearest £50 for display only
+            unit_price_display = round_to_50(unit_price)
+            # Round offset cost to nearest pound for display
+            offset_cost_display = round(offset_cost)
             
             # For paired allocations, show only the highest distinctiveness habitat
             allocation_type = sstr(alloc_row.get("allocation_type", "normal"))
@@ -4378,12 +4444,12 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
             row_data = {
                 "Distinctiveness": demand_distinctiveness,
                 "Habitats Lost": demand_habitat_display,
-                "# Units": f"{demand_units:.2f}",
+                "# Units": format_units_dynamic(demand_units),
                 "Distinctiveness_Supply": supply_distinctiveness,
                 "Habitats Supplied": supply_habitat,
-                "# Units_Supply": f"{supply_units:.2f}",
-                "Price Per Unit": f"£{unit_price:,.0f}",
-                "Offset Cost": f"£{offset_cost:,.0f}"
+                "# Units_Supply": format_units_dynamic(supply_units),
+                "Price Per Unit": f"£{unit_price_display:,.0f}",
+                "Offset Cost": f"£{offset_cost_display:,.0f}"
             }
             
             # Categorize by habitat type
@@ -4403,9 +4469,11 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
         price_per_unit = float(row.get("price_per_unit", 0.0) or 0.0)
         
         if habitat_name and units > 0:
-            # Round price to nearest £50
-            price_per_unit = round_to_50(price_per_unit)
+            # Use price_per_unit from upstream, round for display only
+            price_per_unit_display = round_to_50(price_per_unit)
+            # Calculate offset cost using actual price, round to nearest pound for display
             offset_cost = units * price_per_unit
+            offset_cost_display = round(offset_cost)
             manual_hedgerow_cost += offset_cost
             
             # Determine distinctiveness for lost habitat
@@ -4443,12 +4511,12 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
             row_data = {
                 "Distinctiveness": demand_distinctiveness,
                 "Habitats Lost": demand_habitat_display,
-                "# Units": f"{units:.2f}",
+                "# Units": format_units_dynamic(units),
                 "Distinctiveness_Supply": supply_distinctiveness,
                 "Habitats Supplied": supply_habitat_display,
-                "# Units_Supply": f"{units:.2f}",
-                "Price Per Unit": f"£{price_per_unit:,.0f}",
-                "Offset Cost": f"£{offset_cost:,.0f}"
+                "# Units_Supply": format_units_dynamic(units),
+                "Price Per Unit": f"£{price_per_unit_display:,.0f}",
+                "Offset Cost": f"£{offset_cost_display:,.0f}"
             }
             hedgerow_habitats.append(row_data)
     
@@ -4461,9 +4529,11 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
         price_per_unit = float(row.get("price_per_unit", 0.0) or 0.0)
         
         if habitat_name and units > 0:
-            # Round price to nearest £50
-            price_per_unit = round_to_50(price_per_unit)
+            # Use price_per_unit from upstream, round for display only
+            price_per_unit_display = round_to_50(price_per_unit)
+            # Calculate offset cost using actual price, round to nearest pound for display
             offset_cost = units * price_per_unit
+            offset_cost_display = round(offset_cost)
             manual_watercourse_cost += offset_cost
             
             # Determine distinctiveness for lost habitat
@@ -4501,12 +4571,12 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
             row_data = {
                 "Distinctiveness": demand_distinctiveness,
                 "Habitats Lost": demand_habitat_display,
-                "# Units": f"{units:.2f}",
+                "# Units": format_units_dynamic(units),
                 "Distinctiveness_Supply": supply_distinctiveness,
                 "Habitats Supplied": supply_habitat_display,
-                "# Units_Supply": f"{units:.2f}",
-                "Price Per Unit": f"£{price_per_unit:,.0f}",
-                "Offset Cost": f"£{offset_cost:,.0f}"
+                "# Units_Supply": format_units_dynamic(units),
+                "Price Per Unit": f"£{price_per_unit_display:,.0f}",
+                "Offset Cost": f"£{offset_cost_display:,.0f}"
             }
             watercourse_habitats.append(row_data)
     
@@ -4534,13 +4604,15 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                 demand_units = units * demand_stock
                 companion_units = units * companion_stock
                 
-                # Round prices to nearest £50
-                demand_price = round_to_50(demand_price)
-                companion_price = round_to_50(companion_price)
+                # Use prices from upstream, round for display only
+                demand_price_display = round_to_50(demand_price)
+                companion_price_display = round_to_50(companion_price)
                 
-                # Calculate costs
+                # Calculate costs using actual prices, round to nearest pound for display
                 demand_cost = demand_units * demand_price
                 companion_cost = companion_units * companion_price
+                demand_cost_display = round(demand_cost)
+                companion_cost_display = round(companion_cost)
                 total_paired_cost = demand_cost + companion_cost
                 manual_area_cost += total_paired_cost
                 
@@ -4577,12 +4649,12 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                     row_data = {
                         "Distinctiveness": demand_distinctiveness,
                         "Habitats Lost": demand_habitat_display,
-                        "# Units": f"{units:.2f}",
+                        "# Units": format_units_dynamic(units),
                         "Distinctiveness_Supply": demand_supply_dist,
                         "Habitats Supplied": demand_display,
-                        "# Units_Supply": f"{demand_units:.2f}",
-                        "Price Per Unit": f"£{demand_price:,.0f}",
-                        "Offset Cost": f"£{demand_cost:,.0f}"
+                        "# Units_Supply": format_units_dynamic(demand_units),
+                        "Price Per Unit": f"£{demand_price_display:,.0f}",
+                        "Offset Cost": f"£{demand_cost_display:,.0f}"
                     }
                     area_habitats.append(row_data)
                 
@@ -4602,12 +4674,12 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                     row_data = {
                         "Distinctiveness": demand_distinctiveness,
                         "Habitats Lost": demand_habitat_display,
-                        "# Units": f"{units:.2f}",
+                        "# Units": format_units_dynamic(units),
                         "Distinctiveness_Supply": companion_supply_dist,
                         "Habitats Supplied": companion_display,
-                        "# Units_Supply": f"{companion_units:.2f}",
-                        "Price Per Unit": f"£{companion_price:,.0f}",
-                        "Offset Cost": f"£{companion_cost:,.0f}"
+                        "# Units_Supply": format_units_dynamic(companion_units),
+                        "Price Per Unit": f"£{companion_price_display:,.0f}",
+                        "Offset Cost": f"£{companion_cost_display:,.0f}"
                     }
                     area_habitats.append(row_data)
                     
@@ -4617,9 +4689,11 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                 price_per_unit = float(row.get("price_per_unit", 0.0) or 0.0)
                 
                 if habitat_name:
-                    # Round price to nearest £50
-                    price_per_unit = round_to_50(price_per_unit)
+                    # Use price_per_unit from upstream, round for display only
+                    price_per_unit_display = round_to_50(price_per_unit)
+                    # Calculate offset cost using actual price, round to nearest pound for display
                     offset_cost = units * price_per_unit
+                    offset_cost_display = round(offset_cost)
                     manual_area_cost += offset_cost
                     
                     # Determine distinctiveness for lost habitat
@@ -4651,12 +4725,12 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                     row_data = {
                         "Distinctiveness": demand_distinctiveness,
                         "Habitats Lost": demand_habitat_display,
-                        "# Units": f"{units:.2f}",
+                        "# Units": format_units_dynamic(units),
                         "Distinctiveness_Supply": supply_distinctiveness,
                         "Habitats Supplied": supply_habitat_display,
-                        "# Units_Supply": f"{units:.2f}",
-                        "Price Per Unit": f"£{price_per_unit:,.0f}",
-                        "Offset Cost": f"£{offset_cost:,.0f}"
+                        "# Units_Supply": format_units_dynamic(units),
+                        "Price Per Unit": f"£{price_per_unit_display:,.0f}",
+                        "Offset Cost": f"£{offset_cost_display:,.0f}"
                     }
                     area_habitats.append(row_data)
     
@@ -4718,12 +4792,12 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                 bundled_row = {
                     "Distinctiveness": "Low + 10% Net Gain",
                     "Habitats Lost": low_list[0]["Habitats Lost"] if low_list else ng_list[0]["Habitats Lost"],
-                    "# Units": f"{total_units:.2f}",
+                    "# Units": format_units_dynamic(total_units),
                     "Distinctiveness_Supply": low_list[0]["Distinctiveness_Supply"] if low_list else ng_list[0]["Distinctiveness_Supply"],
                     "Habitats Supplied": supply_hab,
-                    "# Units_Supply": f"{total_supply_units:.2f}",
-                    "Price Per Unit": f"£{avg_price:,.0f}",
-                    "Offset Cost": f"£{total_cost:,.0f}"
+                    "# Units_Supply": format_units_dynamic(total_supply_units),
+                    "Price Per Unit": f"£{round_to_50(avg_price):,.0f}",
+                    "Offset Cost": f"£{round(total_cost):,.0f}"
                 }
                 bundled.append(bundled_row)
             elif low_list:
@@ -4881,10 +4955,10 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
         <tr style="background-color: #f0f0f0; font-weight: bold;">
             <td style="padding: 6px; border: 1px solid #000;">Total</td>
             <td style="padding: 6px; border: 1px solid #000;"></td>
-            <td style="padding: 6px; border: 1px solid #000; text-align: right;">{total_demand_units:.2f}</td>
+            <td style="padding: 6px; border: 1px solid #000; text-align: right;">{format_units_total(total_demand_units)}</td>
             <td style="padding: 6px; border: 1px solid #000;"></td>
             <td style="padding: 6px; border: 1px solid #000;"></td>
-            <td style="padding: 6px; border: 1px solid #000; text-align: right;">{total_supply_units:.2f}</td>
+            <td style="padding: 6px; border: 1px solid #000; text-align: right;">{format_units_total(total_supply_units)}</td>
             <td style="padding: 6px; border: 1px solid #000;"></td>
             <td style="padding: 6px; border: 1px solid #000; text-align: right;">£{total_with_admin:,.0f}</td>
         </tr>
