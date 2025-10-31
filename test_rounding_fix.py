@@ -33,7 +33,10 @@ def test_format_units_dynamic():
             # Check if this precision captures the value accurately enough
             # (within 0.5% or better than rounding to fewer decimals)
             rounded_value = float(formatted)
-            if abs(value - rounded_value) / value < 0.005:  # Within 0.5%
+            # Add safety check for very small values to avoid division by zero
+            if abs(value) < 1e-10:
+                return "0.00"
+            if abs(value - rounded_value) / abs(value) < 0.005:  # Within 0.5%
                 # Remove trailing zeros but keep at least 2 decimal places
                 parts = formatted.split('.')
                 if len(parts) == 2:
@@ -111,7 +114,10 @@ def test_issue_example():
         for decimals in range(2, 6):
             formatted = f"{value:.{decimals}f}"
             rounded_value = float(formatted)
-            if abs(value - rounded_value) / value < 0.005:
+            # Add safety check for very small values
+            if abs(value) < 1e-10:
+                return "0.00"
+            if abs(value - rounded_value) / abs(value) < 0.005:
                 # Remove trailing zeros but keep at least 2 decimal places
                 parts = formatted.split('.')
                 if len(parts) == 2:
