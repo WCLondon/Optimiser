@@ -1,4 +1,6 @@
-# Shiny for Python
+# UI Frameworks
+streamlit>=1.37
+streamlit-folium>=0.18
 shiny>=0.7
 shinywidgets>=0.3
 
@@ -27,4 +29,3 @@ pyxlsb>=1.0
 
 # Testing
 pytest>=7.0
-

@@ -55,21 +55,25 @@ Edit `.env` to set your database URL and credentials.
 
 ## Usage
 
-### Run with Shiny
-
-Start the application with auto-reload for development:
+### Run with Streamlit (Current - Fully Functional)
 
 ```bash
-shiny run --reload app.py
+streamlit run app.py
 ```
 
-Or use the Makefile:
+The app will open in your default web browser at `http://localhost:8501`
+
+### Run with Shiny (Work in Progress - Migration Ongoing)
 
 ```bash
-make run
+shiny run --reload app_shiny.py
 ```
 
-The app will be available at `http://localhost:8000`
+Access at `http://localhost:8000`
+
+**Note:** The Shiny migration is in progress. The Streamlit version (`app.py`) is fully functional. The Shiny version (`app_shiny.py`) is being developed to preserve all functionality while providing Shiny's reactive architecture benefits.
+
+
 
 ### Basic Workflow
 
