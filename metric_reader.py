@@ -275,6 +275,7 @@ def apply_area_offsets(area_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
     Returns dict with:
       - residual_off_site: unmet deficits after on-site offsets
       - surplus_after_offsets_detail: remaining surpluses
+      - flow_log: list of allocation records with priority_medium flag
     """
     data = area_df.copy()
     data["project_wide_change"] = coerce_num(data["project_wide_change"])
@@ -287,15 +288,58 @@ def apply_area_offsets(area_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
 
     band_rank = {"Low": 1, "Medium": 2, "High": 3, "Very High": 4}
     
+    # Medium distinctiveness hierarchy groups
+    # Priority group (process first)
+    priority_medium_groups = {
+        "cropland",
+        "lakes",
+        "sparsely vegetated land",
+        "urban",
+        "individual trees",
+        "woodland and forest",
+        "intertidal sediment",
+        "intertidal hard structures"
+    }
+    
+    # Sort deficits by:
+    # 1. Distinctiveness rank (Very High > High > Medium > Low)
+    # 2. For Medium: priority group first, then secondary group
+    # 3. Original order within each group
+    def deficit_sort_key(row_tuple):
+        idx, row = row_tuple
+        d_band = str(row["distinctiveness"])
+        d_broad = clean_text(row.get("broad_group", "")).lower()
+        
+        rank = band_rank.get(d_band, 0)
+        
+        # For Medium distinctiveness, add sub-ranking
+        if d_band == "Medium":
+            is_priority = d_broad in priority_medium_groups
+            # Priority group gets rank 2.5 (between Medium 2 and High 3)
+            # Secondary group keeps rank 2.0
+            sub_rank = 0.5 if is_priority else 0.0
+            return (-rank - sub_rank, idx)
+        
+        return (-rank, idx)
+    
+    sorted_deficits = sorted(deficits.iterrows(), key=deficit_sort_key)
+    
     # Track what each deficit received
     deficit_received = {}
     
+    # Flow log to track allocations
+    flow_log = []
+    
     # Apply trading rules to offset deficits with surpluses
-    for di, d in deficits.iterrows():
+    for di, d in sorted_deficits:
         need = abs(float(d["project_wide_change"]))
         d_band  = str(d["distinctiveness"])
         d_broad = clean_text(d.get("broad_group",""))
         d_hab   = clean_text(d.get("habitat",""))
+        
+        # Check if this is a priority Medium group
+        is_priority_medium = (d_band == "Medium" and 
+                             d_broad.lower() in priority_medium_groups)
         
         deficit_key = (di, d_hab, d_broad, d_band)
         deficit_received[deficit_key] = 0.0
@@ -323,6 +367,18 @@ def apply_area_offsets(area_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
             sur.loc[i,"__remain__"] -= give
             deficit_received[deficit_key] += give
             need -= give
+            
+            # Log this allocation
+            flow_log.append({
+                "deficit_habitat": d_hab,
+                "deficit_broad_group": d_broad,
+                "deficit_distinctiveness": d_band,
+                "surplus_habitat": clean_text(sur.loc[i, "habitat"]),
+                "surplus_broad_group": clean_text(sur.loc[i, "broad_group"]),
+                "surplus_distinctiveness": str(sur.loc[i, "distinctiveness"]),
+                "units_allocated": round(give, 6),
+                "priority_medium": is_priority_medium
+            })
 
     # Calculate residual unmet deficits
     remaining_records = []
@@ -352,7 +408,8 @@ def apply_area_offsets(area_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
 
     return {
         "residual_off_site": pd.DataFrame(remaining_records).reset_index(drop=True) if remaining_records else pd.DataFrame(columns=["habitat","broad_group","distinctiveness","unmet_units_after_on_site_offset"]),
-        "surplus_after_offsets_detail": surplus_after_offsets_detail
+        "surplus_after_offsets_detail": surplus_after_offsets_detail,
+        "flow_log": flow_log
     }
 
 
