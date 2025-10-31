@@ -5768,10 +5768,10 @@ if has_optimizer_results or has_manual_entries:
                         promoter_discount_value=st.session_state.get("promoter_discount_value"),
                         customer_id=customer_id,
                         suo_enabled=st.session_state.get("suo_enabled", False),
-                        suo_discount_fraction=st.session_state.get("suo_results", {}).get("discount_fraction"),
-                        suo_eligible_surplus=st.session_state.get("suo_results", {}).get("eligible_surplus"),
-                        suo_usable_surplus=st.session_state.get("suo_results", {}).get("usable_surplus"),
-                        suo_total_units=st.session_state.get("suo_results", {}).get("total_units_purchased")
+                        suo_discount_fraction=(st.session_state.get("suo_results") or {}).get("discount_fraction"),
+                        suo_eligible_surplus=(st.session_state.get("suo_results") or {}).get("eligible_surplus"),
+                        suo_usable_surplus=(st.session_state.get("suo_results") or {}).get("usable_surplus"),
+                        suo_total_units=(st.session_state.get("suo_results") or {}).get("total_units_purchased")
                     )
                     st.success(f"✅ Quote saved to database! Submission ID: {submission_id}")
                     st.info(f"📊 Client: {form_client_name} | Reference: {form_ref_number} | Total: £{session_total_cost + ADMIN_FEE_GBP:,.0f}")
