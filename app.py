@@ -49,7 +49,8 @@ import metric_reader
 import suo
 
 # ================= Config / constants =================
-ADMIN_FEE_GBP = 500.0
+ADMIN_FEE_GBP = 500.0  # Standard admin fee
+ADMIN_FEE_FRACTIONAL_GBP = 300.0  # Admin fee for fractional quotes
 SINGLE_BANK_SOFT_PCT = 0.01
 MAP_CATCHMENT_ALPHA = 0.03
 UA = {"User-Agent": "WildCapital-Optimiser/1.0 (+contact@example.com)"}
@@ -1622,6 +1623,15 @@ def select_contract_size(total_units: float, present: List[str]) -> str:
     for t in ["large", "medium", "small", "fractional"]:
         if t in tiers: return t
     return sstr(next(iter(present), "small")).lower()
+
+def get_admin_fee_for_contract_size(contract_size: str) -> float:
+    """
+    Get the admin fee based on contract size.
+    Fractional quotes get £300, all others get £500.
+    """
+    if sstr(contract_size).lower() == "fractional":
+        return ADMIN_FEE_FRACTIONAL_GBP
+    return ADMIN_FEE_GBP
 
 # ================= Load Reference Tables from Supabase =================
 @st.cache_data(ttl=600)
@@ -3601,6 +3611,29 @@ def optimise(demand_df: pd.DataFrame,
             raise RuntimeError("Optimiser infeasible.")
         best_cost = pulp.value(pulp.lpSum([options[i]["unit_price"] * xA[i] for i in range(len(options))])) or 0.0
 
+        def enforce_minimum_delivery(alloc_df):
+            """
+            Ensure total units_supplied >= 0.01 by padding the cheapest habitat.
+            If total < 0.01, add extra units to the cheapest habitat to reach 0.01 minimum.
+            """
+            if alloc_df.empty:
+                return alloc_df, 0.0
+            
+            total_units = alloc_df["units_supplied"].sum()
+            
+            if total_units < 0.01:
+                # Find the cheapest habitat (lowest unit_price)
+                cheapest_idx = alloc_df["unit_price"].idxmin()
+                shortage = 0.01 - total_units
+                
+                # Add shortage to the cheapest habitat
+                alloc_df.loc[cheapest_idx, "units_supplied"] += shortage
+                alloc_df.loc[cheapest_idx, "cost"] = alloc_df.loc[cheapest_idx, "units_supplied"] * alloc_df.loc[cheapest_idx, "unit_price"]
+            
+            # Recalculate total cost
+            total_cost = float(alloc_df["cost"].sum())
+            return alloc_df, total_cost
+
         def extract(xvars, zvars):
             rows, total_cost = [], 0.0
             for i in range(len(options)):
@@ -3626,7 +3659,11 @@ def optimise(demand_df: pd.DataFrame,
                         row["paired_parts"] = json.dumps(opt["paired_parts"])
                     rows.append(row)
                     total_cost += qty * opt["unit_price"]
-            return pd.DataFrame(rows), float(total_cost)
+            
+            # Apply minimum delivery enforcement
+            alloc_df = pd.DataFrame(rows)
+            alloc_df, total_cost = enforce_minimum_delivery(alloc_df)
+            return alloc_df, float(total_cost)
 
         allocA, costA = extract(xA, zA)
 
@@ -3736,7 +3773,10 @@ def optimise(demand_df: pd.DataFrame,
             rows.append(row)
             total_cost += need * opt["unit_price"]
 
-        return pd.DataFrame(rows), float(total_cost), chosen_size
+        # Apply minimum delivery enforcement for greedy fallback
+        alloc_df = pd.DataFrame(rows)
+        alloc_df, total_cost = enforce_minimum_delivery(alloc_df)
+        return alloc_df, float(total_cost), chosen_size
 
 # ================= Run optimiser UI =================
 st.subheader("3) Run optimiser")
@@ -4104,10 +4144,13 @@ if run:
         if catchments_failed:
             st.warning(f"⚠️ Failed to load catchment data for: {', '.join(catchments_failed)}")
 
-        total_with_admin = total_cost + ADMIN_FEE_GBP
+        # Calculate admin fee based on contract size
+        admin_fee = get_admin_fee_for_contract_size(size)
+        
+        total_with_admin = total_cost + admin_fee
         st.success(
             f"Optimisation complete. Contract size = **{size}**. "
-            f"Subtotal (units): **£{total_cost:,.0f}**  |  Admin fee: **£{ADMIN_FEE_GBP:,.0f}**  |  "
+            f"Subtotal (units): **£{total_cost:,.0f}**  |  Admin fee: **£{admin_fee:,.0f}**  |  "
             f"Grand total: **£{total_with_admin:,.0f}**"
         )
 
@@ -4202,7 +4245,7 @@ if run:
         # Create order summary
         summary_df = pd.DataFrame([
             {"Item": "Subtotal (units)", "Amount £": round(total_cost, 2)},
-            {"Item": "Admin fee",        "Amount £": round(ADMIN_FEE_GBP, 2)},
+            {"Item": "Admin fee",        "Amount £": round(admin_fee, 2)},
             {"Item": "Grand total",      "Amount £": round(total_with_admin, 2)},
         ])
         
@@ -4263,40 +4306,18 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
     def round_to_50(price):
         return round(price / 50) * 50
     
-    # Helper function to format units with dynamic significant figures
+    # Helper function to format units with up to 3 decimal places (4 sig figs)
     def format_units_dynamic(value):
         """
-        Format units to show appropriate significant figures.
-        - Detect how many decimal places are needed to preserve accuracy
-        - Minimum 2 decimal places, maximum 5 decimal places
+        Format units to show up to 3 decimal places (4 significant figures).
+        - Maximum 3 decimal places
         - Remove trailing zeros after the decimal point (but keep minimum 2)
         """
         if value == 0:
             return "0.00"
         
-        # Try formatting with increasing precision until we capture the value accurately
-        for decimals in range(2, 6):  # 2 to 5 decimal places
-            formatted = f"{value:.{decimals}f}"
-            # Check if this precision captures the value accurately enough
-            # (within 0.5% or better than rounding to fewer decimals)
-            rounded_value = float(formatted)
-            # Add safety check for very small values to avoid division by zero
-            if abs(value) < 1e-10:
-                return "0.00"
-            if abs(value - rounded_value) / abs(value) < 0.005:  # Within 0.5%
-                # Remove trailing zeros but keep at least 2 decimal places
-                parts = formatted.split('.')
-                if len(parts) == 2:
-                    integer_part = parts[0]
-                    decimal_part = parts[1].rstrip('0')
-                    # Ensure at least 2 decimal places
-                    if len(decimal_part) < 2:
-                        decimal_part = decimal_part.ljust(2, '0')
-                    return f"{integer_part}.{decimal_part}"
-                return formatted
-        
-        # If we need more than 5 decimals, use 5 as max, but keep at least 2 decimals
-        formatted = f"{value:.5f}"
+        # Format with 3 decimals
+        formatted = f"{value:.3f}"
         parts = formatted.split('.')
         if len(parts) == 2:
             integer_part = parts[0]
@@ -5081,10 +5102,14 @@ if st.session_state.get("optimization_complete", False) and st.session_state.get
                 manual_area_cost += units * price
         
         total_cost = allocation_cost + manual_hedge_cost + manual_water_cost + manual_area_cost
-        total_with_admin = total_cost + ADMIN_FEE_GBP
+        
+        # Calculate admin fee based on contract size
+        admin_fee = get_admin_fee_for_contract_size(st.session_state.get('contract_size', 'small'))
+        
+        total_with_admin = total_cost + admin_fee
         st.success(
             f"Contract size = **{st.session_state['contract_size']}**. "
-            f"Subtotal (units): **£{total_cost:,.0f}**  |  Admin fee: **£{ADMIN_FEE_GBP:,.0f}**  |  "
+            f"Subtotal (units): **£{total_cost:,.0f}**  |  Admin fee: **£{admin_fee:,.0f}**  |  "
             f"Grand total: **£{total_with_admin:,.0f}**"
         )
     
@@ -5200,7 +5225,11 @@ if st.session_state.get("optimization_complete", False) and st.session_state.get
                     manual_area_cost += units * price
             
             total_discounted_cost = discounted_allocation_cost + manual_hedge_cost + manual_water_cost + manual_area_cost
-            total_with_admin_discounted = total_discounted_cost + ADMIN_FEE_GBP
+            
+            # Calculate admin fee based on contract size
+            admin_fee = get_admin_fee_for_contract_size(st.session_state.get('contract_size', 'small'))
+            
+            total_with_admin_discounted = total_discounted_cost + admin_fee
             
             # Show SUO summary metrics
             col1, col2, col3 = st.columns(3)
@@ -5221,9 +5250,9 @@ if st.session_state.get("optimization_complete", False) and st.session_state.get
                      "After SUO": f"£{discounted_allocation_cost:,.2f}", "Savings": f"£{cost_savings:,.2f}"},
                     {"Cost Item": "Manual Additions", "Before SUO": f"£{manual_hedge_cost + manual_water_cost + manual_area_cost:,.2f}", 
                      "After SUO": f"£{manual_hedge_cost + manual_water_cost + manual_area_cost:,.2f}", "Savings": "£0.00"},
-                    {"Cost Item": "Admin Fee", "Before SUO": f"£{ADMIN_FEE_GBP:,.2f}", 
-                     "After SUO": f"£{ADMIN_FEE_GBP:,.2f}", "Savings": "£0.00"},
-                    {"Cost Item": "TOTAL", "Before SUO": f"£{original_allocation_cost + manual_hedge_cost + manual_water_cost + manual_area_cost + ADMIN_FEE_GBP:,.2f}",
+                    {"Cost Item": "Admin Fee", "Before SUO": f"£{admin_fee:,.2f}", 
+                     "After SUO": f"£{admin_fee:,.2f}", "Savings": "£0.00"},
+                    {"Cost Item": "TOTAL", "Before SUO": f"£{original_allocation_cost + manual_hedge_cost + manual_water_cost + manual_area_cost + admin_fee:,.2f}",
                      "After SUO": f"£{total_with_admin_discounted:,.2f}", "Savings": f"£{cost_savings:,.2f}"}
                 ])
                 st.dataframe(comparison_df, use_container_width=True, hide_index=True)
@@ -5231,7 +5260,7 @@ if st.session_state.get("optimization_complete", False) and st.session_state.get
                 st.info(f"**Total savings: £{cost_savings:,.2f} ({discount_pct:.1f}% discount on allocation costs)**")
             
             # Update the displayed total at the top
-            st.info(f"ℹ️ **With SUO Discount**: Subtotal: £{total_discounted_cost:,.0f} | Admin: £{ADMIN_FEE_GBP:,.0f} | **Grand Total: £{total_with_admin_discounted:,.0f}**")
+            st.info(f"ℹ️ **With SUO Discount**: Subtotal: £{total_discounted_cost:,.0f} | Admin: £{admin_fee:,.0f} | **Grand Total: £{total_with_admin_discounted:,.0f}**")
             
         else:
             discount_pct = suo_results['discount_fraction'] * 100
@@ -5828,6 +5857,9 @@ if has_optimizer_results or has_manual_entries:
                     total_units = session_demand_df["units_required"].sum() if not session_demand_df.empty else 0.0
                     contract_size_val = select_contract_size(total_units, present_sizes) if present_sizes else "Unknown"
                     
+                    # Calculate admin fee based on contract size
+                    admin_fee_for_quote = get_admin_fee_for_contract_size(contract_size_val)
+                    
                     submission_id = db.store_submission(
                         client_name=form_client_name,
                         reference_number=form_ref_number,
@@ -5842,7 +5874,7 @@ if has_optimizer_results or has_manual_entries:
                         allocation_df=session_alloc_df,
                         contract_size=contract_size_val,
                         total_cost=session_total_cost,
-                        admin_fee=ADMIN_FEE_GBP,
+                        admin_fee=admin_fee_for_quote,
                         manual_hedgerow_rows=st.session_state.get("manual_hedgerow_rows", []),
                         manual_watercourse_rows=st.session_state.get("manual_watercourse_rows", []),
                         manual_area_habitat_rows=st.session_state.get("manual_area_habitat_rows", []),
@@ -5858,7 +5890,7 @@ if has_optimizer_results or has_manual_entries:
                         suo_total_units=(st.session_state.get("suo_results") or {}).get("total_units_purchased")
                     )
                     st.success(f"✅ Quote saved to database! Submission ID: {submission_id}")
-                    st.info(f"📊 Client: {form_client_name} | Reference: {form_ref_number} | Total: £{session_total_cost + ADMIN_FEE_GBP:,.0f}")
+                    st.info(f"📊 Client: {form_client_name} | Reference: {form_ref_number} | Total: £{session_total_cost + admin_fee_for_quote:,.0f}")
                 except Exception as e:
                     st.error(f"❌ Error saving to database: {e}")
                     import traceback
@@ -5870,9 +5902,15 @@ if has_optimizer_results or has_manual_entries:
         ref_number = st.session_state.email_ref_number
         location = st.session_state.email_location    
         
+        # Calculate admin fee based on contract size
+        present_sizes = backend.get("Pricing", pd.DataFrame()).get("contract_size", pd.Series()).drop_duplicates().tolist() if backend else []
+        total_units = session_demand_df["units_required"].sum() if not session_demand_df.empty else 0.0
+        contract_size_val = select_contract_size(total_units, present_sizes) if present_sizes else "Unknown"
+        admin_fee_for_report = get_admin_fee_for_contract_size(contract_size_val)
+        
         # Generate the report using session data and input values
         client_table, email_html = generate_client_report_table_fixed(
-            session_alloc_df, session_demand_df, session_total_cost, ADMIN_FEE_GBP,
+            session_alloc_df, session_demand_df, session_total_cost, admin_fee_for_report,
             client_name, ref_number, location,
             st.session_state.manual_hedgerow_rows,
             st.session_state.manual_watercourse_rows,
@@ -5905,13 +5943,19 @@ if has_optimizer_results or has_manual_entries:
         # Email generation
         st.markdown("**📧 Email Generation:**")
         
+        # Calculate admin fee based on contract size
+        present_sizes = backend.get("Pricing", pd.DataFrame()).get("contract_size", pd.Series()).drop_duplicates().tolist() if backend else []
+        total_units = session_demand_df["units_required"].sum() if not session_demand_df.empty else 0.0
+        contract_size_val = select_contract_size(total_units, present_sizes) if present_sizes else "Unknown"
+        admin_fee_for_email = get_admin_fee_for_contract_size(contract_size_val)
+        
         # Create .eml file content
         import base64
         from email.mime.multipart import MIMEMultipart
         from email.mime.text import MIMEText
         
         subject = f"RE: BNG Units for site at {location} - {ref_number}"
-        total_with_admin = session_total_cost + ADMIN_FEE_GBP
+        total_with_admin = session_total_cost + admin_fee_for_email
         
         # Create email message
         msg = MIMEMultipart('alternative')
