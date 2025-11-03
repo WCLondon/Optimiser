@@ -4951,7 +4951,8 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
 
     
     # Calculate total units including manual entries
-    total_demand_units = demand_df['units_required'].sum()
+    # Use supply units for both demand and supply totals since we round up supply
+    total_demand_units = alloc_df['units_supplied'].sum()
     total_supply_units = alloc_df['units_supplied'].sum()
     
     # Add manual units
