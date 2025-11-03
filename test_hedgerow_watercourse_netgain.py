@@ -8,6 +8,16 @@ import openpyxl
 from metric_reader import parse_metric_requirements
 
 
+class MockUploadedFile:
+    """Mock file object for testing"""
+    def __init__(self, buffer):
+        self.buffer = buffer
+        self.name = "test_metric.xlsx"
+    
+    def read(self):
+        return self.buffer.read()
+
+
 def test_hedgerow_netgain_with_deficits():
     """Test that hedgerow net gain is calculated and added when there are deficits"""
     
@@ -56,14 +66,6 @@ def test_hedgerow_netgain_with_deficits():
     excel_buffer.seek(0)
     
     # Create mock uploaded file
-    class MockUploadedFile:
-        def __init__(self, buffer):
-            self.buffer = buffer
-            self.name = "test_metric.xlsx"
-        
-        def read(self):
-            return self.buffer.read()
-    
     mock_file = MockUploadedFile(excel_buffer)
     
     # Parse
@@ -149,14 +151,6 @@ def test_watercourse_netgain():
     excel_buffer.seek(0)
     
     # Create mock uploaded file
-    class MockUploadedFile:
-        def __init__(self, buffer):
-            self.buffer = buffer
-            self.name = "test_metric.xlsx"
-        
-        def read(self):
-            return self.buffer.read()
-    
     mock_file = MockUploadedFile(excel_buffer)
     
     # Parse
@@ -227,14 +221,6 @@ def test_netgain_only_when_baseline_positive():
     excel_buffer.seek(0)
     
     # Create mock uploaded file
-    class MockUploadedFile:
-        def __init__(self, buffer):
-            self.buffer = buffer
-            self.name = "test_metric.xlsx"
-        
-        def read(self):
-            return self.buffer.read()
-    
     mock_file = MockUploadedFile(excel_buffer)
     
     # Parse
