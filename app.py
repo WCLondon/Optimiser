@@ -4465,7 +4465,7 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
             row_data = {
                 "Distinctiveness": demand_distinctiveness,
                 "Habitats Lost": demand_habitat_display,
-                "# Units": format_units_dynamic(supply_units),  # Use supply units (bundled & rounded)
+                "# Units": format_units_dynamic(demand_units),  # Use original demand units
                 "Distinctiveness_Supply": supply_distinctiveness,
                 "Habitats Supplied": supply_habitat,
                 "# Units_Supply": format_units_dynamic(supply_units),
