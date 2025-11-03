@@ -673,7 +673,8 @@ def parse_metric_requirements(uploaded_file) -> Dict:
         units_allocated, priority_medium
     
     For area: returns combined residual (habitat deficits + headline remainder)
-    For hedgerows/watercourses: returns raw deficits (no trading rules applied)
+    For hedgerows/watercourses: returns raw deficits + headline net gain requirement
+        (no trading rules applied, as hedgerows/watercourses don't support on-site offsetting)
     
     Note: Medium distinctiveness deficits are now processed with priority hierarchy:
     Priority groups (first): Cropland, Lakes, Sparsely vegetated land, Urban, 
@@ -782,7 +783,7 @@ def parse_metric_requirements(uploaded_file) -> Dict:
             surplus_remaining["surplus_remaining_units"] > 1e-9
         ].rename(columns={"surplus_remaining_units": "units_surplus"}).copy()
     
-    # ========== HEDGEROWS - Simple deficits ==========
+    # ========== HEDGEROWS - Deficits + Net Gain ==========
     hedge_requirements = []
     if not hedge_norm.empty:
         hedge_norm["project_wide_change"] = coerce_num(hedge_norm["project_wide_change"])
@@ -793,7 +794,19 @@ def parse_metric_requirements(uploaded_file) -> Dict:
                 "units": abs(float(row["project_wide_change"]))
             })
     
-    # ========== WATERCOURSES - Simple deficits ==========
+    # Add hedgerow net gain requirement from headline
+    hedgerow_info = headline_all["hedgerow"]
+    hedge_target_pct = hedgerow_info["target_percent"]
+    hedge_baseline_units = hedgerow_info["baseline_units"]
+    hedge_net_gain_requirement = hedge_baseline_units * hedge_target_pct
+    
+    if hedge_net_gain_requirement > 1e-9:
+        hedge_requirements.append({
+            "habitat": "Net Gain (Hedgerows)",
+            "units": round(hedge_net_gain_requirement, 4)
+        })
+    
+    # ========== WATERCOURSES - Deficits + Net Gain ==========
     water_requirements = []
     if not water_norm.empty:
         water_norm["project_wide_change"] = coerce_num(water_norm["project_wide_change"])
@@ -803,6 +816,18 @@ def parse_metric_requirements(uploaded_file) -> Dict:
                 "habitat": clean_text(row["habitat"]),
                 "units": abs(float(row["project_wide_change"]))
             })
+    
+    # Add watercourse net gain requirement from headline
+    watercourse_info = headline_all["watercourse"]
+    water_target_pct = watercourse_info["target_percent"]
+    water_baseline_units = watercourse_info["baseline_units"]
+    water_net_gain_requirement = water_baseline_units * water_target_pct
+    
+    if water_net_gain_requirement > 1e-9:
+        water_requirements.append({
+            "habitat": "Net Gain (Watercourses)",
+            "units": round(water_net_gain_requirement, 4)
+        })
     
     return {
         "area": pd.DataFrame(area_requirements) if area_requirements else pd.DataFrame(columns=["habitat", "units"]),
