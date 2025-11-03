@@ -3601,55 +3601,27 @@ def optimise(demand_df: pd.DataFrame,
             raise RuntimeError("Optimiser infeasible.")
         best_cost = pulp.value(pulp.lpSum([options[i]["unit_price"] * xA[i] for i in range(len(options))])) or 0.0
 
-        def bundle_and_round_allocations(alloc_df):
+        def enforce_minimum_delivery(alloc_df):
             """
-            Bundle allocations by supply habitat and round up to nearest 0.01.
-            
-            Groups allocations by BANK_KEY, supply_habitat, allocation_type, tier, and paired_parts.
-            Sums units_supplied for each group and rounds up to nearest 0.01.
-            Then creates individual rows for each demand habitat with proportional allocation.
+            Ensure total units_supplied >= 0.01 by padding the cheapest habitat.
+            If total < 0.01, add extra units to the cheapest habitat to reach 0.01 minimum.
             """
-            import math
-            
             if alloc_df.empty:
                 return alloc_df, 0.0
             
-            # Group by key fields that identify the same supply type
-            group_cols = ["BANK_KEY", "bank_name", "bank_id", "supply_habitat", "allocation_type", "tier", "price_source", "price_habitat"]
-            if "paired_parts" in alloc_df.columns:
-                group_cols.append("paired_parts")
+            total_units = alloc_df["units_supplied"].sum()
             
-            # Create a bundle key for grouping
-            alloc_df = alloc_df.copy()
-            alloc_df["_bundle_key"] = alloc_df[[col for col in group_cols if col in alloc_df.columns]].astype(str).agg("||".join, axis=1)
+            if total_units < 0.01:
+                # Find the cheapest habitat (lowest unit_price)
+                cheapest_idx = alloc_df["unit_price"].idxmin()
+                shortage = 0.01 - total_units
+                
+                # Add shortage to the cheapest habitat
+                alloc_df.loc[cheapest_idx, "units_supplied"] += shortage
+                alloc_df.loc[cheapest_idx, "cost"] = alloc_df.loc[cheapest_idx, "units_supplied"] * alloc_df.loc[cheapest_idx, "unit_price"]
             
-            # Calculate bundled totals per bundle key
-            bundle_totals = alloc_df.groupby("_bundle_key").agg({
-                "units_supplied": "sum",
-                "cost": "sum"
-            }).reset_index()
-            
-            # Round up bundled units to nearest 0.01
-            bundle_totals["units_supplied_rounded"] = bundle_totals["units_supplied"].apply(lambda x: math.ceil(x * 100) / 100)
-            
-            # Join back to original rows
-            alloc_df = alloc_df.merge(bundle_totals[["_bundle_key", "units_supplied_rounded"]], on="_bundle_key", how="left")
-            
-            # Calculate each row's proportion of the bundle
-            alloc_df["_proportion"] = alloc_df["units_supplied"] / alloc_df.groupby("_bundle_key")["units_supplied"].transform("sum")
-            
-            # Distribute rounded units proportionally
-            alloc_df["units_supplied"] = alloc_df["units_supplied_rounded"] * alloc_df["_proportion"]
-            
-            # Recalculate cost based on new units_supplied
-            alloc_df["cost"] = alloc_df["units_supplied"] * alloc_df["unit_price"]
-            
-            # Clean up temporary columns
-            alloc_df = alloc_df.drop(columns=["_bundle_key", "units_supplied_rounded", "_proportion"])
-            
-            # Calculate total cost
+            # Recalculate total cost
             total_cost = float(alloc_df["cost"].sum())
-            
             return alloc_df, total_cost
 
         def extract(xvars, zvars):
@@ -3677,11 +3649,13 @@ def optimise(demand_df: pd.DataFrame,
                         row["paired_parts"] = json.dumps(opt["paired_parts"])
                     rows.append(row)
                     total_cost += qty * opt["unit_price"]
-            return pd.DataFrame(rows), float(total_cost)
+            
+            # Apply minimum delivery enforcement
+            alloc_df = pd.DataFrame(rows)
+            alloc_df, total_cost = enforce_minimum_delivery(alloc_df)
+            return alloc_df, float(total_cost)
 
         allocA, costA = extract(xA, zA)
-        # Bundle and round allocations
-        allocA, costA = bundle_and_round_allocations(allocA)
 
         # Stage B: minimise #banks, but only if cost stays within numerical precision of Stage A
         # Use a very tight threshold (£10 or 0.01%, whichever is smaller) to ensure we prioritize
@@ -3693,8 +3667,6 @@ def optimise(demand_df: pd.DataFrame,
 
         if statusB in ("Optimal", "Feasible"):
             allocB, costB = extract(xB, zB)
-            # Bundle and round allocations
-            allocB, costB = bundle_and_round_allocations(allocB)
 
             def bank_count(df):
                 return df["BANK_KEY"].nunique() if not df.empty else 0
@@ -3710,8 +3682,6 @@ def optimise(demand_df: pd.DataFrame,
                 statusC = pulp.LpStatus[probC.status]
                 if statusC in ("Optimal", "Feasible"):
                     allocC, costC = extract(xC, zC)
-                    # Bundle and round allocations
-                    allocC, costC = bundle_and_round_allocations(allocC)
                     return allocC, costC, chosen_size
                 return allocB, costB, chosen_size
 
@@ -3793,9 +3763,9 @@ def optimise(demand_df: pd.DataFrame,
             rows.append(row)
             total_cost += need * opt["unit_price"]
 
-        # Bundle and round allocations for greedy fallback
+        # Apply minimum delivery enforcement for greedy fallback
         alloc_df = pd.DataFrame(rows)
-        alloc_df, total_cost = bundle_and_round_allocations(alloc_df)
+        alloc_df, total_cost = enforce_minimum_delivery(alloc_df)
         return alloc_df, float(total_cost), chosen_size
 
 # ================= Run optimiser UI =================
@@ -4323,31 +4293,48 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
     def round_to_50(price):
         return round(price / 50) * 50
     
-    # Helper function to format units with dynamic significant figures
+    # Helper function to format units with up to 3 decimal places (4 sig figs)
     def format_units_dynamic(value):
         """
-        Format units to 2 decimal places.
-        - All calculations at 2 decimal places
+        Format units to show up to 3 decimal places (4 significant figures).
+        - Maximum 3 decimal places
+        - Remove trailing zeros after the decimal point (but keep minimum 2)
         """
         if value == 0:
             return "0.00"
         
-        # Format with 2 decimals
-        formatted = f"{value:.2f}"
+        # Format with 3 decimals
+        formatted = f"{value:.3f}"
+        parts = formatted.split('.')
+        if len(parts) == 2:
+            integer_part = parts[0]
+            decimal_part = parts[1].rstrip('0')
+            # Ensure at least 2 decimal places
+            if len(decimal_part) < 2:
+                decimal_part = decimal_part.ljust(2, '0')
+            return f"{integer_part}.{decimal_part}"
         return formatted
     
-    # Helper function to format total row units (2 decimals)
+    # Helper function to format total row units (max 3 decimals, remove trailing zeros)
     def format_units_total(value):
         """
-        Format total row units with 2 decimal places.
-        - Exactly 2 decimal places
-        - All calculations rounded to 2 decimals
+        Format total row units with up to 3 decimal places.
+        - Maximum 3 decimal places
+        - Remove trailing zeros (but keep at least 2 decimal places)
         """
         if value == 0:
             return "0.00"
         
-        # Format with 2 decimals
-        formatted = f"{value:.2f}"
+        # Format with 3 decimals
+        formatted = f"{value:.3f}"
+        parts = formatted.split('.')
+        if len(parts) == 2:
+            integer_part = parts[0]
+            decimal_part = parts[1].rstrip('0')
+            # Ensure at least 2 decimal places
+            if len(decimal_part) < 2:
+                decimal_part = decimal_part.ljust(2, '0')
+            return f"{integer_part}.{decimal_part}"
         return formatted
     
     # Filter out removed allocation rows
@@ -4465,7 +4452,7 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
             row_data = {
                 "Distinctiveness": demand_distinctiveness,
                 "Habitats Lost": demand_habitat_display,
-                "# Units": format_units_dynamic(supply_units),  # Use rounded supply units for consistency
+                "# Units": format_units_dynamic(demand_units),
                 "Distinctiveness_Supply": supply_distinctiveness,
                 "Habitats Supplied": supply_habitat,
                 "# Units_Supply": format_units_dynamic(supply_units),
@@ -4767,67 +4754,69 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
     total_cost_with_manual = optimizer_cost + manual_hedgerow_cost + manual_watercourse_cost + manual_area_cost
     total_with_admin = total_cost_with_manual + admin_fee
     
-    # Bundle demand rows with 10% Net Gain rows together for each habitat type
+    # Bundle Low + 10% Net Gain rows together for each habitat type
     def bundle_low_and_net_gain(habitats_list):
-        """Bundle any demand distinctiveness with 10% Net Gain rows when they share the same supply habitat"""
+        """Bundle Low distinctiveness and 10% Net Gain rows together"""
         bundled = []
-        demand_rows = {}  # Regular demand rows grouped by supply habitat
-        net_gain_rows = {}  # Net Gain rows grouped by supply habitat
+        low_rows = {}
+        net_gain_rows = {}
+        other_rows = []
         
-        # Separate rows by whether they're Net Gain or regular demand
+        # Separate rows by distinctiveness
         for row in habitats_list:
             dist = row["Distinctiveness"]
-            supply_hab = row["Habitats Supplied"]
+            supply_dist = row["Distinctiveness_Supply"]
             
-            if dist == "10% Net Gain":
-                # Net Gain row - group by supply habitat
-                if supply_hab not in net_gain_rows:
-                    net_gain_rows[supply_hab] = []
-                net_gain_rows[supply_hab].append(row)
+            # Check if this is a Low or Net Gain row
+            if dist == "Low" or dist == "10% Net Gain":
+                # Group by supply habitat for bundling
+                supply_hab = row["Habitats Supplied"]
+                if dist == "Low":
+                    if supply_hab not in low_rows:
+                        low_rows[supply_hab] = []
+                    low_rows[supply_hab].append(row)
+                else:  # 10% Net Gain
+                    if supply_hab not in net_gain_rows:
+                        net_gain_rows[supply_hab] = []
+                    net_gain_rows[supply_hab].append(row)
             else:
-                # Regular demand row - group by supply habitat
-                if supply_hab not in demand_rows:
-                    demand_rows[supply_hab] = []
-                demand_rows[supply_hab].append(row)
+                other_rows.append(row)
         
-        # Bundle demand + Net Gain rows for same supply habitat
-        all_supply_habitats = set(list(demand_rows.keys()) + list(net_gain_rows.keys()))
+        # Bundle Low + Net Gain rows for same supply habitat
+        all_supply_habitats = set(list(low_rows.keys()) + list(net_gain_rows.keys()))
         for supply_hab in sorted(all_supply_habitats):
-            demand_list = demand_rows.get(supply_hab, [])
+            low_list = low_rows.get(supply_hab, [])
             ng_list = net_gain_rows.get(supply_hab, [])
             
-            if demand_list and ng_list:
+            if low_list and ng_list:
                 # Bundle them together
-                all_rows = demand_list + ng_list
-                total_units = sum(float(r["# Units"].replace(",", "")) for r in all_rows)
-                total_supply_units = sum(float(r["# Units_Supply"].replace(",", "")) for r in all_rows)
-                total_cost = sum(float(r["Offset Cost"].replace("£", "").replace(",", "")) for r in all_rows)
+                total_units = sum(float(r["# Units"].replace(",", "")) for r in low_list + ng_list)
+                total_supply_units = sum(float(r["# Units_Supply"].replace(",", "")) for r in low_list + ng_list)
+                total_cost = sum(float(r["Offset Cost"].replace("£", "").replace(",", "")) for r in low_list + ng_list)
                 
                 # Use weighted average for price per unit
                 avg_price = total_cost / total_supply_units if total_supply_units > 0 else 0
                 
-                # Get the primary demand distinctiveness (first non-Net Gain row)
-                primary_dist = demand_list[0]["Distinctiveness"] if demand_list else "Low"
-                primary_habitat = demand_list[0]["Habitats Lost"] if demand_list else ng_list[0]["Habitats Lost"]
-                
                 bundled_row = {
-                    "Distinctiveness": f"{primary_dist} + 10% Net Gain",
-                    "Habitats Lost": primary_habitat,
+                    "Distinctiveness": "Low + 10% Net Gain",
+                    "Habitats Lost": low_list[0]["Habitats Lost"] if low_list else ng_list[0]["Habitats Lost"],
                     "# Units": format_units_dynamic(total_units),
-                    "Distinctiveness_Supply": demand_list[0]["Distinctiveness_Supply"] if demand_list else ng_list[0]["Distinctiveness_Supply"],
+                    "Distinctiveness_Supply": low_list[0]["Distinctiveness_Supply"] if low_list else ng_list[0]["Distinctiveness_Supply"],
                     "Habitats Supplied": supply_hab,
                     "# Units_Supply": format_units_dynamic(total_supply_units),
                     "Price Per Unit": f"£{round_to_50(avg_price):,.0f}",
                     "Offset Cost": f"£{round(total_cost):,.0f}"
                 }
                 bundled.append(bundled_row)
-            elif demand_list:
-                # Only demand rows, add them as is
-                bundled.extend(demand_list)
+            elif low_list:
+                # Only Low rows, add them as is
+                bundled.extend(low_list)
             elif ng_list:
                 # Only Net Gain rows, add them as is
                 bundled.extend(ng_list)
         
+        # Add other rows
+        bundled.extend(other_rows)
         return bundled
     
     # Apply bundling to each habitat type
@@ -4842,16 +4831,12 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
             "Very High": 0,
             "V.High": 0,
             "High": 1,
-            "High + 10% Net Gain": 1.5,
             "Medium": 2,
-            "Medium + 10% Net Gain": 2.5,
-            "Low": 3,
-            "Low + 10% Net Gain": 3.5,
-            "10% Net Gain": 4,
-            "Very Low": 5,
-            "V.Low": 5,
-            "Very Low + 10% Net Gain": 5.5,
-            "V.Low + 10% Net Gain": 5.5
+            "Low + 10% Net Gain": 3,
+            "Low": 4,
+            "10% Net Gain": 5,
+            "Very Low": 6,
+            "V.Low": 6
         }
         
         def get_sort_key(row):
@@ -4953,8 +4938,7 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
 
     
     # Calculate total units including manual entries
-    # Use supply units for both demand and supply totals since we round up supply
-    total_demand_units = alloc_df['units_supplied'].sum()
+    total_demand_units = demand_df['units_required'].sum()
     total_supply_units = alloc_df['units_supplied'].sum()
     
     # Add manual units
@@ -5050,7 +5034,7 @@ See a detailed breakdown of the pricing below. I've attached a PDF outlining the
 {html_table}
 
 <br><br>
-Prices exclude VAT. Any legal costs for contract amendments will be charged to the client and must be paid before allocation. Our minimum delivery is 0.01 units per habitat type.
+Prices exclude VAT. Any legal costs for contract amendments will be charged to the client and must be paid before allocation.
 <br><br>
 {next_steps}
 
