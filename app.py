@@ -4767,69 +4767,67 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
     total_cost_with_manual = optimizer_cost + manual_hedgerow_cost + manual_watercourse_cost + manual_area_cost
     total_with_admin = total_cost_with_manual + admin_fee
     
-    # Bundle Low + 10% Net Gain rows together for each habitat type
+    # Bundle demand rows with 10% Net Gain rows together for each habitat type
     def bundle_low_and_net_gain(habitats_list):
-        """Bundle Low distinctiveness and 10% Net Gain rows together"""
+        """Bundle any demand distinctiveness with 10% Net Gain rows when they share the same supply habitat"""
         bundled = []
-        low_rows = {}
-        net_gain_rows = {}
-        other_rows = []
+        demand_rows = {}  # Regular demand rows grouped by supply habitat
+        net_gain_rows = {}  # Net Gain rows grouped by supply habitat
         
-        # Separate rows by distinctiveness
+        # Separate rows by whether they're Net Gain or regular demand
         for row in habitats_list:
             dist = row["Distinctiveness"]
-            supply_dist = row["Distinctiveness_Supply"]
+            supply_hab = row["Habitats Supplied"]
             
-            # Check if this is a Low or Net Gain row
-            if dist == "Low" or dist == "10% Net Gain":
-                # Group by supply habitat for bundling
-                supply_hab = row["Habitats Supplied"]
-                if dist == "Low":
-                    if supply_hab not in low_rows:
-                        low_rows[supply_hab] = []
-                    low_rows[supply_hab].append(row)
-                else:  # 10% Net Gain
-                    if supply_hab not in net_gain_rows:
-                        net_gain_rows[supply_hab] = []
-                    net_gain_rows[supply_hab].append(row)
+            if dist == "10% Net Gain":
+                # Net Gain row - group by supply habitat
+                if supply_hab not in net_gain_rows:
+                    net_gain_rows[supply_hab] = []
+                net_gain_rows[supply_hab].append(row)
             else:
-                other_rows.append(row)
+                # Regular demand row - group by supply habitat
+                if supply_hab not in demand_rows:
+                    demand_rows[supply_hab] = []
+                demand_rows[supply_hab].append(row)
         
-        # Bundle Low + Net Gain rows for same supply habitat
-        all_supply_habitats = set(list(low_rows.keys()) + list(net_gain_rows.keys()))
+        # Bundle demand + Net Gain rows for same supply habitat
+        all_supply_habitats = set(list(demand_rows.keys()) + list(net_gain_rows.keys()))
         for supply_hab in sorted(all_supply_habitats):
-            low_list = low_rows.get(supply_hab, [])
+            demand_list = demand_rows.get(supply_hab, [])
             ng_list = net_gain_rows.get(supply_hab, [])
             
-            if low_list and ng_list:
+            if demand_list and ng_list:
                 # Bundle them together
-                total_units = sum(float(r["# Units"].replace(",", "")) for r in low_list + ng_list)
-                total_supply_units = sum(float(r["# Units_Supply"].replace(",", "")) for r in low_list + ng_list)
-                total_cost = sum(float(r["Offset Cost"].replace("£", "").replace(",", "")) for r in low_list + ng_list)
+                all_rows = demand_list + ng_list
+                total_units = sum(float(r["# Units"].replace(",", "")) for r in all_rows)
+                total_supply_units = sum(float(r["# Units_Supply"].replace(",", "")) for r in all_rows)
+                total_cost = sum(float(r["Offset Cost"].replace("£", "").replace(",", "")) for r in all_rows)
                 
                 # Use weighted average for price per unit
                 avg_price = total_cost / total_supply_units if total_supply_units > 0 else 0
                 
+                # Get the primary demand distinctiveness (first non-Net Gain row)
+                primary_dist = demand_list[0]["Distinctiveness"] if demand_list else "Low"
+                primary_habitat = demand_list[0]["Habitats Lost"] if demand_list else ng_list[0]["Habitats Lost"]
+                
                 bundled_row = {
-                    "Distinctiveness": "Low + 10% Net Gain",
-                    "Habitats Lost": low_list[0]["Habitats Lost"] if low_list else ng_list[0]["Habitats Lost"],
+                    "Distinctiveness": f"{primary_dist} + 10% Net Gain",
+                    "Habitats Lost": primary_habitat,
                     "# Units": format_units_dynamic(total_units),
-                    "Distinctiveness_Supply": low_list[0]["Distinctiveness_Supply"] if low_list else ng_list[0]["Distinctiveness_Supply"],
+                    "Distinctiveness_Supply": demand_list[0]["Distinctiveness_Supply"] if demand_list else ng_list[0]["Distinctiveness_Supply"],
                     "Habitats Supplied": supply_hab,
                     "# Units_Supply": format_units_dynamic(total_supply_units),
                     "Price Per Unit": f"£{round_to_50(avg_price):,.0f}",
                     "Offset Cost": f"£{round(total_cost):,.0f}"
                 }
                 bundled.append(bundled_row)
-            elif low_list:
-                # Only Low rows, add them as is
-                bundled.extend(low_list)
+            elif demand_list:
+                # Only demand rows, add them as is
+                bundled.extend(demand_list)
             elif ng_list:
                 # Only Net Gain rows, add them as is
                 bundled.extend(ng_list)
         
-        # Add other rows
-        bundled.extend(other_rows)
         return bundled
     
     # Apply bundling to each habitat type
@@ -4844,12 +4842,16 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
             "Very High": 0,
             "V.High": 0,
             "High": 1,
+            "High + 10% Net Gain": 1.5,
             "Medium": 2,
-            "Low + 10% Net Gain": 3,
-            "Low": 4,
-            "10% Net Gain": 5,
-            "Very Low": 6,
-            "V.Low": 6
+            "Medium + 10% Net Gain": 2.5,
+            "Low": 3,
+            "Low + 10% Net Gain": 3.5,
+            "10% Net Gain": 4,
+            "Very Low": 5,
+            "V.Low": 5,
+            "Very Low + 10% Net Gain": 5.5,
+            "V.Low + 10% Net Gain": 5.5
         }
         
         def get_sort_key(row):
