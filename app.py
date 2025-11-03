@@ -4465,7 +4465,7 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
             row_data = {
                 "Distinctiveness": demand_distinctiveness,
                 "Habitats Lost": demand_habitat_display,
-                "# Units": format_units_dynamic(demand_units),  # Use original demand units
+                "# Units": format_units_dynamic(supply_units),  # Use rounded supply units for consistency
                 "Distinctiveness_Supply": supply_distinctiveness,
                 "Habitats Supplied": supply_habitat,
                 "# Units_Supply": format_units_dynamic(supply_units),
@@ -5048,7 +5048,7 @@ See a detailed breakdown of the pricing below. I've attached a PDF outlining the
 {html_table}
 
 <br><br>
-Prices exclude VAT. Any legal costs for contract amendments will be charged to the client and must be paid before allocation.
+Prices exclude VAT. Any legal costs for contract amendments will be charged to the client and must be paid before allocation. Our minimum delivery is 0.01 units per habitat type.
 <br><br>
 {next_steps}
 
