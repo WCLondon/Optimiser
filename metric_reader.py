@@ -6,6 +6,7 @@ Extracts requirements from DEFRA BNG metric Excel files
 import io
 import os
 import re
+import warnings
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -280,7 +281,6 @@ def normalise_requirements(
             na_count = deficit_rows["__distinctiveness__"].isna().sum()
             if na_count > 0:
                 # WARNING: Some deficits have NA distinctiveness, which will prevent proper offsetting
-                import warnings
                 warnings.warn(
                     f"{category_label}: {na_count} deficit habitat(s) have undefined distinctiveness. "
                     f"Trading rules may not apply correctly. Check metric file format.",
@@ -336,6 +336,14 @@ def can_offset_area(d_band: str, d_broad: str, d_hab: str,
     return False
 
 
+def is_invalid_distinctiveness(band) -> bool:
+    """Check if a distinctiveness band value is invalid/unknown"""
+    if pd.isna(band):
+        return True
+    band_str = str(band).lower().strip()
+    return band_str in ['nan', 'none', '', '<na>']
+
+
 def can_offset_hedgerow(d_band: str, d_hab: str, s_band: str, s_hab: str) -> bool:
     """
     Check if hedgerow surplus can offset hedgerow deficit according to hedgerow trading rules.
@@ -350,7 +358,7 @@ def can_offset_hedgerow(d_band: str, d_hab: str, s_band: str, s_hab: str) -> boo
     If distinctiveness is NA/unknown, returns False to prevent incorrect offsetting.
     """
     # Handle NA or invalid distinctiveness - prevent offsetting if we don't know the bands
-    if pd.isna(d_band) or pd.isna(s_band) or str(d_band).lower() in ['nan', 'none', ''] or str(s_band).lower() in ['nan', 'none', '']:
+    if is_invalid_distinctiveness(d_band) or is_invalid_distinctiveness(s_band):
         return False
     
     rank = {"Very Low": 0, "Low": 1, "Medium": 2, "High": 3, "Very High": 4}
