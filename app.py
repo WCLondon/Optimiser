@@ -69,6 +69,15 @@ NCA_URL = ("https://services.arcgis.com/JJzESW51TqeY9uat/arcgis/rest/services/"
 LPA_URL = ("https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/"
            "Local_Authority_Districts_December_2024_Boundaries_UK_BFC/FeatureServer/0")
 
+# Watercourse catchment URLs for SRM calculation
+# Note: These URLs should be updated with the most current datasets from Environment Agency
+# WFD Waterbody Catchments: Individual waterbody catchments for precise matching
+WATERBODY_CATCHMENT_URL = ("https://environment.data.gov.uk/spatialdata/water-framework-directive-"
+                          "river-waterbody-catchments-cycle-2/wfs")
+# WFD Operational Catchments: Larger operational catchment areas
+OPERATIONAL_CATCHMENT_URL = ("https://environment.data.gov.uk/spatialdata/water-framework-directive-"
+                            "river-operational-catchments-cycle-2/wfs")
+
 # Optional solver
 try:
     import pulp

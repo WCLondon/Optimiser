@@ -1,6 +1,22 @@
 """
 BNG Metric Reader Module
 Extracts requirements from DEFRA BNG metric Excel files
+
+Watercourse Spatial Risk Multiplier (SRM) Requirements:
+-------------------------------------------------------
+For watercourse habitats, SRM is determined by catchment proximity:
+- Same waterbody catchment → SRM = 1.0 (no uplift)
+- Same operational catchment (different waterbody) → SRM = 0.75 (effective 4/3 uplift to buyer requirement)
+- Outside operational catchment → SRM = 0.5 (effective 2× uplift to buyer requirement)
+
+SRM multipliers work TOGETHER with trading rules:
+- Passing trading rules doesn't remove SRM requirements
+- Meeting SRM proximity doesn't relax trading rules
+- Both must be satisfied for valid offsetting
+
+Waterbody and operational catchment data should be obtained from:
+- Environment Agency Water Framework Directive (WFD) datasets
+- Available via https://environment.data.gov.uk/
 """
 
 import io
