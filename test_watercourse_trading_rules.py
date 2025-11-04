@@ -157,13 +157,13 @@ def test_watercourse_trading_with_surpluses():
         ws_water.cell(row=1, column=col, value=header)
     
     # Test data: deficit in Medium Ditches, surplus in Medium Ditches (should offset)
-    # and deficit in High rivers, surplus in Medium rivers (should NOT offset)
-    # Make sure surpluses don't fully cover net gain requirement
+    # and deficit in High rivers, surplus in Medium rivers (should NOT offset due to distinctiveness)
+    # Surplus is intentionally small to ensure net gain requirement appears in final results
     water_data = [
         ["Ditches", "Medium", -2.0],
         ["Ditches", "Medium", 2.0],  # Exactly offsets the above deficit (no surplus left)
         ["Other rivers and streams", "High", -1.5],
-        ["Other rivers and streams", "Medium", 0.3],  # Should NOT offset (lower distinctiveness), but < net gain
+        ["Other rivers and streams", "Medium", 0.3],  # Cannot offset High deficit (lower distinctiveness), but less than net gain requirement
     ]
     
     for row_idx, row_data in enumerate(water_data, start=2):
@@ -195,8 +195,8 @@ def test_watercourse_trading_with_surpluses():
     ditches_rows = ditches_rows[~ditches_rows["habitat"].str.contains("Net Gain", case=False, na=False)]
     assert ditches_rows.empty, "Medium Ditches deficit should be fully offset by Medium Ditches surplus"
     
-    # The High rivers deficit (-1.5) should NOT be offset by Medium rivers surplus
-    # So it should appear in requirements
+    # The High rivers deficit (-1.5) should NOT be offset by Medium rivers surplus (+0.3)
+    # So the full deficit should appear in requirements
     rivers_rows = water_req_df[water_req_df["habitat"].str.contains("rivers", case=False, na=False)]
     rivers_rows = rivers_rows[~rivers_rows["habitat"].str.contains("Net Gain", case=False, na=False)]
     assert not rivers_rows.empty, "High rivers deficit should remain (cannot be offset by Medium)"
