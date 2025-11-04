@@ -307,13 +307,41 @@ def normalise_requirements(
     return out.reset_index(drop=True), colmap, sheet
 
 
+# ------------- distinctiveness validation -------------
+def is_invalid_distinctiveness(band) -> bool:
+    """Check if a distinctiveness band value is invalid/unknown"""
+    if pd.isna(band):
+        return True
+    band_str = str(band).lower().strip()
+    return band_str in ['nan', 'none', '', '<na>']
+
+
 # ------------- area trading rules -------------
 def can_offset_area(d_band: str, d_broad: str, d_hab: str,
                     s_band: str, s_broad: str, s_hab: str) -> bool:
-    """Check if surplus can offset deficit according to trading rules"""
+    """
+    Check if surplus can offset deficit according to area habitat trading rules.
+    
+    Trading rules for area habitats:
+    - Very High: Same habitat required (like-for-like)
+    - High: Same habitat required (like-for-like)
+    - Medium: High/Very High can offset from any broad group; Medium can offset Medium only if same broad group
+    - Low: Same distinctiveness or better
+    
+    If distinctiveness is NA/unknown, returns False to prevent incorrect offsetting.
+    """
+    # Handle NA or invalid distinctiveness - prevent offsetting if we don't know the bands
+    if is_invalid_distinctiveness(d_band) or is_invalid_distinctiveness(s_band):
+        return False
+    
     rank = {"Low":1, "Medium":2, "High":3, "Very High":4}
-    rd = rank.get(str(d_band), 0)
-    rs = rank.get(str(s_band), 0)
+    rd = rank.get(str(d_band), -1)  # -1 if not found
+    rs = rank.get(str(s_band), -1)
+    
+    # If either rank is unknown, don't allow offsetting
+    if rd < 0 or rs < 0:
+        return False
+    
     d_broad = clean_text(d_broad)
     s_broad = clean_text(s_broad)
     d_hab = clean_text(d_hab)
@@ -334,14 +362,6 @@ def can_offset_area(d_band: str, d_broad: str, d_hab: str,
     if d_band == "Low":       
         return rs >= rd
     return False
-
-
-def is_invalid_distinctiveness(band) -> bool:
-    """Check if a distinctiveness band value is invalid/unknown"""
-    if pd.isna(band):
-        return True
-    band_str = str(band).lower().strip()
-    return band_str in ['nan', 'none', '', '<na>']
 
 
 def can_offset_hedgerow(d_band: str, d_hab: str, s_band: str, s_hab: str) -> bool:
