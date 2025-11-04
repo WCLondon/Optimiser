@@ -269,8 +269,23 @@ def normalise_requirements(
     else:
         # Fall back to extracting from section headers
         habitat_list = df[habitat_col].astype(str).map(clean_text).tolist()
-        band_map = build_band_map_from_raw(raw, habitat_list)
+        band_map = build_band_map_from_raw(raw, habitat_list, debug=False)
         df["__distinctiveness__"] = df[habitat_col].astype(str).map(lambda x: band_map.get(clean_text(x), pd.NA))
+        
+        # Validate: check if distinctiveness extraction succeeded for deficits
+        # Only deficits need distinctiveness for trading rules to work
+        has_deficits = (pd.to_numeric(df[proj_col], errors="coerce") < 0).any()
+        if has_deficits:
+            deficit_rows = df[pd.to_numeric(df[proj_col], errors="coerce") < 0]
+            na_count = deficit_rows["__distinctiveness__"].isna().sum()
+            if na_count > 0:
+                # WARNING: Some deficits have NA distinctiveness, which will prevent proper offsetting
+                import warnings
+                warnings.warn(
+                    f"{category_label}: {na_count} deficit habitat(s) have undefined distinctiveness. "
+                    f"Trading rules may not apply correctly. Check metric file format.",
+                    UserWarning
+                )
     
     out = pd.DataFrame({
         "category": category_label,
@@ -331,10 +346,21 @@ def can_offset_hedgerow(d_band: str, d_hab: str, s_band: str, s_hab: str) -> boo
     - Medium: Same distinctiveness or better
     - Low: Same distinctiveness or better
     - Very Low: Same distinctiveness or better
+    
+    If distinctiveness is NA/unknown, returns False to prevent incorrect offsetting.
     """
+    # Handle NA or invalid distinctiveness - prevent offsetting if we don't know the bands
+    if pd.isna(d_band) or pd.isna(s_band) or str(d_band).lower() in ['nan', 'none', ''] or str(s_band).lower() in ['nan', 'none', '']:
+        return False
+    
     rank = {"Very Low": 0, "Low": 1, "Medium": 2, "High": 3, "Very High": 4}
-    rd = rank.get(str(d_band), 0)
-    rs = rank.get(str(s_band), 0)
+    rd = rank.get(str(d_band), -1)  # -1 if not found
+    rs = rank.get(str(s_band), -1)
+    
+    # If either rank is unknown, don't allow offsetting
+    if rd < 0 or rs < 0:
+        return False
+    
     d_hab = clean_text(d_hab)
     s_hab = clean_text(s_hab)
     
