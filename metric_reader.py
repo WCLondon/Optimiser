@@ -400,6 +400,76 @@ def can_offset_hedgerow(d_band: str, d_hab: str, s_band: str, s_hab: str) -> boo
     return rs >= rd
 
 
+def can_offset_watercourse(d_band: str, d_hab: str, s_band: str, s_hab: str) -> bool:
+    """
+    Check if watercourse surplus can offset watercourse deficit according to watercourse trading rules.
+    
+    Trading rules for watercourses:
+    - Very High: Not eligible for normal trading (bespoke compensation required) - return False
+    - High: Same habitat required (like-for-like, no trading up or down)
+    - Medium: Same habitat required (like-for-like, no trading up or down)
+    - Low: Must trade to better distinctiveness habitat (cannot offset Low with Low)
+    
+    "Same habitat" means the same watercourse habitat type (e.g., rivers/streams with rivers/streams,
+    canals with canals, ditches with ditches) with equal distinctiveness where required.
+    
+    If distinctiveness is NA/unknown, returns False to prevent incorrect offsetting.
+    """
+    # Handle NA or invalid distinctiveness - prevent offsetting if we don't know the bands
+    if is_invalid_distinctiveness(d_band) or is_invalid_distinctiveness(s_band):
+        return False
+    
+    rank = {"Low": 1, "Medium": 2, "High": 3, "Very High": 4}
+    rd = rank.get(str(d_band), -1)  # -1 if not found
+    rs = rank.get(str(s_band), -1)
+    
+    # If either rank is unknown, don't allow offsetting
+    if rd < 0 or rs < 0:
+        return False
+    
+    d_hab = clean_text(d_hab)
+    s_hab = clean_text(s_hab)
+    
+    # Normalize habitat names to canonical forms for watercourse matching
+    # This helps match "Other rivers and streams" with "rivers and streams", etc.
+    def normalize_watercourse_habitat(hab: str) -> str:
+        hab_lower = hab.lower()
+        # Map common variations to canonical forms
+        if "river" in hab_lower or "stream" in hab_lower:
+            return "rivers_streams"
+        elif "canal" in hab_lower:
+            return "canals"
+        elif "ditch" in hab_lower:
+            return "ditches"
+        elif "culvert" in hab_lower:
+            return "culvert"
+        elif "priority habitat" in hab_lower:
+            return "priority_habitat"
+        return hab_lower.replace(" ", "_")
+    
+    d_hab_norm = normalize_watercourse_habitat(d_hab)
+    s_hab_norm = normalize_watercourse_habitat(s_hab)
+    
+    if d_band == "Very High":
+        # Very High watercourses require bespoke compensation - not eligible for normal trading
+        return False
+    
+    if d_band == "High":
+        # High: same habitat required (like-for-like), same or better distinctiveness
+        return d_hab_norm == s_hab_norm and rs >= rd
+    
+    if d_band == "Medium":
+        # Medium: same habitat required (like-for-like), same or better distinctiveness
+        return d_hab_norm == s_hab_norm and rs >= rd
+    
+    if d_band == "Low":
+        # Low: must trade to better distinctiveness habitat (cannot offset Low with Low)
+        # Surplus must be higher distinctiveness AND same habitat type
+        return rs > rd and d_hab_norm == s_hab_norm
+    
+    return False
+
+
 def apply_area_offsets(area_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
     """
     Apply on-site trading rules and calculate residual deficits.
@@ -578,6 +648,99 @@ def apply_hedgerow_offsets(hedge_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
                     if can_offset_hedgerow(d_band, d_hab,
                                           str(s["distinctiveness"]),
                                           clean_text(s.get("habitat", "")))
+                    and sur.loc[si, "__remain__"] > 0]
+        
+        # Sort by priority: higher distinctiveness first, then larger surplus
+        elig_idx = sorted(elig_idx,
+                         key=lambda i: (-band_rank.get(str(sur.loc[i, "distinctiveness"]), 0),
+                                       -sur.loc[i, "__remain__"]))
+        
+        # Allocate surpluses to deficit
+        for i in elig_idx:
+            if need <= 1e-9:
+                break
+            give = min(need, float(sur.loc[i, "__remain__"]))
+            if give <= 0:
+                continue
+            sur.loc[i, "__remain__"] -= give
+            deficit_received[deficit_key] += give
+            need -= give
+
+    # Calculate residual unmet deficits
+    remaining_records = []
+    
+    for di, d in deficits.iterrows():
+        d_hab = clean_text(d.get("habitat", ""))
+        d_band = str(d["distinctiveness"])
+        
+        original_need = abs(float(d["project_wide_change"]))
+        deficit_key = (di, d_hab, d_band)
+        received = deficit_received.get(deficit_key, 0.0)
+        unmet = max(original_need - received, 0.0)
+        
+        if unmet > 1e-4:  # Filter out floating-point errors
+            remaining_records.append({
+                "habitat": d_hab,
+                "distinctiveness": d_band,
+                "unmet_units_after_on_site_offset": round(unmet, 6)
+            })
+
+    # Detail table of remaining surpluses (for headline allocation)
+    surplus_after_offsets_detail = sur.rename(columns={"__remain__": "surplus_remaining_units"})[
+        ["habitat", "distinctiveness", "surplus_remaining_units"]
+    ].copy()
+
+    return {
+        "residual_off_site": pd.DataFrame(remaining_records).reset_index(drop=True) if remaining_records else pd.DataFrame(columns=["habitat", "distinctiveness", "unmet_units_after_on_site_offset"]),
+        "surplus_after_offsets_detail": surplus_after_offsets_detail
+    }
+
+
+def apply_watercourse_offsets(water_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+    """
+    Apply on-site trading rules for watercourses and calculate residual deficits.
+    Returns dict with:
+      - residual_off_site: unmet deficits after on-site offsets
+      - surplus_after_offsets_detail: remaining surpluses
+    
+    Watercourse trading rules:
+    - Very High: Not eligible for normal trading (bespoke compensation required)
+    - High: Same habitat required (like-for-like)
+    - Medium: Same habitat required (like-for-like)
+    - Low: Must trade to better distinctiveness habitat
+    """
+    data = water_df.copy()
+    data["project_wide_change"] = coerce_num(data["project_wide_change"])
+    deficits = data[data["project_wide_change"] < 0].copy()
+    surpluses = data[data["project_wide_change"] > 0].copy()
+
+    # Working copy to track remaining surplus
+    sur = surpluses.copy()
+    sur["__remain__"] = sur["project_wide_change"].astype(float)
+
+    band_rank = {"Low": 1, "Medium": 2, "High": 3, "Very High": 4}
+    
+    # Sort deficits by distinctiveness rank (Very High > High > Medium > Low)
+    sorted_deficits = sorted(deficits.iterrows(), 
+                            key=lambda t: (-band_rank.get(str(t[1]["distinctiveness"]), 0), t[0]))
+    
+    # Track what each deficit received
+    deficit_received = {}
+    
+    # Apply trading rules to offset deficits with surpluses
+    for di, d in sorted_deficits:
+        need = abs(float(d["project_wide_change"]))
+        d_band = str(d["distinctiveness"])
+        d_hab = clean_text(d.get("habitat", ""))
+        
+        deficit_key = (di, d_hab, d_band)
+        deficit_received[deficit_key] = 0.0
+        
+        # Find eligible surpluses
+        elig_idx = [si for si, s in sur.iterrows()
+                    if can_offset_watercourse(d_band, d_hab,
+                                             str(s["distinctiveness"]),
+                                             clean_text(s.get("habitat", "")))
                     and sur.loc[si, "__remain__"] > 0]
         
         # Sort by priority: higher distinctiveness first, then larger surplus
@@ -1059,28 +1222,72 @@ def parse_metric_requirements(uploaded_file) -> Dict:
                 "units": round(hedge_net_gain_requirement, 4)
             })
     
-    # ========== WATERCOURSES - Deficits + Net Gain ==========
+    # ========== WATERCOURSES - Full trading logic ==========
     water_requirements = []
     if not water_norm.empty:
-        water_norm["project_wide_change"] = coerce_num(water_norm["project_wide_change"])
-        deficits = water_norm[water_norm["project_wide_change"] < 0]
-        for _, row in deficits.iterrows():
+        # Step 1: Apply on-site offsets with watercourse trading rules
+        water_alloc = apply_watercourse_offsets(water_norm)
+        water_residual_table = water_alloc["residual_off_site"]
+        water_surplus_detail = water_alloc["surplus_after_offsets_detail"]
+        
+        # Add watercourse residuals after on-site offsetting
+        if not water_residual_table.empty:
+            for _, row in water_residual_table.iterrows():
+                water_requirements.append({
+                    "habitat": clean_text(row["habitat"]),
+                    "units": float(row["unmet_units_after_on_site_offset"])
+                })
+        
+        # Step 2: Parse headline target
+        watercourse_info = headline_all["watercourse"]
+        water_target_pct = watercourse_info["target_percent"]
+        water_baseline_units = watercourse_info["baseline_units"]
+        water_net_gain_requirement = water_baseline_units * water_target_pct
+        
+        # Step 3: Allocate remaining surpluses to headline
+        water_surplus_remaining = water_surplus_detail.copy()
+        water_surplus_remaining["surplus_remaining_units"] = pd.to_numeric(
+            water_surplus_remaining["surplus_remaining_units"], errors="coerce"
+        ).fillna(0.0)
+        
+        # Allocate to headline
+        band_rank = {"Low": 1, "Medium": 2, "High": 3, "Very High": 4}
+        water_surs = water_surplus_remaining.copy()
+        water_surs = water_surs[water_surs["surplus_remaining_units"] > 1e-9]
+        water_surs["__rank__"] = water_surs["distinctiveness"].map(lambda b: band_rank.get(str(b), 0))
+        water_surs = water_surs.sort_values(by=["__rank__", "surplus_remaining_units"], ascending=[False, False])
+        
+        water_to_cover = water_net_gain_requirement
+        for idx, s in water_surs.iterrows():
+            if water_to_cover <= 1e-9:
+                break
+            give = min(water_to_cover, float(s["surplus_remaining_units"]))
+            if give <= 1e-9:
+                continue
+            water_surplus_remaining.loc[idx, "surplus_remaining_units"] -= give
+            water_to_cover -= give
+        
+        water_applied_to_headline = water_net_gain_requirement - water_to_cover
+        
+        # Step 4: Calculate headline remainder
+        water_residual_headline = max(water_net_gain_requirement - water_applied_to_headline, 0.0)
+        
+        # Add headline remainder if > 0
+        if water_residual_headline > 1e-9:
             water_requirements.append({
-                "habitat": clean_text(row["habitat"]),
-                "units": abs(float(row["project_wide_change"]))
+                "habitat": "Net Gain (Watercourses)",
+                "units": round(water_residual_headline, 4)
             })
-    
-    # Add watercourse net gain requirement from headline
-    watercourse_info = headline_all["watercourse"]
-    water_target_pct = watercourse_info["target_percent"]
-    water_baseline_units = watercourse_info["baseline_units"]
-    water_net_gain_requirement = water_baseline_units * water_target_pct
-    
-    if water_net_gain_requirement > 1e-9:
-        water_requirements.append({
-            "habitat": "Net Gain (Watercourses)",
-            "units": round(water_net_gain_requirement, 4)
-        })
+    else:
+        # No watercourse trading data, just add net gain if baseline exists
+        watercourse_info = headline_all["watercourse"]
+        water_net_gain_requirement = watercourse_info["baseline_units"] * watercourse_info["target_percent"]
+        
+        if water_net_gain_requirement > 1e-9:
+            water_requirements.append({
+                "habitat": "Net Gain (Watercourses)",
+                "units": round(water_net_gain_requirement, 4)
+            })
     
     return {
         "area": pd.DataFrame(area_requirements) if area_requirements else pd.DataFrame(columns=["habitat", "units"]),
