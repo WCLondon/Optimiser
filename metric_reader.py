@@ -171,7 +171,7 @@ VL_PAT = re.compile(r"\bvery\s*low\b.*distinct", re.I)
 L_PAT  = re.compile(r"\blow\b.*distinct", re.I)
 
 
-def build_band_map_from_raw(raw: pd.DataFrame, habitats: List[str]) -> Dict[str, str]:
+def build_band_map_from_raw(raw: pd.DataFrame, habitats: List[str], debug=False) -> Dict[str, str]:
     """Extract distinctiveness bands from raw sheet headers"""
     target_set = {clean_text(h) for h in habitats if isinstance(h, str) and clean_text(h)}
     band_map: Dict[str, str] = {}
@@ -189,14 +189,19 @@ def build_band_map_from_raw(raw: pd.DataFrame, habitats: List[str]) -> Dict[str,
         if joined:
             if VH_PAT.search(joined): 
                 active_band = "Very High"
+                if debug: print(f"  Row {r}: Found 'Very High' in: {joined[:80]}")
             elif H_PAT.search(joined) and not VH_PAT.search(joined): 
                 active_band = "High"
+                if debug: print(f"  Row {r}: Found 'High' in: {joined[:80]}")
             elif M_PAT.search(joined): 
                 active_band = "Medium"
+                if debug: print(f"  Row {r}: Found 'Medium' in: {joined[:80]}")
             elif VL_PAT.search(joined):
                 active_band = "Very Low"
+                if debug: print(f"  Row {r}: Found 'Very Low' in: {joined[:80]}")
             elif L_PAT.search(joined): 
                 active_band = "Low"
+                if debug: print(f"  Row {r}: Found 'Low' in: {joined[:80]}")
         
         if active_band:
             for c in range(raw.shape[1]):
@@ -205,6 +210,14 @@ def build_band_map_from_raw(raw: pd.DataFrame, habitats: List[str]) -> Dict[str,
                     v = clean_text(val)
                     if v in target_set and v not in band_map:
                         band_map[v] = active_band
+                        if debug: print(f"    -> Mapped habitat '{v}' to '{active_band}'")
+    
+    if debug:
+        print(f"\n  Total habitats in target_set: {len(target_set)}")
+        print(f"  Total mapped: {len(band_map)}")
+        if len(band_map) < len(target_set):
+            unmapped = target_set - set(band_map.keys())
+            print(f"  ⚠️  Unmapped habitats ({len(unmapped)}): {list(unmapped)[:5]}")
     
     return band_map
 
