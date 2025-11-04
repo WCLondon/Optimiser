@@ -6,6 +6,7 @@ Extracts requirements from DEFRA BNG metric Excel files
 import io
 import os
 import re
+import warnings
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -171,7 +172,7 @@ VL_PAT = re.compile(r"\bvery\s*low\b.*distinct", re.I)
 L_PAT  = re.compile(r"\blow\b.*distinct", re.I)
 
 
-def build_band_map_from_raw(raw: pd.DataFrame, habitats: List[str]) -> Dict[str, str]:
+def build_band_map_from_raw(raw: pd.DataFrame, habitats: List[str], debug=False) -> Dict[str, str]:
     """Extract distinctiveness bands from raw sheet headers"""
     target_set = {clean_text(h) for h in habitats if isinstance(h, str) and clean_text(h)}
     band_map: Dict[str, str] = {}
@@ -189,14 +190,19 @@ def build_band_map_from_raw(raw: pd.DataFrame, habitats: List[str]) -> Dict[str,
         if joined:
             if VH_PAT.search(joined): 
                 active_band = "Very High"
+                if debug: print(f"  Row {r}: Found 'Very High' in: {joined[:80]}")
             elif H_PAT.search(joined) and not VH_PAT.search(joined): 
                 active_band = "High"
+                if debug: print(f"  Row {r}: Found 'High' in: {joined[:80]}")
             elif M_PAT.search(joined): 
                 active_band = "Medium"
+                if debug: print(f"  Row {r}: Found 'Medium' in: {joined[:80]}")
             elif VL_PAT.search(joined):
                 active_band = "Very Low"
+                if debug: print(f"  Row {r}: Found 'Very Low' in: {joined[:80]}")
             elif L_PAT.search(joined): 
                 active_band = "Low"
+                if debug: print(f"  Row {r}: Found 'Low' in: {joined[:80]}")
         
         if active_band:
             for c in range(raw.shape[1]):
@@ -205,6 +211,14 @@ def build_band_map_from_raw(raw: pd.DataFrame, habitats: List[str]) -> Dict[str,
                     v = clean_text(val)
                     if v in target_set and v not in band_map:
                         band_map[v] = active_band
+                        if debug: print(f"    -> Mapped habitat '{v}' to '{active_band}'")
+    
+    if debug:
+        print(f"\n  Total habitats in target_set: {len(target_set)}")
+        print(f"  Total mapped: {len(band_map)}")
+        if len(band_map) < len(target_set):
+            unmapped = target_set - set(band_map.keys())
+            print(f"  ⚠️  Unmapped habitats ({len(unmapped)}): {list(unmapped)[:5]}")
     
     return band_map
 
@@ -256,8 +270,22 @@ def normalise_requirements(
     else:
         # Fall back to extracting from section headers
         habitat_list = df[habitat_col].astype(str).map(clean_text).tolist()
-        band_map = build_band_map_from_raw(raw, habitat_list)
+        band_map = build_band_map_from_raw(raw, habitat_list, debug=False)
         df["__distinctiveness__"] = df[habitat_col].astype(str).map(lambda x: band_map.get(clean_text(x), pd.NA))
+        
+        # Validate: check if distinctiveness extraction succeeded for deficits
+        # Only deficits need distinctiveness for trading rules to work
+        has_deficits = (pd.to_numeric(df[proj_col], errors="coerce") < 0).any()
+        if has_deficits:
+            deficit_rows = df[pd.to_numeric(df[proj_col], errors="coerce") < 0]
+            na_count = deficit_rows["__distinctiveness__"].isna().sum()
+            if na_count > 0:
+                # WARNING: Some deficits have NA distinctiveness, which will prevent proper offsetting
+                warnings.warn(
+                    f"{category_label}: {na_count} deficit habitat(s) have undefined distinctiveness. "
+                    f"Trading rules may not apply correctly. Check metric file format.",
+                    UserWarning
+                )
     
     out = pd.DataFrame({
         "category": category_label,
@@ -279,13 +307,41 @@ def normalise_requirements(
     return out.reset_index(drop=True), colmap, sheet
 
 
+# ------------- distinctiveness validation -------------
+def is_invalid_distinctiveness(band) -> bool:
+    """Check if a distinctiveness band value is invalid/unknown"""
+    if pd.isna(band):
+        return True
+    band_str = str(band).lower().strip()
+    return band_str in ['nan', 'none', '', '<na>']
+
+
 # ------------- area trading rules -------------
 def can_offset_area(d_band: str, d_broad: str, d_hab: str,
                     s_band: str, s_broad: str, s_hab: str) -> bool:
-    """Check if surplus can offset deficit according to trading rules"""
+    """
+    Check if surplus can offset deficit according to area habitat trading rules.
+    
+    Trading rules for area habitats:
+    - Very High: Same habitat required (like-for-like)
+    - High: Same habitat required (like-for-like)
+    - Medium: High/Very High can offset from any broad group; Medium can offset Medium only if same broad group
+    - Low: Same distinctiveness or better
+    
+    If distinctiveness is NA/unknown, returns False to prevent incorrect offsetting.
+    """
+    # Handle NA or invalid distinctiveness - prevent offsetting if we don't know the bands
+    if is_invalid_distinctiveness(d_band) or is_invalid_distinctiveness(s_band):
+        return False
+    
     rank = {"Low":1, "Medium":2, "High":3, "Very High":4}
-    rd = rank.get(str(d_band), 0)
-    rs = rank.get(str(s_band), 0)
+    rd = rank.get(str(d_band), -1)  # -1 if not found
+    rs = rank.get(str(s_band), -1)
+    
+    # If either rank is unknown, don't allow offsetting
+    if rd < 0 or rs < 0:
+        return False
+    
     d_broad = clean_text(d_broad)
     s_broad = clean_text(s_broad)
     d_hab = clean_text(d_hab)
@@ -318,10 +374,21 @@ def can_offset_hedgerow(d_band: str, d_hab: str, s_band: str, s_hab: str) -> boo
     - Medium: Same distinctiveness or better
     - Low: Same distinctiveness or better
     - Very Low: Same distinctiveness or better
+    
+    If distinctiveness is NA/unknown, returns False to prevent incorrect offsetting.
     """
+    # Handle NA or invalid distinctiveness - prevent offsetting if we don't know the bands
+    if is_invalid_distinctiveness(d_band) or is_invalid_distinctiveness(s_band):
+        return False
+    
     rank = {"Very Low": 0, "Low": 1, "Medium": 2, "High": 3, "Very High": 4}
-    rd = rank.get(str(d_band), 0)
-    rs = rank.get(str(s_band), 0)
+    rd = rank.get(str(d_band), -1)  # -1 if not found
+    rs = rank.get(str(s_band), -1)
+    
+    # If either rank is unknown, don't allow offsetting
+    if rd < 0 or rs < 0:
+        return False
+    
     d_hab = clean_text(d_hab)
     s_hab = clean_text(s_hab)
     
