@@ -87,8 +87,14 @@ def find_header_row(df: pd.DataFrame, within_rows: int = 80) -> Optional[int]:
     """Find the header row in a trading summary sheet"""
     for i in range(min(within_rows, len(df))):
         row = " ".join([clean_text(x) for x in df.iloc[i].tolist()]).lower()
+        # Check for area habitat headers (with group column)
         if ("group" in row) and (("on-site" in row and "off-site" in row and "project" in row)
                                  or "project wide" in row or "project-wide" in row):
+            return i
+        # Check for hedgerow/watercourse headers (without group column)
+        # Look for "habitat" or "feature" combined with "project-wide unit change" or similar
+        if (("habitat" in row or "feature" in row) and 
+            ("project" in row and ("unit" in row or "change" in row))):
             return i
     return None
 
@@ -139,6 +145,9 @@ def resolve_broad_group_col(df: pd.DataFrame, habitat_col: str, broad_col_guess:
         if not col or col not in df.columns: 
             return False
         name = canon(col)
+        # Exclude distinctiveness columns
+        if any(k in name for k in ["distinct"]):
+            return False
         if any(k in name for k in ["group","broad_habitat"]): 
             return True
         ser = df[col].dropna()
@@ -150,8 +159,7 @@ def resolve_broad_group_col(df: pd.DataFrame, habitat_col: str, broad_col_guess:
         return adj
     if broad_col_guess and looks_like_group(broad_col_guess): 
         return broad_col_guess
-    if adj and "unit_change" not in canon(adj): 
-        return adj
+    # Don't return adj if it doesn't look like a group (e.g., could be a Distinctiveness column)
     return broad_col_guess
 
 
@@ -159,6 +167,7 @@ def resolve_broad_group_col(df: pd.DataFrame, habitat_col: str, broad_col_guess:
 VH_PAT = re.compile(r"\bvery\s*high\b.*distinct", re.I)
 H_PAT  = re.compile(r"\bhigh\b.*distinct", re.I)
 M_PAT  = re.compile(r"\bmedium\b.*distinct", re.I)
+VL_PAT = re.compile(r"\bvery\s*low\b.*distinct", re.I)
 L_PAT  = re.compile(r"\blow\b.*distinct", re.I)
 
 
@@ -184,6 +193,8 @@ def build_band_map_from_raw(raw: pd.DataFrame, habitats: List[str]) -> Dict[str,
                 active_band = "High"
             elif M_PAT.search(joined): 
                 active_band = "Medium"
+            elif VL_PAT.search(joined):
+                active_band = "Very Low"
             elif L_PAT.search(joined): 
                 active_band = "Low"
         
@@ -233,9 +244,20 @@ def normalise_requirements(
         if c in df.columns: 
             df[c] = coerce_num(df[c])
     
-    habitat_list = df[habitat_col].astype(str).map(clean_text).tolist()
-    band_map = build_band_map_from_raw(raw, habitat_list)
-    df["__distinctiveness__"] = df[habitat_col].astype(str).map(lambda x: band_map.get(clean_text(x), pd.NA))
+    # Filter out rows where project_wide_change is NaN (section headers, repeated headers)
+    df = df[~df[proj_col].isna()].copy()
+    
+    # Check if there's a Distinctiveness column in the dataframe
+    distinctiveness_col = col_like(df, "Distinctiveness", "Distinct")
+    
+    if distinctiveness_col and distinctiveness_col in df.columns:
+        # Use the Distinctiveness column directly
+        df["__distinctiveness__"] = df[distinctiveness_col].astype(str).map(clean_text)
+    else:
+        # Fall back to extracting from section headers
+        habitat_list = df[habitat_col].astype(str).map(clean_text).tolist()
+        band_map = build_band_map_from_raw(raw, habitat_list)
+        df["__distinctiveness__"] = df[habitat_col].astype(str).map(lambda x: band_map.get(clean_text(x), pd.NA))
     
     out = pd.DataFrame({
         "category": category_label,
