@@ -439,35 +439,38 @@ if submitted:
                 # Save to database
                 db = SubmissionsDB()
                 
-                # Create submission data
-                submission_data = {
-                    'submission_date': datetime.now(),
-                    'client_name': contact_email.split('@')[0],  # Use email prefix as name
-                    'reference_number': client_reference if client_reference else f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
-                    'site_location': site_address if site_address else site_postcode,
-                    'target_lpa': None,  # Would be resolved from postcode
-                    'target_nca': None,
-                    'demand_habitats': demand_habitats,
-                    'contract_size': 'Standard',
-                    'total_cost': quote_total,
-                    'admin_fee': 0,
-                    'total_with_admin': quote_total,
-                    'num_banks_selected': 0,
-                    'banks_used': [],
-                    'allocation_results': {
-                        'demand': demand_habitats,
-                        'hedgerows': hedgerow_habitats,
-                        'watercourses': watercourse_habitats,
-                        'total_units': total_units
-                    },
-                    'username': 'promoter',
-                    'promoter_name': PROMOTER_SLUG,
-                    'promoter_discount_type': None,
-                    'promoter_discount_value': None
-                }
+                # Convert demand data to DataFrames for storage
+                demand_df = area_df if not area_df.empty else pd.DataFrame()
+                allocation_df = pd.DataFrame()  # No allocation yet, placeholder
                 
-                # Save submission
-                submission_id = db.insert_submission(**submission_data)
+                # Prepare manual rows (for hedgerow and watercourse)
+                manual_hedgerow_rows = hedgerow_habitats
+                manual_watercourse_rows = watercourse_habitats
+                
+                # Save submission using correct method
+                submission_id = db.store_submission(
+                    client_name=contact_email.split('@')[0],  # Use email prefix as name
+                    reference_number=client_reference if client_reference else f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+                    site_location=site_address if site_address else site_postcode,
+                    target_lpa='',  # Would be resolved from postcode
+                    target_nca='',
+                    target_lat=None,
+                    target_lon=None,
+                    lpa_neighbors=[],
+                    nca_neighbors=[],
+                    demand_df=demand_df,
+                    allocation_df=allocation_df,
+                    contract_size='Standard',
+                    total_cost=quote_total,
+                    admin_fee=0.0,
+                    manual_hedgerow_rows=manual_hedgerow_rows,
+                    manual_watercourse_rows=manual_watercourse_rows,
+                    manual_area_habitat_rows=demand_habitats,
+                    username='promoter',
+                    promoter_name=PROMOTER_SLUG,
+                    promoter_discount_type=None,
+                    promoter_discount_value=None
+                )
                 
                 # Generate PDF if auto-quoted
                 pdf_content = None
