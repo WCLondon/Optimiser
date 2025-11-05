@@ -17,8 +17,16 @@ import metric_reader
 import repo
 from database import SubmissionsDB
 from email_notification import send_manual_review_email
-from pdf_generator_promoter import generate_quote_pdf
 from app import generate_client_report_table_fixed
+
+# Try to import PDF generator (requires reportlab)
+try:
+    from pdf_generator_promoter import generate_quote_pdf
+    PDF_GENERATION_AVAILABLE = True
+except ImportError as e:
+    PDF_GENERATION_AVAILABLE = False
+    print(f"Warning: PDF generation not available - {e}")
+    print("Install reportlab to enable PDF generation: pip install reportlab>=4.0")
 
 # Configure page
 st.set_page_config(
@@ -498,32 +506,39 @@ if submitted:
                         )
                         
                         # Generate PDF using the report
-                        pdf_content = generate_quote_pdf(
-                            client_name=contact_email.split('@')[0],
-                            reference_number=client_reference if client_reference else f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
-                            site_location=site_address if site_address else site_postcode,
-                            quote_total=quote_total,
-                            admin_fee=0.0,
-                            report_df=report_df,
-                            email_html=email_html,
-                            promoter_name=PROMOTER_SLUG,
-                            contact_email=contact_email,
-                            notes=notes
-                        )
+                        if PDF_GENERATION_AVAILABLE:
+                            pdf_content = generate_quote_pdf(
+                                client_name=contact_email.split('@')[0],
+                                reference_number=client_reference if client_reference else f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+                                site_location=site_address if site_address else site_postcode,
+                                quote_total=quote_total,
+                                admin_fee=0.0,
+                                report_df=report_df,
+                                email_html=email_html,
+                                promoter_name=PROMOTER_SLUG,
+                                contact_email=contact_email,
+                                notes=notes
+                            )
+                        else:
+                            # Fallback: create a simple text file as PDF
+                            pdf_content = f"""
+BNG QUOTE SUMMARY
+
+Promoter: {PROMOTER_SLUG}
+Reference: {client_reference if client_reference else f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}"}
+Contact: {contact_email}
+Site: {site_address if site_address else site_postcode}
+
+Total Cost: £{quote_total:,.2f}
+
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+Note: Install reportlab for full PDF generation with client report table.
+""".encode('utf-8')
                     except Exception as pdf_error:
                         print(f"PDF generation failed: {str(pdf_error)}")
-                        # Create a simple fallback PDF with just the quote total
-                        from reportlab.pdfgen import canvas
-                        from io import BytesIO
-                        buffer = BytesIO()
-                        c = canvas.Canvas(buffer)
-                        c.drawString(100, 750, f"BNG Quote - {PROMOTER_SLUG}")
-                        c.drawString(100, 720, f"Total: £{quote_total:,.2f}")
-                        c.drawString(100, 690, f"Site: {site_address if site_address else site_postcode}")
-                        c.showPage()
-                        c.save()
-                        pdf_content = buffer.getvalue()
-                        buffer.close()
+                        # Create a simple text fallback
+                        pdf_content = f"BNG Quote - {PROMOTER_SLUG}\nTotal: £{quote_total:,.2f}\nSite: {site_address if site_address else site_postcode}".encode('utf-8')
                 
                 # Always send email notification for record keeping
                 email_sent = False

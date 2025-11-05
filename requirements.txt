@@ -9,3 +9,4 @@ psycopg[binary]>=3.1
 tenacity>=8.0
 openpyxl>=3.1   # for BNG metric Excel reading
 pyxlsb>=1.0     # for BNG metric .xlsb files
+reportlab>=4.0  # for PDF generation in promoter form
