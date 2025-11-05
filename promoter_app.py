@@ -7,8 +7,6 @@ Password: From password column in introducers table
 
 import streamlit as st
 import pandas as pd
-import tempfile
-import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from io import BytesIO
@@ -18,6 +16,7 @@ from typing import Optional, Dict, List
 import metric_reader
 import repo
 from database import SubmissionsDB
+from email_notification import send_manual_review_email
 
 # Configure page
 st.set_page_config(
@@ -399,21 +398,19 @@ if submitted:
         # Process submission
         with st.spinner("Processing your quote request..."):
             try:
-                # Save uploaded file to temp location
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
-                    tmp_file.write(metric_file.getvalue())
-                    tmp_file_path = tmp_file.name
+                # Save the file content for email attachment
+                metric_file_content = metric_file.getvalue()
+                metric_file_name = metric_file.name
                 
-                # Read metric file
+                # Read metric file directly from uploaded file
                 try:
-                    demand_data = metric_reader.parse_metric_requirements(tmp_file_path)
+                    demand_data = metric_reader.parse_metric_requirements(metric_file)
                 except Exception as e:
                     st.session_state.submission_result = {
                         'success': False,
                         'error': f"Failed to read metric file: {str(e)}"
                     }
                     st.session_state.submission_complete = True
-                    os.unlink(tmp_file_path)
                     st.rerun()
                 
                 # Extract demand habitats from parsed data
@@ -472,9 +469,6 @@ if submitted:
                 # Save submission
                 submission_id = db.insert_submission(**submission_data)
                 
-                # Clean up temp file
-                os.unlink(tmp_file_path)
-                
                 # Generate PDF if auto-quoted
                 pdf_content = None
                 if auto_quoted:
@@ -482,13 +476,38 @@ if submitted:
                     # For now, create a simple placeholder
                     pdf_content = b"PDF placeholder content"
                 
-                # Store result
+                # Always send email notification for record keeping
+                email_sent = False
+                try:
+                    email_sent = send_manual_review_email(
+                        promoter_name=PROMOTER_SLUG,
+                        contact_email=contact_email,
+                        site_location=site_address if site_address else site_postcode,
+                        client_reference=client_reference,
+                        notes=notes,
+                        quote_total=quote_total,
+                        submission_id=submission_id,
+                        metric_file_content=metric_file_content,
+                        metric_file_name=metric_file_name
+                    )
+                except Exception as email_error:
+                    print(f"Email sending failed: {str(email_error)}")
+                    email_sent = False
+                
+                # Store result (including file content for email)
                 st.session_state.submission_result = {
                     'success': True,
                     'auto_quoted': auto_quoted,
                     'quote_total': quote_total,
                     'submission_id': submission_id,
-                    'pdf_content': pdf_content
+                    'pdf_content': pdf_content,
+                    'email_sent': email_sent,
+                    'metric_file_content': metric_file_content,
+                    'metric_file_name': metric_file_name,
+                    'contact_email': contact_email,
+                    'site_location': site_address if site_address else site_postcode,
+                    'client_reference': client_reference,
+                    'notes': notes
                 }
                 st.session_state.submission_complete = True
                 st.rerun()
@@ -499,8 +518,6 @@ if submitted:
                     'error': str(e)
                 }
                 st.session_state.submission_complete = True
-                if 'tmp_file_path' in locals() and os.path.exists(tmp_file_path):
-                    os.unlink(tmp_file_path)
                 st.rerun()
 
 # Footer
