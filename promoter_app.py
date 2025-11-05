@@ -447,7 +447,7 @@ if submitted:
                 hedgerow_habitats = hedgerow_df.to_dict('records') if not hedgerow_df.empty else []
                 watercourse_habitats = watercourse_df.to_dict('records') if not watercourse_df.empty else []
                 
-                # RUN THE FULL OPTIMIZER to get allocation and real pricing
+                # RUN THE FULL OPTIMIZER using the optimise function from app.py
                 allocation_df = pd.DataFrame()
                 quote_total = 0.0
                 
@@ -457,36 +457,46 @@ if submitted:
                 st.write(f"- Watercourse habitats: {len(watercourse_habitats)}")
                 
                 try:
-                    # Initialize repo with area demand
-                    if not area_df.empty:
-                        st.write("🔄 **Running optimizer...**")
-                        repo_instance = repo.Repo()
+                    if not demand_df.empty:
+                        st.write("🔄 **Running full optimizer...**")
                         
-                        # Run optimization
-                        results = repo_instance.optimize(
-                            area_demand_df=area_df,
-                            hedgerow_demand_df=hedgerow_df,
-                            watercourse_demand_df=watercourse_df
-                        )
-                        
-                        # Get allocation and costs
-                        allocation_df = results.get('allocation_df', pd.DataFrame())
-                        quote_total = results.get('total_cost', 0.0)
-                        st.write(f"✅ **Optimizer complete:** {len(allocation_df)} allocations, £{quote_total:,.2f} total")
+                        # Import the optimise function from app.py
+                        if HAS_CLIENT_REPORT_FUNCTION:  # If app.py imports worked
+                            from app import optimise
+                            
+                            # Run optimization with empty location (will use "far" tier for all)
+                            allocation_df, quote_total, status_msg = optimise(
+                                demand_df=demand_df,
+                                target_lpa="",  # No specific location - will match all banks
+                                target_nca="",
+                                lpa_neigh=[],
+                                nca_neigh=[],
+                                lpa_neigh_norm=[],
+                                nca_neigh_norm=[]
+                            )
+                            
+                            st.write(f"✅ **Optimizer complete:** {len(allocation_df)} allocations, £{quote_total:,.2f} total")
+                            st.write(f"ℹ️ {status_msg}")
+                        else:
+                            raise Exception("app.py not available for optimization")
                     else:
-                        # Fallback if no area habitats
-                        total_units = sum(h.get('units', 0) for h in hedgerow_habitats)
-                        total_units += sum(h.get('units', 0) for h in watercourse_habitats)
-                        quote_total = total_units * 10000.0  # Simplified pricing
-                        st.write(f"ℹ️ No area habitats, using simplified pricing: £{quote_total:,.2f}")
+                        raise Exception("No demand data to optimize")
+                        
                 except Exception as opt_error:
-                    st.write(f"⚠️ Optimizer failed: {str(opt_error)[:100]}")
+                    st.write(f"⚠️ Optimizer failed: {str(opt_error)[:200]}")
+                    st.write("ℹ️ Using fallback simplified pricing...")
                     # Fallback: Calculate simplified quote total
-                    total_units = sum(h.get('units', 0) for h in demand_habitats)
-                    total_units += sum(h.get('units', 0) for h in hedgerow_habitats)
-                    total_units += sum(h.get('units', 0) for h in watercourse_habitats)
-                    quote_total = total_units * 10000.0
-                    st.write(f"ℹ️ Using fallback pricing: £{quote_total:,.2f}")
+                    total_units = 0.0
+                    for h in demand_habitats:
+                        total_units += float(h.get('units', 0) or 0)
+                    for h in hedgerow_habitats:
+                        total_units += float(h.get('units', 0) or 0)
+                    for h in watercourse_habitats:
+                        total_units += float(h.get('units', 0) or 0)
+                    
+                    quote_total = total_units * 10000.0  # £10k per unit estimate
+                    st.write(f"📊 Total units: {total_units:.2f}")
+                    st.write(f"💰 Estimated cost: £{quote_total:,.2f} (simplified pricing)")
                 
                 # Apply threshold logic
                 auto_quoted = quote_total < AUTO_QUOTE_THRESHOLD
@@ -532,22 +542,21 @@ if submitted:
                 if auto_quoted:
                     try:
                         st.write("📄 **Generating PDF quote...**")
-                        st.write(f"- Allocation data: {len(allocation_df)} rows" if not allocation_df.empty else "- Allocation data: EMPTY")
-                        st.write(f"- Demand data: {len(demand_df)} rows" if not demand_df.empty else "- Demand data: EMPTY")
-                        st.write(f"- Client report function available: {HAS_CLIENT_REPORT_FUNCTION}")
+                        st.write(f"- Allocation data: {len(allocation_df)} rows" if not allocation_df.empty else "- No allocation data")
                         st.write(f"- PDF library available: {PDF_GENERATION_AVAILABLE}")
+                        st.write(f"- Client report function available: {HAS_CLIENT_REPORT_FUNCTION}")
                         
-                        # Generate client report table using the function from app.py (if available)
+                        # Generate client report table if we have allocation data
                         report_df = None
                         email_html = None
                         
                         if HAS_CLIENT_REPORT_FUNCTION and not allocation_df.empty:
-                            st.write("🔄 Generating client report table...")
+                            st.write("🔄 Generating full client report with allocations...")
                             report_df, email_html = generate_client_report_table_fixed(
                                 alloc_df=allocation_df,
                                 demand_df=demand_df,
                                 total_cost=quote_total,
-                                admin_fee=0.0,  # No admin fee for promoter quotes
+                                admin_fee=0.0,
                                 client_name=contact_email.split('@')[0],
                                 ref_number=client_reference if client_reference else f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
                                 location=site_address if site_address else site_postcode,
@@ -560,13 +569,36 @@ if submitted:
                                 promoter_discount_value=None,
                                 suo_discount_fraction=0.0
                             )
-                            st.write(f"✅ Report table generated: {len(report_df)} rows" if report_df is not None and not report_df.empty else "⚠️ Report table is empty or None")
-                        elif not HAS_CLIENT_REPORT_FUNCTION:
-                            st.write("⚠️ Client report function not available (app.py import failed)")
-                        elif allocation_df.empty:
-                            st.write("⚠️ No allocation data available for report")
+                            st.write(f"✅ Report table: {len(report_df)} rows" if report_df is not None else "⚠️ Report table empty")
                         
-                        # Generate PDF using the report
+                        # If we don't have allocation data, create a simple summary
+                        if report_df is None or report_df.empty:
+                            st.write("ℹ️ Creating simplified summary (no allocations available)...")
+                            summary_data = []
+                            for idx, hab in enumerate(demand_habitats, 1):
+                                summary_data.append({
+                                    'Item': f"Area Habitat {idx}",
+                                    'Habitat': hab.get('habitat_name', 'Unknown'),
+                                    'Units': f"{hab.get('units', 0):.2f}",
+                                    'Est. Cost': f"£{float(hab.get('units', 0) or 0) * 10000:,.0f}"
+                                })
+                            for idx, hab in enumerate(hedgerow_habitats, 1):
+                                summary_data.append({
+                                    'Item': f"Hedgerow {idx}",
+                                    'Habitat': hab.get('habitat_name', 'Hedgerow'),
+                                    'Units': f"{hab.get('units', 0):.2f}",
+                                    'Est. Cost': f"£{float(hab.get('units', 0) or 0) * 10000:,.0f}"
+                                })
+                            for idx, hab in enumerate(watercourse_habitats, 1):
+                                summary_data.append({
+                                    'Item': f"Watercourse {idx}",
+                                    'Habitat': hab.get('habitat_name', 'Watercourse'),
+                                    'Units': f"{hab.get('units', 0):.2f}",
+                                    'Est. Cost': f"£{float(hab.get('units', 0) or 0) * 10000:,.0f}"
+                                })
+                            report_df = pd.DataFrame(summary_data) if summary_data else None
+                        
+                        # Generate PDF
                         if PDF_GENERATION_AVAILABLE and report_df is not None and not report_df.empty:
                             st.write("🔄 Creating PDF with ReportLab...")
                             pdf_content = generate_quote_pdf(
@@ -576,35 +608,47 @@ if submitted:
                                 quote_total=quote_total,
                                 admin_fee=0.0,
                                 report_df=report_df,
-                                email_html=email_html,
+                                email_html=email_html or "",
                                 promoter_name=PROMOTER_SLUG,
                                 contact_email=contact_email,
                                 notes=notes
                             )
                             st.write(f"✅ **PDF generated: {len(pdf_content):,} bytes**")
                         else:
-                            # Fallback: create a simple text file as PDF
-                            st.write("⚠️ Using fallback text PDF (report_df is empty or libraries unavailable)")
-                            pdf_content = f"""
-BNG QUOTE SUMMARY
+                            raise Exception("Cannot generate PDF - missing data or library")
+                            
+                    except Exception as pdf_error:
+                        st.write(f"⚠️ PDF generation issue: {str(pdf_error)[:200]}")
+                        st.write("ℹ️ Creating text-based quote...")
+                        # Create a simple text fallback
+                        total_units = sum(float(h.get('units', 0) or 0) for h in demand_habitats)
+                        total_units += sum(float(h.get('units', 0) or 0) for h in hedgerow_habitats)
+                        total_units += sum(float(h.get('units', 0) or 0) for h in watercourse_habitats)
+                        
+                        pdf_content = f"""BNG QUOTE SUMMARY
 
 Promoter: {PROMOTER_SLUG}
 Reference: {client_reference if client_reference else f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}"}
 Contact: {contact_email}
 Site: {site_address if site_address else site_postcode}
 
+HABITAT REQUIREMENTS:
+{len(demand_habitats)} area habitats
+{len(hedgerow_habitats)} hedgerow habitats  
+{len(watercourse_habitats)} watercourse habitats
+
+Total Units: {total_units:.2f}
+{"Allocation: " + str(len(allocation_df)) + " bank allocations" if not allocation_df.empty else "Pricing: Simplified estimate"}
 Total Cost: £{quote_total:,.2f}
 
 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-Note: Full PDF generation requires successful optimizer run with allocation data.
-Please contact Wild Capital for a complete quote document.
+{"Note: Full PDF generation encountered an error. This is a simplified text quote." if not allocation_df.empty else "Note: This is a preliminary estimate. Full optimizer requires location data for precise bank allocation."}
+
+For detailed quotes and bank allocation details, please contact:
+quotes@wildcapital.co.uk
 """.encode('utf-8')
-                            st.write(f"ℹ️ Fallback PDF size: {len(pdf_content)} bytes")
-                    except Exception as pdf_error:
-                        st.write(f"❌ PDF generation error: {str(pdf_error)[:200]}")
-                        # Create a simple text fallback
-                        pdf_content = f"BNG Quote - {PROMOTER_SLUG}\nTotal: £{quote_total:,.2f}\nSite: {site_address if site_address else site_postcode}".encode('utf-8')
+                        st.write(f"✅ Text quote created: {len(pdf_content)} bytes")
                 
                 # Always send email notification for record keeping
                 email_sent = False
