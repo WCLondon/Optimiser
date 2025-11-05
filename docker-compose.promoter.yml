@@ -1,0 +1,105 @@
+# Docker Compose configuration for testing promoter form feature
+version: '3.8'
+
+services:
+  # PostgreSQL database
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: optimiser_test
+      POSTGRES_USER: optimiser
+      POSTGRES_PASSWORD: optimiser_test_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./promoter_submissions_schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U optimiser"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis for job queue
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Database
+      DATABASE_URL: postgresql://optimiser:optimiser_test_password@postgres:5432/optimiser_test
+      
+      # Supabase (set these to your actual values)
+      SUPABASE_URL: ${SUPABASE_URL:-https://placeholder.supabase.co}
+      SUPABASE_KEY: ${SUPABASE_KEY:-placeholder-key}
+      SUPABASE_METRICS_BUCKET: promoter-metrics
+      SUPABASE_PDFS_BUCKET: promoter-pdfs
+      
+      # Auto-quote threshold
+      AUTO_QUOTE_THRESHOLD: 20000.0
+      
+      # Email (set these to your actual values)
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-test@example.com}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-test}
+      SMTP_FROM_EMAIL: quotes@wildcapital.co.uk
+      SMTP_FROM_NAME: Wild Capital BNG Quotes
+      REVIEWER_EMAILS: ${REVIEWER_EMAILS:-reviewer@example.com}
+      
+      # Quote settings
+      VAT_RATE: 0.20
+      QUOTE_VALIDITY_DAYS: 30
+      
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      CACHE_TTL: 43200
+    volumes:
+      - ./backend:/app
+      - ./metric_reader.py:/app/metric_reader.py
+      - ./repo.py:/app/repo.py
+    command: uvicorn app:app --host 0.0.0.0 --port 8000 --reload
+
+  # Streamlit frontend (optional, for full stack testing)
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    ports:
+      - "8501:8501"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql://optimiser:optimiser_test_password@postgres:5432/optimiser_test
+    volumes:
+      - .:/app
+    command: streamlit run app.py
+
+volumes:
+  postgres_data:
+  redis_data:
