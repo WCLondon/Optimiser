@@ -20,7 +20,7 @@ A **single Streamlit application** that serves as a quote request system for all
    - Database persistence with promoter tracking
 
 3. **Database Integration**
-   - Loads promoters from `customer_promoters` table
+   - Loads promoters from `introducers` table
    - Saves submissions to `submissions` table
    - Tracks which promoter submitted each quote
 
@@ -42,7 +42,7 @@ streamlit run promoter_app.py --server.port 8502
 |----------|----------|-------------|
 | EPT      | EPT1     | Environmental Planning & Testing |
 | Arbtech  | Arbtech1 | Arbtech |
-| *Any promoter in DB* | *Name+1* | Loaded from customer_promoters table |
+| *Any promoter in DB* | *Name+1* | Loaded from introducers table |
 
 ## User Flow
 
@@ -117,12 +117,13 @@ def authenticate(username, password):
 **Promoters Loaded From:**
 ```sql
 SELECT DISTINCT 
-    promoter_name,
-    promoter_discount_type,
-    promoter_discount_value
-FROM customer_promoters 
-WHERE promoter_name IS NOT NULL 
-ORDER BY promoter_name
+    name,
+    discount_type,
+    discount_value
+FROM introducers 
+WHERE name IS NOT NULL 
+AND name != ''
+ORDER BY name
 ```
 
 **Submissions Saved With:**
@@ -227,14 +228,14 @@ docker run -p 8502:8501 bng-promoter-app
 ### Add to Database
 
 ```sql
-INSERT INTO customer_promoters (
-    customer_name, 
-    company_name, 
-    promoter_name
+INSERT INTO introducers (
+    name,
+    discount_type,
+    discount_value
 ) VALUES (
-    'New Client',
-    'New Company', 
-    'NewPromoter'
+    'NewPromoter',
+    'no_discount',
+    0
 );
 ```
 
@@ -317,7 +318,7 @@ LIMIT 20;
 ### Short Term (Testing)
 
 - [ ] Test with live database connection
-- [ ] Verify promoter loading from customer_promoters
+- [ ] Verify promoter loading from introducers
 - [ ] Test full submission flow
 - [ ] Verify promoter tracking in submissions
 

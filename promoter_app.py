@@ -48,19 +48,19 @@ def get_promoters() -> List[Dict]:
     Returns list of promoter dictionaries with name, discount info, etc.
     """
     try:
-        # Try to fetch promoters from customer_promoters table
+        # Fetch promoters from introducers table
         engine = repo.get_db_engine()
         with engine.connect() as conn:
             from sqlalchemy import text
             result = conn.execute(text("""
                 SELECT DISTINCT 
-                    promoter_name,
-                    promoter_discount_type,
-                    promoter_discount_value
-                FROM customer_promoters 
-                WHERE promoter_name IS NOT NULL 
-                AND promoter_name != ''
-                ORDER BY promoter_name
+                    name,
+                    discount_type,
+                    discount_value
+                FROM introducers 
+                WHERE name IS NOT NULL 
+                AND name != ''
+                ORDER BY name
             """))
             
             promoters = []
@@ -78,7 +78,7 @@ def get_promoters() -> List[Dict]:
         return [
             {'name': 'EPT', 'discount_type': None, 'discount_value': None},
             {'name': 'Arbtech', 'discount_type': None, 'discount_value': None},
-            {'name': 'TestPromoter', 'discount_type': None, 'discount_value': None}
+            {'name': 'Cypher', 'discount_type': None, 'discount_value': None}
         ]
 
 

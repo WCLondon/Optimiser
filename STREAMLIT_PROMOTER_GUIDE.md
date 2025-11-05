@@ -10,7 +10,7 @@
 ✅ **Login authentication** - Username from database, password is name+1  
 ✅ **Automatic tracking** - Submissions tagged with logged-in promoter  
 ✅ **Simple deployment** - Just one Streamlit instance needed  
-✅ **Database-driven** - Promoter list loaded from customer_promoters table  
+✅ **Database-driven** - Promoter list loaded from introducers table  
 
 ## Quick Start
 
@@ -85,33 +85,34 @@ The app queries the database for available promoters:
 
 ```sql
 SELECT DISTINCT 
-    promoter_name,
-    promoter_discount_type,
-    promoter_discount_value
-FROM customer_promoters 
-WHERE promoter_name IS NOT NULL 
-ORDER BY promoter_name
+    name,
+    discount_type,
+    discount_value
+FROM introducers 
+WHERE name IS NOT NULL 
+AND name != ''
+ORDER BY name
 ```
 
 If the query fails (e.g., table doesn't exist), it falls back to default promoters:
 - EPT
 - Arbtech
-- TestPromoter
+- Cypher
 
 ## Adding New Promoters
 
-### Method 1: Add to customer_promoters table
+### Method 1: Add to introducers table
 
 ```sql
 -- Add a new promoter
-INSERT INTO customer_promoters (
-    customer_name, 
-    company_name, 
-    promoter_name
+INSERT INTO introducers (
+    name,
+    discount_type,
+    discount_value
 ) VALUES (
-    'New Client',
-    'New Company', 
-    'NewPromoter'
+    'NewPromoter',
+    'no_discount',
+    0
 );
 ```
 
