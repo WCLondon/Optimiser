@@ -447,14 +447,37 @@ if submitted:
                 hedgerow_habitats = hedgerow_df.to_dict('records') if not hedgerow_df.empty else []
                 watercourse_habitats = watercourse_df.to_dict('records') if not watercourse_df.empty else []
                 
-                # Calculate simplified quote total
-                # In production, this would run the full optimizer
-                total_units = sum(h.get('units', 0) for h in demand_habitats)
-                total_units += sum(h.get('units', 0) for h in hedgerow_habitats)
-                total_units += sum(h.get('units', 0) for h in watercourse_habitats)
+                # RUN THE FULL OPTIMIZER to get allocation and real pricing
+                allocation_df = pd.DataFrame()
+                quote_total = 0.0
                 
-                # Simplified pricing (£10,000 per unit average)
-                quote_total = total_units * 10000.0
+                try:
+                    # Initialize repo with area demand
+                    if not area_df.empty:
+                        repo_instance = repo.Repo()
+                        
+                        # Run optimization
+                        results = repo_instance.optimize(
+                            area_demand_df=area_df,
+                            hedgerow_demand_df=hedgerow_df,
+                            watercourse_demand_df=watercourse_df
+                        )
+                        
+                        # Get allocation and costs
+                        allocation_df = results.get('allocation_df', pd.DataFrame())
+                        quote_total = results.get('total_cost', 0.0)
+                    else:
+                        # Fallback if no area habitats
+                        total_units = sum(h.get('units', 0) for h in hedgerow_habitats)
+                        total_units += sum(h.get('units', 0) for h in watercourse_habitats)
+                        quote_total = total_units * 10000.0  # Simplified pricing
+                except Exception as opt_error:
+                    print(f"Optimizer failed, using fallback pricing: {opt_error}")
+                    # Fallback: Calculate simplified quote total
+                    total_units = sum(h.get('units', 0) for h in demand_habitats)
+                    total_units += sum(h.get('units', 0) for h in hedgerow_habitats)
+                    total_units += sum(h.get('units', 0) for h in watercourse_habitats)
+                    quote_total = total_units * 10000.0
                 
                 # Apply threshold logic
                 auto_quoted = quote_total < AUTO_QUOTE_THRESHOLD
@@ -462,9 +485,9 @@ if submitted:
                 # Save to database
                 db = SubmissionsDB()
                 
-                # Convert demand data to DataFrames for storage
+                # Demand dataframe is already available from parsing
                 demand_df = area_df if not area_df.empty else pd.DataFrame()
-                allocation_df = pd.DataFrame()  # No allocation yet, placeholder
+                # allocation_df is already set from optimizer run above
                 
                 # Prepare manual rows (for hedgerow and watercourse)
                 manual_hedgerow_rows = hedgerow_habitats
