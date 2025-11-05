@@ -17,6 +17,8 @@ import metric_reader
 import repo
 from database import SubmissionsDB
 from email_notification import send_manual_review_email
+from pdf_generator_promoter import generate_quote_pdf
+from app import generate_client_report_table_fixed
 
 # Configure page
 st.set_page_config(
@@ -475,9 +477,53 @@ if submitted:
                 # Generate PDF if auto-quoted
                 pdf_content = None
                 if auto_quoted:
-                    # TODO: Generate actual PDF
-                    # For now, create a simple placeholder
-                    pdf_content = b"PDF placeholder content"
+                    try:
+                        # Generate client report table using the function from app.py
+                        report_df, email_html = generate_client_report_table_fixed(
+                            alloc_df=allocation_df,
+                            demand_df=demand_df,
+                            total_cost=quote_total,
+                            admin_fee=0.0,  # No admin fee for promoter quotes
+                            client_name=contact_email.split('@')[0],
+                            ref_number=client_reference if client_reference else f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+                            location=site_address if site_address else site_postcode,
+                            manual_hedgerow_rows=manual_hedgerow_rows,
+                            manual_watercourse_rows=manual_watercourse_rows,
+                            manual_area_rows=demand_habitats,
+                            removed_allocation_rows=[],
+                            promoter_name=PROMOTER_SLUG,
+                            promoter_discount_type=None,
+                            promoter_discount_value=None,
+                            suo_discount_fraction=0.0
+                        )
+                        
+                        # Generate PDF using the report
+                        pdf_content = generate_quote_pdf(
+                            client_name=contact_email.split('@')[0],
+                            reference_number=client_reference if client_reference else f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+                            site_location=site_address if site_address else site_postcode,
+                            quote_total=quote_total,
+                            admin_fee=0.0,
+                            report_df=report_df,
+                            email_html=email_html,
+                            promoter_name=PROMOTER_SLUG,
+                            contact_email=contact_email,
+                            notes=notes
+                        )
+                    except Exception as pdf_error:
+                        print(f"PDF generation failed: {str(pdf_error)}")
+                        # Create a simple fallback PDF with just the quote total
+                        from reportlab.pdfgen import canvas
+                        from io import BytesIO
+                        buffer = BytesIO()
+                        c = canvas.Canvas(buffer)
+                        c.drawString(100, 750, f"BNG Quote - {PROMOTER_SLUG}")
+                        c.drawString(100, 720, f"Total: £{quote_total:,.2f}")
+                        c.drawString(100, 690, f"Site: {site_address if site_address else site_postcode}")
+                        c.showPage()
+                        c.save()
+                        pdf_content = buffer.getvalue()
+                        buffer.close()
                 
                 # Always send email notification for record keeping
                 email_sent = False
