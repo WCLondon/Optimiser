@@ -451,12 +451,19 @@ if submitted:
                 allocation_df = pd.DataFrame()
                 quote_total = 0.0
                 
+                print(f"DEBUG: Starting optimizer run...")
+                print(f"DEBUG: area_df shape: {area_df.shape if not area_df.empty else 'EMPTY'}")
+                print(f"DEBUG: hedgerow_df shape: {hedgerow_df.shape if not hedgerow_df.empty else 'EMPTY'}")
+                print(f"DEBUG: watercourse_df shape: {watercourse_df.shape if not watercourse_df.empty else 'EMPTY'}")
+                
                 try:
                     # Initialize repo with area demand
                     if not area_df.empty:
+                        print("DEBUG: Creating Repo instance...")
                         repo_instance = repo.Repo()
                         
                         # Run optimization
+                        print("DEBUG: Running optimizer...")
                         results = repo_instance.optimize(
                             area_demand_df=area_df,
                             hedgerow_demand_df=hedgerow_df,
@@ -466,6 +473,7 @@ if submitted:
                         # Get allocation and costs
                         allocation_df = results.get('allocation_df', pd.DataFrame())
                         quote_total = results.get('total_cost', 0.0)
+                        print(f"DEBUG: Optimizer success! allocation_df shape: {allocation_df.shape}, quote_total: £{quote_total:,.2f}")
                     else:
                         # Fallback if no area habitats
                         total_units = sum(h.get('units', 0) for h in hedgerow_habitats)
@@ -522,11 +530,19 @@ if submitted:
                 pdf_content = None
                 if auto_quoted:
                     try:
+                        # Debug logging
+                        print(f"DEBUG: Generating PDF for auto-quote")
+                        print(f"DEBUG: allocation_df shape: {allocation_df.shape if not allocation_df.empty else 'EMPTY'}")
+                        print(f"DEBUG: demand_df shape: {demand_df.shape if not demand_df.empty else 'EMPTY'}")
+                        print(f"DEBUG: HAS_CLIENT_REPORT_FUNCTION: {HAS_CLIENT_REPORT_FUNCTION}")
+                        print(f"DEBUG: PDF_GENERATION_AVAILABLE: {PDF_GENERATION_AVAILABLE}")
+                        
                         # Generate client report table using the function from app.py (if available)
                         report_df = None
                         email_html = None
                         
                         if HAS_CLIENT_REPORT_FUNCTION:
+                            print("DEBUG: Calling generate_client_report_table_fixed...")
                             report_df, email_html = generate_client_report_table_fixed(
                                 alloc_df=allocation_df,
                                 demand_df=demand_df,
@@ -544,9 +560,11 @@ if submitted:
                                 promoter_discount_value=None,
                                 suo_discount_fraction=0.0
                             )
+                            print(f"DEBUG: report_df shape: {report_df.shape if report_df is not None and not report_df.empty else 'EMPTY or None'}")
                         
                         # Generate PDF using the report
                         if PDF_GENERATION_AVAILABLE and report_df is not None:
+                            print("DEBUG: Generating PDF with reportlab...")
                             pdf_content = generate_quote_pdf(
                                 client_name=contact_email.split('@')[0],
                                 reference_number=client_reference if client_reference else f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
@@ -559,6 +577,7 @@ if submitted:
                                 contact_email=contact_email,
                                 notes=notes
                             )
+                            print(f"DEBUG: PDF size: {len(pdf_content)} bytes")
                         else:
                             # Fallback: create a simple text file as PDF
                             pdf_content = f"""

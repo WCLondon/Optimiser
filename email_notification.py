@@ -40,14 +40,30 @@ def send_manual_review_email(
     Returns:
         True if email sent successfully
     """
-    # Get email configuration from environment
-    smtp_host = os.getenv('SMTP_HOST', 'smtp.gmail.com')
-    smtp_port = int(os.getenv('SMTP_PORT', '587'))
-    smtp_user = os.getenv('SMTP_USER', '')
-    smtp_password = os.getenv('SMTP_PASSWORD', '')
-    from_email = os.getenv('SMTP_FROM_EMAIL', smtp_user)
-    from_name = os.getenv('SMTP_FROM_NAME', 'BNG Quotes')
-    reviewer_emails_str = os.getenv('REVIEWER_EMAILS', '')
+    # Get email configuration from environment or Streamlit secrets
+    try:
+        import streamlit as st
+        has_streamlit = True
+    except ImportError:
+        has_streamlit = False
+    
+    # Try to get from Streamlit secrets first, then environment variables
+    if has_streamlit and hasattr(st, 'secrets'):
+        smtp_host = st.secrets.get('SMTP_HOST', os.getenv('SMTP_HOST', 'smtp.gmail.com'))
+        smtp_port = int(st.secrets.get('SMTP_PORT', os.getenv('SMTP_PORT', '587')))
+        smtp_user = st.secrets.get('SMTP_USER', os.getenv('SMTP_USER', ''))
+        smtp_password = st.secrets.get('SMTP_PASSWORD', os.getenv('SMTP_PASSWORD', ''))
+        from_email = st.secrets.get('SMTP_FROM_EMAIL', os.getenv('SMTP_FROM_EMAIL', smtp_user))
+        from_name = st.secrets.get('SMTP_FROM_NAME', os.getenv('SMTP_FROM_NAME', 'BNG Quotes'))
+        reviewer_emails_str = st.secrets.get('REVIEWER_EMAILS', os.getenv('REVIEWER_EMAILS', ''))
+    else:
+        smtp_host = os.getenv('SMTP_HOST', 'smtp.gmail.com')
+        smtp_port = int(os.getenv('SMTP_PORT', '587'))
+        smtp_user = os.getenv('SMTP_USER', '')
+        smtp_password = os.getenv('SMTP_PASSWORD', '')
+        from_email = os.getenv('SMTP_FROM_EMAIL', smtp_user)
+        from_name = os.getenv('SMTP_FROM_NAME', 'BNG Quotes')
+        reviewer_emails_str = os.getenv('REVIEWER_EMAILS', '')
     
     # Parse reviewer emails
     reviewer_emails = [email.strip() for email in reviewer_emails_str.split(',') if email.strip()]
@@ -61,7 +77,10 @@ def send_manual_review_email(
         return False
     
     # Determine if auto-quote or manual review
-    auto_quote_threshold = float(os.getenv('AUTO_QUOTE_THRESHOLD', '20000.0'))
+    if has_streamlit and hasattr(st, 'secrets'):
+        auto_quote_threshold = float(st.secrets.get('AUTO_QUOTE_THRESHOLD', os.getenv('AUTO_QUOTE_THRESHOLD', '20000.0')))
+    else:
+        auto_quote_threshold = float(os.getenv('AUTO_QUOTE_THRESHOLD', '20000.0'))
     is_auto_quote = quote_total < auto_quote_threshold
     quote_type = "Auto-Quote" if is_auto_quote else "Manual Review"
     
