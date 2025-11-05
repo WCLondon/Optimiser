@@ -16,12 +16,18 @@ import redis
 from rq import Queue
 from rq.job import Job
 
+# Import promoter routes
+from promoter_routes import router as promoter_router
+
 # Initialize FastAPI app
 app = FastAPI(
     title="BNG Optimiser Backend",
     description="Background job processing and caching for BNG optimization",
     version="1.0.0"
 )
+
+# Include promoter routes
+app.include_router(promoter_router)
 
 # Add CORS middleware to allow Streamlit frontend to connect
 app.add_middleware(

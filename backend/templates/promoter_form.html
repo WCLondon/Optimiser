@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BNG Quote Request - {{ promoter_name }}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 600px;
+            width: 100%;
+            padding: 40px;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            color: #2d3748;
+            font-size: 28px;
+            margin-bottom: 8px;
+        }
+        
+        .header p {
+            color: #718096;
+            font-size: 16px;
+        }
+        
+        .promoter-tag {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 20px;
+        }
+        
+        .form-group {
+            margin-bottom: 24px;
+        }
+        
+        label {
+            display: block;
+            color: #2d3748;
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        
+        .required {
+            color: #e53e3e;
+        }
+        
+        input[type="text"],
+        input[type="email"],
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e2e8f0;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+        
+        input[type="text"]:focus,
+        input[type="email"]:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+        
+        input[type="file"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px dashed #cbd5e0;
+            border-radius: 6px;
+            cursor: pointer;
+            background: #f7fafc;
+            transition: all 0.2s;
+        }
+        
+        input[type="file"]:hover {
+            border-color: #667eea;
+            background: #edf2f7;
+        }
+        
+        .file-info {
+            font-size: 12px;
+            color: #718096;
+            margin-top: 6px;
+        }
+        
+        .checkbox-group {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+        }
+        
+        input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+            margin-top: 2px;
+            flex-shrink: 0;
+        }
+        
+        .checkbox-label {
+            font-weight: normal;
+            color: #4a5568;
+            line-height: 1.5;
+            font-size: 14px;
+        }
+        
+        .submit-button {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .submit-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+        }
+        
+        .submit-button:active {
+            transform: translateY(0);
+        }
+        
+        .submit-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .error-message {
+            background: #fed7d7;
+            color: #c53030;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        
+        .help-text {
+            font-size: 13px;
+            color: #718096;
+            margin-top: 6px;
+        }
+        
+        .location-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        
+        @media (max-width: 640px) {
+            .container {
+                padding: 24px;
+            }
+            
+            .location-group {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="promoter-tag">{{ promoter_name }}</div>
+            <h1>BNG Quote Request</h1>
+            <p>Fast, simple biodiversity net gain quotes</p>
+        </div>
+        
+        {% if error %}
+        <div class="error-message">
+            {{ error }}
+        </div>
+        {% endif %}
+        
+        <form method="POST" enctype="multipart/form-data">
+            <div class="form-group">
+                <label for="contact_email">
+                    Contact Email <span class="required">*</span>
+                </label>
+                <input 
+                    type="email" 
+                    id="contact_email" 
+                    name="contact_email" 
+                    required 
+                    placeholder="your.email@example.com"
+                    value="{{ form_data.contact_email or '' }}"
+                >
+            </div>
+            
+            <div class="form-group">
+                <div class="location-group">
+                    <div>
+                        <label for="site_address">Site Address</label>
+                        <input 
+                            type="text" 
+                            id="site_address" 
+                            name="site_address" 
+                            placeholder="123 Main Street, Town"
+                            value="{{ form_data.site_address or '' }}"
+                        >
+                    </div>
+                    <div>
+                        <label for="site_postcode">Postcode</label>
+                        <input 
+                            type="text" 
+                            id="site_postcode" 
+                            name="site_postcode" 
+                            placeholder="SW1A 1AA"
+                            value="{{ form_data.site_postcode or '' }}"
+                        >
+                    </div>
+                </div>
+                <p class="help-text">At least one of address or postcode is required</p>
+            </div>
+            
+            <div class="form-group">
+                <label for="client_reference">Client Reference (optional)</label>
+                <input 
+                    type="text" 
+                    id="client_reference" 
+                    name="client_reference" 
+                    placeholder="Project reference or identifier"
+                    value="{{ form_data.client_reference or '' }}"
+                >
+            </div>
+            
+            <div class="form-group">
+                <label for="notes">Notes (optional)</label>
+                <textarea 
+                    id="notes" 
+                    name="notes" 
+                    placeholder="Any additional information or special requirements"
+                >{{ form_data.notes or '' }}</textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="metric_file">
+                    BNG Metric File <span class="required">*</span>
+                </label>
+                <input 
+                    type="file" 
+                    id="metric_file" 
+                    name="metric_file" 
+                    accept=".xlsx"
+                    required
+                >
+                <p class="file-info">Excel file (.xlsx) only, maximum 15 MB</p>
+            </div>
+            
+            <div class="form-group">
+                <div class="checkbox-group">
+                    <input 
+                        type="checkbox" 
+                        id="consent" 
+                        name="consent" 
+                        required
+                        {% if form_data.consent %}checked{% endif %}
+                    >
+                    <label for="consent" class="checkbox-label">
+                        I confirm that I have permission to share this data for the purpose of obtaining a BNG quote <span class="required">*</span>
+                    </label>
+                </div>
+            </div>
+            
+            <button type="submit" class="submit-button">Submit Quote Request</button>
+        </form>
+    </div>
+</body>
+</html>
