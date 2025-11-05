@@ -1105,6 +1105,7 @@ def parse_metric_requirements(uploaded_file) -> Dict:
     ]
     WATER_SHEETS = [
         "Trading Summary WaterCs",
+        "Trading Summary WaterC's",  # Handle apostrophe variation
         "Trading Summary Watercourses",
         "Watercourses Trading Summary",
         "Trading Summary (Watercourses)"
