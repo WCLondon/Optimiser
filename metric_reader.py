@@ -1105,6 +1105,7 @@ def parse_metric_requirements(uploaded_file) -> Dict:
     ]
     WATER_SHEETS = [
         "Trading Summary WaterCs",
+        "Trading Summary WaterC's",  # Handle apostrophe variation
         "Trading Summary Watercourses",
         "Watercourses Trading Summary",
         "Trading Summary (Watercourses)"
@@ -1255,11 +1256,23 @@ def parse_metric_requirements(uploaded_file) -> Dict:
     
     # ========== WATERCOURSES - Full trading logic ==========
     water_requirements = []
+    water_diagnostics = {
+        "raw_data": water_norm.copy() if not water_norm.empty else pd.DataFrame(),
+        "surpluses": pd.DataFrame(),
+        "deficits": pd.DataFrame(),
+        "net_gain_requirement": 0.0,
+        "net_gain_applied": 0.0
+    }
+    
     if not water_norm.empty:
         # Step 1: Apply on-site offsets with watercourse trading rules
         water_alloc = apply_watercourse_offsets(water_norm)
         water_residual_table = water_alloc["residual_off_site"]
         water_surplus_detail = water_alloc["surplus_after_offsets_detail"]
+        
+        # Store diagnostics: surpluses after on-site offsets
+        water_diagnostics["surpluses"] = water_surplus_detail.copy()
+        water_diagnostics["deficits"] = water_residual_table.copy()
         
         # Add watercourse residuals after on-site offsetting
         if not water_residual_table.empty:
@@ -1274,6 +1287,8 @@ def parse_metric_requirements(uploaded_file) -> Dict:
         water_target_pct = watercourse_info["target_percent"]
         water_baseline_units = watercourse_info["baseline_units"]
         water_net_gain_requirement = water_baseline_units * water_target_pct
+        
+        water_diagnostics["net_gain_requirement"] = water_net_gain_requirement
         
         # Step 3: Allocate remaining surpluses to headline
         water_surplus_remaining = water_surplus_detail.copy()
@@ -1299,6 +1314,9 @@ def parse_metric_requirements(uploaded_file) -> Dict:
             water_to_cover -= give
         
         water_applied_to_headline = water_net_gain_requirement - water_to_cover
+        
+        # Store diagnostic info
+        water_diagnostics["net_gain_applied"] = water_applied_to_headline
         
         # Step 4: Calculate headline remainder
         water_residual_headline = max(water_net_gain_requirement - water_applied_to_headline, 0.0)
@@ -1326,5 +1344,6 @@ def parse_metric_requirements(uploaded_file) -> Dict:
         "watercourses": pd.DataFrame(water_requirements) if water_requirements else pd.DataFrame(columns=["habitat", "units"]),
         "baseline_info": headline_all,
         "surplus": surplus_after_all_offsets if not surplus_after_all_offsets.empty else pd.DataFrame(columns=["habitat", "broad_group", "distinctiveness", "units_surplus"]),
-        "flow_log": area_flow_log
+        "flow_log": area_flow_log,
+        "watercourse_diagnostics": water_diagnostics
     }
