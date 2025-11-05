@@ -447,6 +447,54 @@ if submitted:
                 hedgerow_habitats = hedgerow_df.to_dict('records') if not hedgerow_df.empty else []
                 watercourse_habitats = watercourse_df.to_dict('records') if not watercourse_df.empty else []
                 
+                # GEOCODE THE POSTCODE TO GET LPA/NCA
+                target_lpa = ""
+                target_nca = ""
+                lpa_neighbors = []
+                nca_neighbors = []
+                lpa_neighbors_norm = []
+                nca_neighbors_norm = []
+                
+                try:
+                    if site_postcode:
+                        st.write(f"🔄 **Geocoding postcode:** {site_postcode}")
+                        
+                        # Import geocoding functions from app.py
+                        from app import get_postcode_info, get_lpa_nca_for_point, get_catchment_geo_for_point, layer_intersect_names, LPA_URL, NCA_URL
+                        
+                        # Get coordinates from postcode
+                        lat, lon, _ = get_postcode_info(site_postcode)
+                        st.write(f"📍 Location: {lat:.4f}, {lon:.4f}")
+                        
+                        # Get LPA and NCA
+                        target_lpa, target_nca = get_lpa_nca_for_point(lat, lon)
+                        st.write(f"🏛️ LPA: {target_lpa}")
+                        st.write(f"🌳 NCA: {target_nca}")
+                        
+                        # Get geometries and neighbors for proper tier allocation
+                        lpa_name, lpa_gj, nca_name, nca_gj = get_catchment_geo_for_point(lat, lon)
+                        
+                        if lpa_gj:
+                            lpa_neighbors = layer_intersect_names(LPA_URL, lpa_gj, "LAD24NM")
+                            lpa_neighbors = [n for n in lpa_neighbors if n != target_lpa]
+                            lpa_neighbors_norm = [n.lower().replace(" ", "") for n in lpa_neighbors]
+                            st.write(f"🔗 Adjacent LPAs: {len(lpa_neighbors)}")
+                        
+                        if nca_gj:
+                            nca_neighbors = layer_intersect_names(NCA_URL, nca_gj, "NCA_Name")
+                            nca_neighbors = [n for n in nca_neighbors if n != target_nca]
+                            nca_neighbors_norm = [n.lower().replace(" ", "") for n in nca_neighbors]
+                            st.write(f"🔗 Adjacent NCAs: {len(nca_neighbors)}")
+                            
+                    elif site_address:
+                        st.write(f"ℹ️ Address provided but no postcode - using far tier for all banks")
+                    else:
+                        st.write(f"ℹ️ No location provided - using far tier for all banks")
+                        
+                except Exception as geo_error:
+                    st.write(f"⚠️ Geocoding warning: {str(geo_error)[:100]}")
+                    st.write("ℹ️ Continuing with empty location (far tier)")
+                
                 # RUN THE FULL OPTIMIZER using the optimise function from app.py
                 allocation_df = pd.DataFrame()
                 quote_total = 0.0
@@ -464,15 +512,15 @@ if submitted:
                         if HAS_CLIENT_REPORT_FUNCTION:  # If app.py imports worked
                             from app import optimise
                             
-                            # Run optimization with empty location (will use "far" tier for all)
+                            # Run optimization with actual location data
                             allocation_df, quote_total, status_msg = optimise(
                                 demand_df=demand_df,
-                                target_lpa="",  # No specific location - will match all banks
-                                target_nca="",
-                                lpa_neigh=[],
-                                nca_neigh=[],
-                                lpa_neigh_norm=[],
-                                nca_neigh_norm=[]
+                                target_lpa=target_lpa,
+                                target_nca=target_nca,
+                                lpa_neigh=lpa_neighbors,
+                                nca_neigh=nca_neighbors,
+                                lpa_neigh_norm=lpa_neighbors_norm,
+                                nca_neigh_norm=nca_neighbors_norm
                             )
                             
                             st.write(f"✅ **Optimizer complete:** {len(allocation_df)} allocations, £{quote_total:,.2f} total")
@@ -517,12 +565,12 @@ if submitted:
                     client_name=contact_email.split('@')[0],  # Use email prefix as name
                     reference_number=client_reference if client_reference else f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
                     site_location=site_address if site_address else site_postcode,
-                    target_lpa='',  # Would be resolved from postcode
-                    target_nca='',
+                    target_lpa=target_lpa,  # From postcode geocoding
+                    target_nca=target_nca,
                     target_lat=None,
                     target_lon=None,
-                    lpa_neighbors=[],
-                    nca_neighbors=[],
+                    lpa_neighbors=lpa_neighbors,
+                    nca_neighbors=nca_neighbors,
                     demand_df=demand_df,
                     allocation_df=allocation_df,
                     contract_size='Standard',
