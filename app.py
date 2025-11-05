@@ -86,8 +86,11 @@ except Exception:
     _HAS_PULP = False
 
 # ================= Page Setup =================
-st.set_page_config(page_title="BNG Optimiser (Standalone)", page_icon="🧭", layout="wide")
-st.markdown("<h2>BNG Optimiser — Standalone</h2>", unsafe_allow_html=True)
+# Only run Streamlit UI setup if this file is being run directly (not imported)
+import os
+if os.environ.get('IMPORTING_FROM_PROMOTER_APP') != '1':
+    st.set_page_config(page_title="BNG Optimiser (Standalone)", page_icon="🧭", layout="wide")
+    st.markdown("<h2>BNG Optimiser — Standalone</h2>", unsafe_allow_html=True)
 
 # ================= Initialize Session State =================
 def init_session_state():
@@ -211,7 +214,9 @@ def reset_quote():
         # Re-initialize session state as fallback
         init_session_state()
 
-init_session_state()
+# Only initialize session state if running as main app (not when imported)
+if os.environ.get('IMPORTING_FROM_PROMOTER_APP') != '1':
+    init_session_state()
 
 # ================= Safe strings =================
 def sstr(x) -> str:
@@ -1767,23 +1772,28 @@ def load_backend() -> Dict[str, pd.DataFrame]:
         st.stop()
 
 # Load backend tables from Supabase
-try:
-    backend = load_backend()
-except Exception as e:
-    st.error(f"❌ Cannot connect to database. Please check your database configuration.")
-    st.error(f"Error: {e}")
-    st.stop()
-
-# Validate that required tables are not empty
-if st.session_state.app_mode == "Optimiser":
-    # Validate reference tables before continuing
-    is_valid, errors = repo.validate_reference_tables()
-    if not is_valid:
-        st.error("❌ Required reference tables are missing or empty:")
-        for error in errors:
-            st.error(f"  • {error}")
-        st.info("💡 Please contact your administrator to populate the database tables.")
+# Only load if running as main app (not when imported as module)
+if os.environ.get('IMPORTING_FROM_PROMOTER_APP') != '1':
+    try:
+        backend = load_backend()
+    except Exception as e:
+        st.error(f"❌ Cannot connect to database. Please check your database configuration.")
+        st.error(f"Error: {e}")
         st.stop()
+    
+    # Validate that required tables are not empty
+    if st.session_state.app_mode == "Optimiser":
+        # Validate reference tables before continuing
+        is_valid, errors = repo.validate_reference_tables()
+        if not is_valid:
+            st.error("❌ Required reference tables are missing or empty:")
+            for error in errors:
+                st.error(f"  • {error}")
+            st.info("💡 Please contact your administrator to populate the database tables.")
+            st.stop()
+else:
+    # When imported, load backend without UI interaction
+    backend = load_backend()
 
 # Configure quotes policy for stock availability
 with st.sidebar:
@@ -1924,19 +1934,22 @@ def enrich_banks_geography(banks_df: pd.DataFrame, force_refresh: bool = False) 
     
     return enriched_df
 
-backend["Banks"] = enrich_banks_geography(backend["Banks"], force_refresh=False)
-backend["Banks"] = make_bank_key_col(backend["Banks"], backend["Banks"])
+# Only enrich banks if running as main app
+if os.environ.get('IMPORTING_FROM_PROMOTER_APP') != '1':
+    backend["Banks"] = enrich_banks_geography(backend["Banks"], force_refresh=False)
+    backend["Banks"] = make_bank_key_col(backend["Banks"], backend["Banks"])
 
 # Validate minimal columns
-for sheet, cols in {
-    "Pricing": ["bank_id","habitat_name","contract_size","tier"],
-    "Stock": ["bank_id","habitat_name","stock_id","quantity_available"],
-    "HabitatCatalog": ["habitat_name","broader_type","distinctiveness_name"],
-}.items():
-    missing = [c for c in cols if c not in backend[sheet].columns]
-    if missing:
-        st.error(f"{sheet} is missing required columns: {missing}")
-        st.stop()
+if os.environ.get('IMPORTING_FROM_PROMOTER_APP') != '1':
+    for sheet, cols in {
+        "Pricing": ["bank_id","habitat_name","contract_size","tier"],
+        "Stock": ["bank_id","habitat_name","stock_id","quantity_available"],
+        "HabitatCatalog": ["habitat_name","broader_type","distinctiveness_name"],
+    }.items():
+        missing = [c for c in cols if c not in backend[sheet].columns]
+        if missing:
+            st.error(f"{sheet} is missing required columns: {missing}")
+            st.stop()
 
 # Normalise Pricing; drop Hedgerow
 def normalise_pricing(pr_df: pd.DataFrame) -> pd.DataFrame:
@@ -1957,17 +1970,23 @@ def normalise_pricing(pr_df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 # NOTE: Do NOT filter hedgerows from backend globally - they're needed for hedgerow optimization
-backend["Pricing"] = normalise_pricing(backend["Pricing"])
+if os.environ.get('IMPORTING_FROM_PROMOTER_APP') != '1':
+    backend["Pricing"] = normalise_pricing(backend["Pricing"])
 
-# Distinctiveness mapping
-dist_levels_map = {
-    sstr(r["distinctiveness_name"]): float(r["level_value"])
-    for _, r in backend["DistinctivenessLevels"].iterrows()
-}
-dist_levels_map.update({k.lower(): v for k, v in list(dist_levels_map.items())})
+    # Distinctiveness mapping
+    dist_levels_map = {
+        sstr(r["distinctiveness_name"]): float(r["level_value"])
+        for _, r in backend["DistinctivenessLevels"].iterrows()
+    }
+    dist_levels_map.update({k.lower(): v for k, v in list(dist_levels_map.items())})
+else:
+    # When imported, define empty dist_levels_map
+    dist_levels_map = {}
 
 # ================= Bank Refresh UI in Sidebar =================
-with st.sidebar:
+# Only show sidebar UI if running as main app
+if os.environ.get('IMPORTING_FROM_PROMOTER_APP') != '1':
+    with st.sidebar:
     st.markdown("---")
     st.subheader("Bank Data")
     

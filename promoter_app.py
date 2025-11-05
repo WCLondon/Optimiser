@@ -11,6 +11,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from io import BytesIO
 from typing import Optional, Dict, List
+import sys
+import os
+
+# Set flag to prevent app.py from running its UI when imported
+os.environ['IMPORTING_FROM_PROMOTER_APP'] = '1'
 
 # Import existing modules
 import metric_reader
