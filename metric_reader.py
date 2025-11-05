@@ -1281,12 +1281,29 @@ def parse_metric_requirements(uploaded_file) -> Dict:
             water_surplus_remaining["surplus_remaining_units"], errors="coerce"
         ).fillna(0.0)
         
+        # DEBUG: Print surplus before allocation
+        import sys
+        print(f"\n[DEBUG] Watercourse surplus before Net Gain allocation:", file=sys.stderr)
+        print(f"[DEBUG] Total rows: {len(water_surplus_remaining)}", file=sys.stderr)
+        for idx, row in water_surplus_remaining.iterrows():
+            print(f"[DEBUG]   {row.get('habitat', 'N/A')} | Dist: '{row.get('distinctiveness', 'N/A')}' | Units: {row.get('surplus_remaining_units', 0):.6f}", file=sys.stderr)
+        
         # Allocate to headline
         band_rank = {"Low": 1, "Medium": 2, "High": 3, "Very High": 4}
         water_surs = water_surplus_remaining.copy()
         water_surs = water_surs[water_surs["surplus_remaining_units"] > 1e-9]
+        
+        print(f"[DEBUG] After filtering (> 1e-9): {len(water_surs)} rows", file=sys.stderr)
+        
         water_surs["__rank__"] = water_surs["distinctiveness"].map(lambda b: band_rank.get(str(b), 0))
+        
+        print(f"[DEBUG] Ranks assigned:", file=sys.stderr)
+        for idx, row in water_surs.iterrows():
+            print(f"[DEBUG]   {row.get('habitat', 'N/A')} | Dist: '{row.get('distinctiveness', 'N/A')}' | Rank: {row.get('__rank__', 'N/A')} | Units: {row.get('surplus_remaining_units', 0):.6f}", file=sys.stderr)
+        
         water_surs = water_surs.sort_values(by=["__rank__", "surplus_remaining_units"], ascending=[False, False])
+        
+        print(f"[DEBUG] Net Gain requirement: {water_net_gain_requirement:.6f}", file=sys.stderr)
         
         water_to_cover = water_net_gain_requirement
         for idx, s in water_surs.iterrows():
@@ -1295,10 +1312,13 @@ def parse_metric_requirements(uploaded_file) -> Dict:
             give = min(water_to_cover, float(s["surplus_remaining_units"]))
             if give <= 1e-9:
                 continue
+            print(f"[DEBUG] Allocating {give:.6f} from {s.get('habitat', 'N/A')}", file=sys.stderr)
             water_surplus_remaining.loc[idx, "surplus_remaining_units"] -= give
             water_to_cover -= give
         
         water_applied_to_headline = water_net_gain_requirement - water_to_cover
+        print(f"[DEBUG] Applied to Net Gain: {water_applied_to_headline:.6f}", file=sys.stderr)
+        print(f"[DEBUG] Remaining to cover: {water_to_cover:.6f}\n", file=sys.stderr)
         
         # Step 4: Calculate headline remainder
         water_residual_headline = max(water_net_gain_requirement - water_applied_to_headline, 0.0)
