@@ -1296,27 +1296,12 @@ def parse_metric_requirements(uploaded_file) -> Dict:
             water_surplus_remaining["surplus_remaining_units"], errors="coerce"
         ).fillna(0.0)
         
-        # Add debug as warning so it appears in Streamlit
-        import warnings
-        warnings.warn(f"WATERCOURSE DEBUG: {len(water_surplus_remaining)} surplus rows before allocation", UserWarning)
-        for idx, row in water_surplus_remaining.iterrows():
-            warnings.warn(f"  - {row.get('habitat', 'N/A')} | Dist: '{row.get('distinctiveness', 'N/A')}' | Units: {row.get('surplus_remaining_units', 0):.6f}", UserWarning)
-        
         # Allocate to headline
         band_rank = {"Low": 1, "Medium": 2, "High": 3, "Very High": 4}
         water_surs = water_surplus_remaining.copy()
         water_surs = water_surs[water_surs["surplus_remaining_units"] > 1e-9]
-        
-        warnings.warn(f"WATERCOURSE DEBUG: After filtering: {len(water_surs)} rows", UserWarning)
-        
         water_surs["__rank__"] = water_surs["distinctiveness"].map(lambda b: band_rank.get(str(b), 0))
-        
-        for idx, row in water_surs.iterrows():
-            warnings.warn(f"  - {row.get('habitat', 'N/A')} | Dist: '{row.get('distinctiveness', 'N/A')}' | Rank: {row.get('__rank__', 'N/A')} | Units: {row.get('surplus_remaining_units', 0):.6f}", UserWarning)
-        
         water_surs = water_surs.sort_values(by=["__rank__", "surplus_remaining_units"], ascending=[False, False])
-        
-        warnings.warn(f"WATERCOURSE DEBUG: Net Gain requirement: {water_net_gain_requirement:.6f}", UserWarning)
         
         water_to_cover = water_net_gain_requirement
         for idx, s in water_surs.iterrows():
@@ -1325,12 +1310,10 @@ def parse_metric_requirements(uploaded_file) -> Dict:
             give = min(water_to_cover, float(s["surplus_remaining_units"]))
             if give <= 1e-9:
                 continue
-            warnings.warn(f"  - Allocating {give:.6f} from {s.get('habitat', 'N/A')}", UserWarning)
             water_surplus_remaining.loc[idx, "surplus_remaining_units"] -= give
             water_to_cover -= give
         
         water_applied_to_headline = water_net_gain_requirement - water_to_cover
-        warnings.warn(f"WATERCOURSE DEBUG: Applied: {water_applied_to_headline:.6f}, Remaining: {water_to_cover:.6f}", UserWarning)
         
         # Store diagnostic info
         water_diagnostics["net_gain_applied"] = water_applied_to_headline
