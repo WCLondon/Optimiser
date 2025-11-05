@@ -6,7 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from functools import lru_cache
 
-from .config import get_settings
+from config import get_settings
 
 
 @lru_cache()

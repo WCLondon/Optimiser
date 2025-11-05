@@ -7,7 +7,7 @@ from typing import Optional
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 
-from .config import get_settings
+from config import get_settings
 
 
 class SupabaseStorage:

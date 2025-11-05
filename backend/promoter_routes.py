@@ -16,12 +16,12 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 import pandas as pd
 
-from .config import get_settings
-from .storage import SupabaseStorage
-from .database import get_db_engine
-from .optimizer import run_optimizer_for_metric
-from .pdf_generator import generate_quote_pdf
-from .email_service import send_review_email
+from config import get_settings
+from storage import SupabaseStorage
+from database import get_db_engine
+from optimizer import run_optimizer_for_metric
+from pdf_generator import generate_quote_pdf
+from email_service import send_review_email
 
 # Initialize router
 router = APIRouter()

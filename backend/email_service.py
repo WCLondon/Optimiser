@@ -7,7 +7,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Optional
 
-from .config import get_settings
+from config import get_settings
 
 
 async def send_review_email(

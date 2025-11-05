@@ -13,7 +13,7 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib import colors
 
-from .config import get_settings
+from config import get_settings
 
 
 def generate_quote_pdf(
