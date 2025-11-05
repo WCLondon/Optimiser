@@ -128,6 +128,20 @@ def col_like(df: pd.DataFrame, *cands: str) -> Optional[str]:
     return None
 
 
+def col_exact(df: pd.DataFrame, *cands: str) -> Optional[str]:
+    """Find a column that exactly matches any of the candidate names (after canonicalization).
+    
+    Unlike col_like(), this does NOT do substring matching. This is important for columns
+    like 'Distinctiveness' where we don't want to match summary columns like
+    'Medium Distinctiveness net change in units'.
+    """
+    cols = {canon(c): c for c in df.columns}
+    for c in cands:
+        if canon(c) in cols:
+            return cols[canon(c)]
+    return None
+
+
 # ------------- loaders -------------
 def load_raw_sheet(xls: pd.ExcelFile, sheet: str) -> pd.DataFrame:
     """Load a sheet without parsing headers"""
@@ -278,7 +292,8 @@ def normalise_requirements(
     df = df[~df[proj_col].isna()].copy()
     
     # Check if there's a Distinctiveness column in the dataframe
-    distinctiveness_col = col_like(df, "Distinctiveness", "Distinct")
+    # Use col_exact() to avoid matching summary columns like "Medium Distinctiveness net change in units"
+    distinctiveness_col = col_exact(df, "Distinctiveness", "Distinct")
     
     if distinctiveness_col and distinctiveness_col in df.columns:
         # Use the Distinctiveness column directly
