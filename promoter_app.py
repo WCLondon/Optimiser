@@ -406,7 +406,7 @@ if submitted:
                 
                 # Read metric file
                 try:
-                    demand_data = metric_reader.read_bng_metric(tmp_file_path)
+                    demand_data = metric_reader.parse_metric_requirements(tmp_file_path)
                 except Exception as e:
                     st.session_state.submission_result = {
                         'success': False,
@@ -416,16 +416,22 @@ if submitted:
                     os.unlink(tmp_file_path)
                     st.rerun()
                 
-                # Extract demand habitats
-                demand_habitats = demand_data.get('area_habitats', [])
-                hedgerow_habitats = demand_data.get('hedgerow_habitats', [])
-                watercourse_habitats = demand_data.get('watercourse_habitats', [])
+                # Extract demand habitats from parsed data
+                # parse_metric_requirements returns DataFrames for area, hedgerows, watercourses
+                area_df = demand_data.get('area', pd.DataFrame())
+                hedgerow_df = demand_data.get('hedgerows', pd.DataFrame())
+                watercourse_df = demand_data.get('watercourses', pd.DataFrame())
+                
+                # Convert DataFrames to list of dicts for storage
+                demand_habitats = area_df.to_dict('records') if not area_df.empty else []
+                hedgerow_habitats = hedgerow_df.to_dict('records') if not hedgerow_df.empty else []
+                watercourse_habitats = watercourse_df.to_dict('records') if not watercourse_df.empty else []
                 
                 # Calculate simplified quote total
                 # In production, this would run the full optimizer
-                total_units = sum(h.get('units_required', 0) for h in demand_habitats)
-                total_units += sum(h.get('units_required', 0) for h in hedgerow_habitats)
-                total_units += sum(h.get('units_required', 0) for h in watercourse_habitats)
+                total_units = sum(h.get('units', 0) for h in demand_habitats)
+                total_units += sum(h.get('units', 0) for h in hedgerow_habitats)
+                total_units += sum(h.get('units', 0) for h in watercourse_habitats)
                 
                 # Simplified pricing (£10,000 per unit average)
                 quote_total = total_units * 10000.0
