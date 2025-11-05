@@ -112,6 +112,15 @@ def col_like(df: pd.DataFrame, *cands: str) -> Optional[str]:
     return None
 
 
+def col_exact(df: pd.DataFrame, *cands: str) -> Optional[str]:
+    """Find a column that exactly matches any of the candidate names (after canonicalization)"""
+    cols = {canon(c): c for c in df.columns}
+    for c in cands:
+        if canon(c) in cols: 
+            return cols[canon(c)]
+    return None
+
+
 # ------------- loaders -------------
 def load_raw_sheet(xls: pd.ExcelFile, sheet: str) -> pd.DataFrame:
     """Load a sheet without parsing headers"""
@@ -263,12 +272,7 @@ def normalise_requirements(
     
     # Check if there's a Distinctiveness column in the dataframe
     # Use exact matching to avoid matching summary columns like "Medium Distinctiveness net change in units"
-    distinctiveness_col = None
-    cols_canon = {canon(c): c for c in df.columns}
-    for candidate in ["distinctiveness", "distinct"]:
-        if candidate in cols_canon:
-            distinctiveness_col = cols_canon[candidate]
-            break
+    distinctiveness_col = col_exact(df, "Distinctiveness", "Distinct")
     
     if distinctiveness_col and distinctiveness_col in df.columns:
         # Use the Distinctiveness column directly
