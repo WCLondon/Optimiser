@@ -2577,6 +2577,37 @@ with st.expander("📄 Import from BNG Metric File", expanded=False):
                 with st.expander("Preview: Watercourses", expanded=False):
                     st.dataframe(requirements["watercourses"], use_container_width=True)
             
+            # Watercourse Diagnostics Section
+            if "watercourse_diagnostics" in requirements:
+                wc_diag = requirements["watercourse_diagnostics"]
+                with st.expander("🔬 Watercourse Diagnostics (Surpluses & Deficits)", expanded=False):
+                    st.markdown("**Raw parsed data:**")
+                    if not wc_diag["raw_data"].empty:
+                        st.dataframe(wc_diag["raw_data"], use_container_width=True)
+                    else:
+                        st.info("No watercourse data in metric")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("**Surpluses after on-site offsets:**")
+                        if not wc_diag["surpluses"].empty:
+                            st.dataframe(wc_diag["surpluses"], use_container_width=True)
+                        else:
+                            st.info("No surpluses")
+                    
+                    with col2:
+                        st.markdown("**Deficits after on-site offsets:**")
+                        if not wc_diag["deficits"].empty:
+                            st.dataframe(wc_diag["deficits"], use_container_width=True)
+                        else:
+                            st.info("No deficits")
+                    
+                    st.markdown("**Net Gain allocation:**")
+                    st.write(f"- Net Gain requirement: **{wc_diag['net_gain_requirement']:.6f}** units")
+                    st.write(f"- Applied from surpluses: **{wc_diag['net_gain_applied']:.6f}** units")
+                    st.write(f"- Remaining unmet: **{max(wc_diag['net_gain_requirement'] - wc_diag['net_gain_applied'], 0):.6f}** units")
+            
             # Automatically populate demand rows
             # Check if this is a new upload (not already processed)
             uploaded_file_name = uploaded_metric.name
