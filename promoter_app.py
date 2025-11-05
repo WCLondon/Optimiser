@@ -451,19 +451,18 @@ if submitted:
                 allocation_df = pd.DataFrame()
                 quote_total = 0.0
                 
-                print(f"DEBUG: Starting optimizer run...")
-                print(f"DEBUG: area_df shape: {area_df.shape if not area_df.empty else 'EMPTY'}")
-                print(f"DEBUG: hedgerow_df shape: {hedgerow_df.shape if not hedgerow_df.empty else 'EMPTY'}")
-                print(f"DEBUG: watercourse_df shape: {watercourse_df.shape if not watercourse_df.empty else 'EMPTY'}")
+                st.write("🔄 **Processing metric file...**")
+                st.write(f"- Area habitats: {len(demand_habitats)}")
+                st.write(f"- Hedgerow habitats: {len(hedgerow_habitats)}")
+                st.write(f"- Watercourse habitats: {len(watercourse_habitats)}")
                 
                 try:
                     # Initialize repo with area demand
                     if not area_df.empty:
-                        print("DEBUG: Creating Repo instance...")
+                        st.write("🔄 **Running optimizer...**")
                         repo_instance = repo.Repo()
                         
                         # Run optimization
-                        print("DEBUG: Running optimizer...")
                         results = repo_instance.optimize(
                             area_demand_df=area_df,
                             hedgerow_demand_df=hedgerow_df,
@@ -473,19 +472,21 @@ if submitted:
                         # Get allocation and costs
                         allocation_df = results.get('allocation_df', pd.DataFrame())
                         quote_total = results.get('total_cost', 0.0)
-                        print(f"DEBUG: Optimizer success! allocation_df shape: {allocation_df.shape}, quote_total: £{quote_total:,.2f}")
+                        st.write(f"✅ **Optimizer complete:** {len(allocation_df)} allocations, £{quote_total:,.2f} total")
                     else:
                         # Fallback if no area habitats
                         total_units = sum(h.get('units', 0) for h in hedgerow_habitats)
                         total_units += sum(h.get('units', 0) for h in watercourse_habitats)
                         quote_total = total_units * 10000.0  # Simplified pricing
+                        st.write(f"ℹ️ No area habitats, using simplified pricing: £{quote_total:,.2f}")
                 except Exception as opt_error:
-                    print(f"Optimizer failed, using fallback pricing: {opt_error}")
+                    st.write(f"⚠️ Optimizer failed: {str(opt_error)[:100]}")
                     # Fallback: Calculate simplified quote total
                     total_units = sum(h.get('units', 0) for h in demand_habitats)
                     total_units += sum(h.get('units', 0) for h in hedgerow_habitats)
                     total_units += sum(h.get('units', 0) for h in watercourse_habitats)
                     quote_total = total_units * 10000.0
+                    st.write(f"ℹ️ Using fallback pricing: £{quote_total:,.2f}")
                 
                 # Apply threshold logic
                 auto_quoted = quote_total < AUTO_QUOTE_THRESHOLD
@@ -530,19 +531,18 @@ if submitted:
                 pdf_content = None
                 if auto_quoted:
                     try:
-                        # Debug logging
-                        print(f"DEBUG: Generating PDF for auto-quote")
-                        print(f"DEBUG: allocation_df shape: {allocation_df.shape if not allocation_df.empty else 'EMPTY'}")
-                        print(f"DEBUG: demand_df shape: {demand_df.shape if not demand_df.empty else 'EMPTY'}")
-                        print(f"DEBUG: HAS_CLIENT_REPORT_FUNCTION: {HAS_CLIENT_REPORT_FUNCTION}")
-                        print(f"DEBUG: PDF_GENERATION_AVAILABLE: {PDF_GENERATION_AVAILABLE}")
+                        st.write("📄 **Generating PDF quote...**")
+                        st.write(f"- Allocation data: {len(allocation_df)} rows" if not allocation_df.empty else "- Allocation data: EMPTY")
+                        st.write(f"- Demand data: {len(demand_df)} rows" if not demand_df.empty else "- Demand data: EMPTY")
+                        st.write(f"- Client report function available: {HAS_CLIENT_REPORT_FUNCTION}")
+                        st.write(f"- PDF library available: {PDF_GENERATION_AVAILABLE}")
                         
                         # Generate client report table using the function from app.py (if available)
                         report_df = None
                         email_html = None
                         
-                        if HAS_CLIENT_REPORT_FUNCTION:
-                            print("DEBUG: Calling generate_client_report_table_fixed...")
+                        if HAS_CLIENT_REPORT_FUNCTION and not allocation_df.empty:
+                            st.write("🔄 Generating client report table...")
                             report_df, email_html = generate_client_report_table_fixed(
                                 alloc_df=allocation_df,
                                 demand_df=demand_df,
@@ -560,11 +560,15 @@ if submitted:
                                 promoter_discount_value=None,
                                 suo_discount_fraction=0.0
                             )
-                            print(f"DEBUG: report_df shape: {report_df.shape if report_df is not None and not report_df.empty else 'EMPTY or None'}")
+                            st.write(f"✅ Report table generated: {len(report_df)} rows" if report_df is not None and not report_df.empty else "⚠️ Report table is empty or None")
+                        elif not HAS_CLIENT_REPORT_FUNCTION:
+                            st.write("⚠️ Client report function not available (app.py import failed)")
+                        elif allocation_df.empty:
+                            st.write("⚠️ No allocation data available for report")
                         
                         # Generate PDF using the report
-                        if PDF_GENERATION_AVAILABLE and report_df is not None:
-                            print("DEBUG: Generating PDF with reportlab...")
+                        if PDF_GENERATION_AVAILABLE and report_df is not None and not report_df.empty:
+                            st.write("🔄 Creating PDF with ReportLab...")
                             pdf_content = generate_quote_pdf(
                                 client_name=contact_email.split('@')[0],
                                 reference_number=client_reference if client_reference else f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
@@ -577,9 +581,10 @@ if submitted:
                                 contact_email=contact_email,
                                 notes=notes
                             )
-                            print(f"DEBUG: PDF size: {len(pdf_content)} bytes")
+                            st.write(f"✅ **PDF generated: {len(pdf_content):,} bytes**")
                         else:
                             # Fallback: create a simple text file as PDF
+                            st.write("⚠️ Using fallback text PDF (report_df is empty or libraries unavailable)")
                             pdf_content = f"""
 BNG QUOTE SUMMARY
 
@@ -592,10 +597,12 @@ Total Cost: £{quote_total:,.2f}
 
 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-Note: Full PDF generation requires successful import of app.py modules.
+Note: Full PDF generation requires successful optimizer run with allocation data.
+Please contact Wild Capital for a complete quote document.
 """.encode('utf-8')
+                            st.write(f"ℹ️ Fallback PDF size: {len(pdf_content)} bytes")
                     except Exception as pdf_error:
-                        print(f"PDF generation failed: {str(pdf_error)}")
+                        st.write(f"❌ PDF generation error: {str(pdf_error)[:200]}")
                         # Create a simple text fallback
                         pdf_content = f"BNG Quote - {PROMOTER_SLUG}\nTotal: £{quote_total:,.2f}\nSite: {site_address if site_address else site_postcode}".encode('utf-8')
                 
