@@ -22,7 +22,15 @@ import metric_reader
 import repo
 from database import SubmissionsDB
 from email_notification import send_manual_review_email
-from app import generate_client_report_table_fixed
+
+# Try to import the report generation function from app.py
+try:
+    from app import generate_client_report_table_fixed
+    HAS_CLIENT_REPORT_FUNCTION = True
+except Exception as e:
+    HAS_CLIENT_REPORT_FUNCTION = False
+    print(f"Warning: Could not import generate_client_report_table_fixed from app.py: {e}")
+    print("PDF generation will use simplified format.")
 
 # Try to import PDF generator (requires reportlab)
 try:
@@ -491,27 +499,31 @@ if submitted:
                 pdf_content = None
                 if auto_quoted:
                     try:
-                        # Generate client report table using the function from app.py
-                        report_df, email_html = generate_client_report_table_fixed(
-                            alloc_df=allocation_df,
-                            demand_df=demand_df,
-                            total_cost=quote_total,
-                            admin_fee=0.0,  # No admin fee for promoter quotes
-                            client_name=contact_email.split('@')[0],
-                            ref_number=client_reference if client_reference else f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
-                            location=site_address if site_address else site_postcode,
-                            manual_hedgerow_rows=manual_hedgerow_rows,
-                            manual_watercourse_rows=manual_watercourse_rows,
-                            manual_area_rows=demand_habitats,
-                            removed_allocation_rows=[],
-                            promoter_name=PROMOTER_SLUG,
-                            promoter_discount_type=None,
-                            promoter_discount_value=None,
-                            suo_discount_fraction=0.0
-                        )
+                        # Generate client report table using the function from app.py (if available)
+                        report_df = None
+                        email_html = None
+                        
+                        if HAS_CLIENT_REPORT_FUNCTION:
+                            report_df, email_html = generate_client_report_table_fixed(
+                                alloc_df=allocation_df,
+                                demand_df=demand_df,
+                                total_cost=quote_total,
+                                admin_fee=0.0,  # No admin fee for promoter quotes
+                                client_name=contact_email.split('@')[0],
+                                ref_number=client_reference if client_reference else f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+                                location=site_address if site_address else site_postcode,
+                                manual_hedgerow_rows=manual_hedgerow_rows,
+                                manual_watercourse_rows=manual_watercourse_rows,
+                                manual_area_rows=demand_habitats,
+                                removed_allocation_rows=[],
+                                promoter_name=PROMOTER_SLUG,
+                                promoter_discount_type=None,
+                                promoter_discount_value=None,
+                                suo_discount_fraction=0.0
+                            )
                         
                         # Generate PDF using the report
-                        if PDF_GENERATION_AVAILABLE:
+                        if PDF_GENERATION_AVAILABLE and report_df is not None:
                             pdf_content = generate_quote_pdf(
                                 client_name=contact_email.split('@')[0],
                                 reference_number=client_reference if client_reference else f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
@@ -538,7 +550,7 @@ Total Cost: £{quote_total:,.2f}
 
 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-Note: Install reportlab for full PDF generation with client report table.
+Note: Full PDF generation requires successful import of app.py modules.
 """.encode('utf-8')
                     except Exception as pdf_error:
                         print(f"PDF generation failed: {str(pdf_error)}")
