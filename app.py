@@ -4077,7 +4077,7 @@ if run:
 
         # Validate against catalog — allow special Net Gain labels
         cat_names_run = set(backend["HabitatCatalog"]["habitat_name"].astype(str))
-        unknown = [h for h in demand_df["habitat_name"] if h not in cat_names_run and h not in [NET_GAIN_LABEL, NET_GAIN_HEDGEROW_LABEL]]
+        unknown = [h for h in demand_df["habitat_name"] if h not in cat_names_run and h not in [NET_GAIN_LABEL, NET_GAIN_HEDGEROW_LABEL, NET_GAIN_WATERCOURSE_LABEL]]
         if unknown:
             st.error(f"These demand habitats aren't in the catalog: {unknown}")
             st.stop()
