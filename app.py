@@ -105,9 +105,12 @@ def init_session_state():
         "target_lon": None,
         "lpa_geojson": None,
         "nca_geojson": None,
+        "target_waterbody": "",
+        "target_operational_catchment": "",
         "last_alloc_df": None,
         "bank_geo_cache": {},
         "bank_catchment_geo": {},
+        "bank_watercourse_catchments": {},  # Store watercourse catchments for banks
         "demand_rows": [{"id": 1, "habitat_name": "", "units": 0.0}],
         "_next_row_id": 2,
         "optimization_complete": False,
@@ -1593,6 +1596,114 @@ def get_catchment_geo_for_point(lat: float, lon: float) -> Tuple[str, Optional[D
     nca_gj = esri_polygon_to_geojson(nca_feat.get("geometry"))
     return lpa_name, lpa_gj, nca_name, nca_gj
 
+# ================= Watercourse Catchments =================
+def wfs_point_query(wfs_url: str, lat: float, lon: float) -> Dict[str, Any]:
+    """
+    Query WFS service for features containing a point.
+    Returns the first matching feature or empty dict.
+    """
+    try:
+        # WFS GetFeature request with point geometry filter
+        params = {
+            "service": "WFS",
+            "version": "2.0.0",
+            "request": "GetFeature",
+            "typeName": "ms:Water_Framework_Directive_River_Waterbody_Catchments_Cycle_2",  # Will be overridden
+            "outputFormat": "application/json",
+            "srsName": "EPSG:4326",
+            # CQL filter for point intersection
+            "CQL_FILTER": f"INTERSECTS(geom, POINT({lon} {lat}))"
+        }
+        
+        r = http_get(wfs_url, params=params, timeout=10)
+        if r.status_code != 200:
+            return {}
+        
+        js = safe_json(r)
+        features = js.get("features", [])
+        return features[0] if features else {}
+    except Exception:
+        return {}
+
+def get_watercourse_catchments_for_point(lat: float, lon: float) -> Tuple[str, str]:
+    """
+    Get waterbody and operational catchment names for a point.
+    Returns (waterbody_name, operational_catchment_name)
+    """
+    waterbody_name = ""
+    operational_name = ""
+    
+    try:
+        # Query waterbody catchment
+        wb_feat = wfs_point_query(WATERBODY_CATCHMENT_URL, lat, lon)
+        if wb_feat and "properties" in wb_feat:
+            # Try common field names for waterbody name
+            props = wb_feat["properties"]
+            waterbody_name = sstr(
+                props.get("name") or 
+                props.get("NAME") or 
+                props.get("wb_name") or 
+                props.get("WB_NAME") or 
+                props.get("waterbody_name") or
+                ""
+            )
+    except Exception:
+        pass
+    
+    try:
+        # Query operational catchment
+        op_feat = wfs_point_query(OPERATIONAL_CATCHMENT_URL, lat, lon)
+        if op_feat and "properties" in op_feat:
+            # Try common field names for operational catchment name
+            props = op_feat["properties"]
+            operational_name = sstr(
+                props.get("name") or 
+                props.get("NAME") or 
+                props.get("oc_name") or 
+                props.get("OC_NAME") or 
+                props.get("operational_catchment_name") or
+                ""
+            )
+    except Exception:
+        pass
+    
+    return waterbody_name, operational_name
+
+def calculate_watercourse_srm(site_waterbody: str, site_operational: str,
+                               bank_waterbody: str, bank_operational: str) -> float:
+    """
+    Calculate Spatial Risk Multiplier (SRM) for watercourse habitats based on catchment proximity.
+    
+    SRM Rules:
+    - Same waterbody catchment: SRM = 1.0 (no uplift)
+    - Same operational catchment (different waterbody): SRM = 0.75 (buyer needs 4/3× units)
+    - Outside operational catchment: SRM = 0.5 (buyer needs 2× units)
+    
+    Returns SRM multiplier (1.0, 0.75, or 0.5)
+    """
+    # Normalize for comparison
+    site_wb = norm_name(site_waterbody)
+    site_op = norm_name(site_operational)
+    bank_wb = norm_name(bank_waterbody)
+    bank_op = norm_name(bank_operational)
+    
+    # If catchment data is missing, default to far (0.5)
+    if not site_wb and not site_op:
+        return 0.5
+    if not bank_wb and not bank_op:
+        return 0.5
+    
+    # Same waterbody catchment
+    if site_wb and bank_wb and site_wb == bank_wb:
+        return 1.0
+    
+    # Same operational catchment (different waterbody)
+    if site_op and bank_op and site_op == bank_op:
+        return 0.75
+    
+    # Outside operational catchment
+    return 0.5
+
 # ================= Tiering =================
 def tier_for_bank(bank_lpa: str, bank_nca: str,
                   t_lpa: str, t_nca: str,
@@ -2074,6 +2185,9 @@ def find_site(postcode: str, address: str):
     lpa_nei_norm = [norm_name(n) for n in lpa_nei]
     nca_nei_norm = [norm_name(n) for n in nca_nei]
     
+    # Get watercourse catchments for site
+    waterbody, operational = get_watercourse_catchments_for_point(lat, lon)
+    
     # Update session state - FIXED VERSION
     st.session_state["target_lpa_name"] = t_lpa
     st.session_state["target_nca_name"] = t_nca
@@ -2085,6 +2199,8 @@ def find_site(postcode: str, address: str):
     st.session_state["target_lon"] = lon
     st.session_state["lpa_geojson"] = lpa_gj
     st.session_state["nca_geojson"] = nca_gj
+    st.session_state["target_waterbody"] = waterbody
+    st.session_state["target_operational_catchment"] = operational
     # Clear dropdown flag since we're using postcode/address
     st.session_state["use_lpa_nca_dropdown"] = False
     # Clear any previous optimization results when locating new site
@@ -3430,11 +3546,27 @@ def prepare_watercourse_options(demand_df: pd.DataFrame,
             if qty_avail <= 0:
                 continue
 
-            tier = tier_for_bank(
-                sstr(supply_row.get("lpa_name")), sstr(supply_row.get("nca_name")),
-                target_lpa, target_nca,
-                lpa_neigh, nca_neigh, lpa_neigh_norm, nca_neigh_norm
-            )
+            # For watercourses, use catchment-based SRM instead of LPA/NCA tiering
+            # Get watercourse catchments from session state
+            site_waterbody = st.session_state.get("target_waterbody", "")
+            site_operational = st.session_state.get("target_operational_catchment", "")
+            
+            bank_catchments = st.session_state.get("bank_watercourse_catchments", {}).get(bank_key, {})
+            bank_waterbody = bank_catchments.get("waterbody", "")
+            bank_operational = bank_catchments.get("operational_catchment", "")
+            
+            # Calculate SRM and map to tier for pricing
+            srm = calculate_watercourse_srm(site_waterbody, site_operational,
+                                           bank_waterbody, bank_operational)
+            
+            # Map SRM to tier for pricing lookup
+            # SRM 1.0 → local, SRM 0.75 → adjacent, SRM 0.5 → far
+            if srm >= 0.95:
+                tier = "local"
+            elif srm >= 0.70:
+                tier = "adjacent"
+            else:
+                tier = "far"
 
             # Find exact price, else fallback to any watercourse price in same bank/tier
             # (tier_up already applied to contract size)
@@ -3466,7 +3598,8 @@ def prepare_watercourse_options(demand_df: pd.DataFrame,
                 "bank_name": sstr(supply_row["bank_name"]),
                 "BANK_KEY": bank_key,
                 "stock_id": stock_id,
-                "tier": tier,  # Keep original tier for reporting
+                "tier": tier,  # Tier based on SRM
+                "srm": srm,    # Store SRM for reference
                 "unit_price": price,  # Use discounted price
                 "cost_per_unit": price,
                 "stock_use": {stock_id: 1.0},
@@ -4128,6 +4261,14 @@ if run:
                             "lpa_name": b_lpa_name, "lpa_gj": b_lpa_gj,
                             "nca_name": b_nca_name, "nca_gj": b_nca_gj,
                         }
+                        
+                        # Also fetch watercourse catchments for this bank
+                        b_waterbody, b_operational = get_watercourse_catchments_for_point(lat_b, lon_b)
+                        st.session_state["bank_watercourse_catchments"][cache_key] = {
+                            "waterbody": b_waterbody,
+                            "operational_catchment": b_operational,
+                        }
+                        
                         catchments_loaded.append(cache_key)
                         
                         # Small delay to avoid overwhelming APIs
