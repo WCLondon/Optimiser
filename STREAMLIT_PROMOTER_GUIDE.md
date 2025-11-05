@@ -2,15 +2,15 @@
 
 ## Overview
 
-**Single Streamlit app** with login page for all promoters. Each promoter logs in with their name, and all submissions are tracked by promoter in the database.
+**Single Streamlit app** with login page for all promoters. Each promoter logs in with their name and password from the `introducers` database table.
 
 ## Key Features
 
 ✅ **Single app deployment** - One app for all promoters  
-✅ **Login authentication** - Username from database, password is name+1  
+✅ **Database authentication** - Username and password from introducers table  
 ✅ **Automatic tracking** - Submissions tagged with logged-in promoter  
 ✅ **Simple deployment** - Just one Streamlit instance needed  
-✅ **Database-driven** - Promoter list loaded from introducers table  
+✅ **Dynamic access** - Any promoter in the introducers table can login  
 
 ## Quick Start
 
@@ -27,17 +27,10 @@ Access at: http://localhost:8502
 ### Login
 
 **How it works:**
-- **Username:** Promoter name from database (e.g., `EPT`, `Arbtech`)
-- **Password:** Promoter name + `1` (e.g., `EPT` → `EPT1`, `Arbtech` → `Arbtech1`)
+- **Username:** From `name` column in `introducers` table
+- **Password:** From `password` column in `introducers` table
 
-**Example logins:**
-```
-Username: EPT
-Password: EPT1
-
-Username: Arbtech  
-Password: Arbtech1
-```
+The app dynamically loads all promoters from the database.
 
 ## Features
 
@@ -86,6 +79,7 @@ The app queries the database for available promoters:
 ```sql
 SELECT DISTINCT 
     name,
+    password,
     discount_type,
     discount_value
 FROM introducers 
@@ -94,44 +88,57 @@ AND name != ''
 ORDER BY name
 ```
 
+**Database Schema:**
+```
+introducers table:
+- name (TEXT) - Promoter username
+- password (TEXT) - Promoter password
+- discount_type (TEXT) - Discount type (e.g., 'no_discount', 'tier_up')
+- discount_value (NUMERIC) - Discount value
+```
+
 If the query fails (e.g., table doesn't exist), it falls back to default promoters:
-- EPT
+- ETP
 - Arbtech
 - Cypher
 
 ## Adding New Promoters
 
-### Method 1: Add to introducers table
+### Step 1: Add password column (if not exists)
+
+If the `introducers` table doesn't have a password column yet, run:
 
 ```sql
--- Add a new promoter
+-- Add password column
+ALTER TABLE introducers 
+ADD COLUMN IF NOT EXISTS password TEXT;
+
+-- Set default passwords for existing records
+UPDATE introducers 
+SET password = name || '1' 
+WHERE password IS NULL OR password = '';
+```
+
+### Step 2: Add new promoter
+
+```sql
+-- Add a new promoter with password
 INSERT INTO introducers (
     name,
+    password,
     discount_type,
     discount_value
 ) VALUES (
     'NewPromoter',
+    'secure_password_here',
     'no_discount',
     0
 );
 ```
 
-Then login with:
+Then the promoter can login with:
 - Username: `NewPromoter`
-- Password: `NewPromoter1`
-
-### Method 2: Update fallback list in code
-
-If not using the database, edit `promoter_app.py`:
-
-```python
-# Around line 60, in get_promoters() function
-return [
-    {'name': 'EPT', 'discount_type': None, 'discount_value': None},
-    {'name': 'Arbtech', 'discount_type': None, 'discount_value': None},
-    {'name': 'YourNewPromoter', 'discount_type': None, 'discount_value': None}
-]
-```
+- Password: `secure_password_here`
 
 ## Testing
 

@@ -2,7 +2,7 @@
 Streamlit Promoter Quote Form with Login
 Single app for all promoters - login determines which promoter's submissions are tracked
 Username: Promoter name from database
-Password: Promoter name + "1" (e.g., EPT → EPT1)
+Password: From password column in introducers table
 """
 
 import streamlit as st
@@ -45,7 +45,7 @@ if 'submission_result' not in st.session_state:
 def get_promoters() -> List[Dict]:
     """
     Load promoters from database
-    Returns list of promoter dictionaries with name, discount info, etc.
+    Returns list of promoter dictionaries with name, password, discount info, etc.
     """
     try:
         # Fetch promoters from introducers table
@@ -55,6 +55,7 @@ def get_promoters() -> List[Dict]:
             result = conn.execute(text("""
                 SELECT DISTINCT 
                     name,
+                    password,
                     discount_type,
                     discount_value
                 FROM introducers 
@@ -67,8 +68,9 @@ def get_promoters() -> List[Dict]:
             for row in result:
                 promoters.append({
                     'name': row[0],
-                    'discount_type': row[1],
-                    'discount_value': row[2]
+                    'password': row[1] if row[1] else row[0] + '1',  # Fallback to name+1 if no password
+                    'discount_type': row[2],
+                    'discount_value': row[3]
                 })
             
             return promoters
@@ -76,9 +78,9 @@ def get_promoters() -> List[Dict]:
         st.error(f"Error loading promoters: {str(e)}")
         # Return some default promoters for testing
         return [
-            {'name': 'EPT', 'discount_type': None, 'discount_value': None},
-            {'name': 'Arbtech', 'discount_type': None, 'discount_value': None},
-            {'name': 'Cypher', 'discount_type': None, 'discount_value': None}
+            {'name': 'ETP', 'password': 'ETP1', 'discount_type': None, 'discount_value': None},
+            {'name': 'Arbtech', 'password': 'Arbtech1', 'discount_type': None, 'discount_value': None},
+            {'name': 'Cypher', 'password': 'Cypher1', 'discount_type': None, 'discount_value': None}
         ]
 
 
@@ -86,16 +88,15 @@ def authenticate(username: str, password: str) -> bool:
     """
     Authenticate promoter
     Username: Promoter name (case-insensitive)
-    Password: Promoter name + "1"
+    Password: From database password column
     """
     promoters = get_promoters()
     
     # Check if username exists (case-insensitive)
     for promoter in promoters:
         if promoter['name'].upper() == username.upper():
-            # Password is promoter name + "1"
-            expected_password = promoter['name'] + "1"
-            if password == expected_password:
+            # Check password from database
+            if password == promoter['password']:
                 return True
     
     return False
@@ -122,14 +123,14 @@ def show_login_page():
         username = st.text_input(
             "Username",
             placeholder="Enter promoter name",
-            help="Your promoter name (e.g., EPT, Arbtech)"
+            help="Your promoter name (e.g., ETP, Arbtech)"
         )
         
         password = st.text_input(
             "Password",
             type="password",
             placeholder="Enter password",
-            help="Password is your promoter name + 1"
+            help="Your promoter password"
         )
         
         submit = st.form_submit_button("🔐 Login", use_container_width=True)
@@ -144,13 +145,10 @@ def show_login_page():
                 st.rerun()
             else:
                 st.error("❌ Invalid username or password")
-                st.caption("💡 Hint: Password is your promoter name + 1 (e.g., EPT → EPT1)")
     
-    # Show example
+    # Show contact info instead of password hint
     st.markdown("---")
-    st.caption("**Example:**")
-    st.caption("• Username: `EPT` → Password: `EPT1`")
-    st.caption("• Username: `Arbtech` → Password: `Arbtech1`")
+    st.caption("**Need access?** Contact your administrator to get your credentials.")
 
 
 def logout():
