@@ -262,7 +262,13 @@ def normalise_requirements(
     df = df[~df[proj_col].isna()].copy()
     
     # Check if there's a Distinctiveness column in the dataframe
-    distinctiveness_col = col_like(df, "Distinctiveness", "Distinct")
+    # Use exact matching to avoid matching summary columns like "Medium Distinctiveness net change in units"
+    distinctiveness_col = None
+    cols_canon = {canon(c): c for c in df.columns}
+    for candidate in ["distinctiveness", "distinct"]:
+        if candidate in cols_canon:
+            distinctiveness_col = cols_canon[candidate]
+            break
     
     if distinctiveness_col and distinctiveness_col in df.columns:
         # Use the Distinctiveness column directly
