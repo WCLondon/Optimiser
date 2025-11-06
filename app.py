@@ -1987,8 +1987,8 @@ else:
 # Only show sidebar UI if running as main app
 if os.environ.get('IMPORTING_FROM_PROMOTER_APP') != '1':
     with st.sidebar:
-    st.markdown("---")
-    st.subheader("Bank Data")
+        st.markdown("---")
+        st.subheader("Bank Data")
     
     # Display cache status
     if st.session_state.get("enriched_banks_timestamp"):
