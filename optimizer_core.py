@@ -225,24 +225,33 @@ def tier_for_bank(bank_lpa: str, bank_nca: str,
                   target_lpa: str, target_nca: str,
                   lpa_neigh: List[str], nca_neigh: List[str],
                   lpa_neigh_norm: List[str], nca_neigh_norm: List[str]) -> str:
-    """Calculate tier (local/adjacent/far) for a bank"""
+    """Calculate tier (local/adjacent/far) for a bank
+    
+    Returns best (closest) category across both axes:
+    - local: if LPA matches OR NCA matches
+    - adjacent: if LPA is neighbor OR NCA is neighbor
+    - far: otherwise
+    """
     blpa_norm = norm_name(bank_lpa)
     bnca_norm = norm_name(bank_nca)
     tlpa_norm = norm_name(target_lpa)
     tnca_norm = norm_name(target_nca)
     
-    # Local tier: same LPA and same NCA
-    if blpa_norm == tlpa_norm and bnca_norm == tnca_norm:
-        return "local"
+    # Evaluate LPA axis independently
+    lpa_same = blpa_norm and tlpa_norm and blpa_norm == tlpa_norm
+    lpa_neighbour = blpa_norm and blpa_norm in lpa_neigh_norm
     
-    # Adjacent tier: neighbor LPA OR neighbor NCA
-    in_lpa_neigh = blpa_norm in lpa_neigh_norm
-    in_nca_neigh = bnca_norm in nca_neigh_norm
-    if in_lpa_neigh or in_nca_neigh:
-        return "adjacent"
+    # Evaluate NCA axis independently  
+    nca_same = bnca_norm and tnca_norm and bnca_norm == tnca_norm
+    nca_neighbour = bnca_norm and bnca_norm in nca_neigh_norm
     
-    # Far tier: everything else
-    return "far"
+    # Return best (closest) category across both axes
+    if lpa_same or nca_same:
+        return "local"  # Local > Adjacent > Far
+    elif lpa_neighbour or nca_neighbour:
+        return "adjacent"  # Adjacent > Far
+    else:
+        return "far"
 
 
 # ================= Contract size selection =================
