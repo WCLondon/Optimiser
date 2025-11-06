@@ -220,6 +220,79 @@ def is_watercourse(name: str) -> bool:
     return False
 
 
+# ================= Bank geocoding (module-level cache) =================
+_bank_geo_cache = {}  # Cache for bank geocoding results
+
+def bank_row_to_latlon(row: pd.Series) -> Optional[Tuple[float, float, str]]:
+    """Extract lat/lon from bank row using lat/lon, postcode, or address"""
+    if "lat" in row and "lon" in row:
+        try:
+            lat = float(row["lat"])
+            lon = float(row["lon"])
+            if pd.notna(lat) and pd.notna(lon) and np.isfinite(lat) and np.isfinite(lon):
+                return lat, lon, f"ll:{lat:.6f},{lon:.6f}"
+        except Exception:
+            pass
+    if "postcode" in row and sstr(row["postcode"]):
+        try:
+            lat, lon, _ = get_postcode_info(sstr(row["postcode"]))
+            return lat, lon, f"pc:{sstr(row['postcode']).upper().replace(' ','')}"
+        except Exception:
+            pass
+    if "address" in row and sstr(row["address"]):
+        try:
+            lat, lon = geocode_address(sstr(row["address"]))
+            return lat, lon, f"addr:{sstr(row['address']).lower()}"
+        except Exception:
+            pass
+    return None
+
+def enrich_banks_with_geography(banks_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Enrich banks DataFrame with LPA/NCA data.
+    Uses module-level cache to avoid repeated API calls.
+    Only enriches banks that don't already have lpa_name and nca_name.
+    """
+    df = banks_df.copy()
+    if "lpa_name" not in df.columns:
+        df["lpa_name"] = ""
+    if "nca_name" not in df.columns:
+        df["nca_name"] = ""
+    
+    needs_enrichment = df[(df["lpa_name"].map(sstr) == "") | (df["nca_name"].map(sstr) == "")]
+    
+    if len(needs_enrichment) == 0:
+        return df
+    
+    rows = []
+    for _, row in df.iterrows():
+        lpa_now = sstr(row.get("lpa_name"))
+        nca_now = sstr(row.get("nca_name"))
+        
+        if lpa_now and nca_now:
+            rows.append(row)
+        else:
+            loc = bank_row_to_latlon(row)
+            if not loc:
+                rows.append(row)
+            else:
+                lat, lon, key = loc
+                if key in _bank_geo_cache:
+                    lpa, nca = _bank_geo_cache[key]
+                else:
+                    lpa, nca = get_lpa_nca_for_point(lat, lon)
+                    _bank_geo_cache[key] = (lpa, nca)
+                    time.sleep(0.15)  # Rate limiting
+                
+                if not lpa_now:
+                    row["lpa_name"] = lpa
+                if not nca_now:
+                    row["nca_name"] = nca
+                rows.append(row)
+    
+    return pd.DataFrame(rows)
+
+
 # ================= Tier calculation =================
 def tier_for_bank(bank_lpa: str, bank_nca: str,
                   target_lpa: str, target_nca: str,
@@ -1252,6 +1325,9 @@ def optimise(demand_df: pd.DataFrame,
     # Load backend if not provided
     if backend is None:
         backend = load_backend()
+    
+    # Enrich banks with LPA/NCA if not already enriched
+    backend["Banks"] = enrich_banks_with_geography(backend["Banks"])
     
     # Pick contract size from total demand (unchanged)
     chosen_size = select_size_for_demand(demand_df, backend["Pricing"])
