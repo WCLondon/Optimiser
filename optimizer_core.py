@@ -1363,7 +1363,37 @@ def optimise(demand_df: pd.DataFrame,
     sys.stderr.write(f"{'='*80}\n")
     sys.stderr.write(f"Total options: {len(options)}\n\n")
     
-    # Group options by bank and tier
+    # First, show demand habitats and their available options
+    sys.stderr.write(f"DEMAND HABITATS AND AVAILABLE OPTIONS:\n")
+    sys.stderr.write(f"{'-'*80}\n")
+    for di, drow in demand_df.iterrows():
+        dem_hab = sstr(drow.get("habitat_name", "Unknown"))
+        dem_units = float(drow.get("units_required", 0))
+        sys.stderr.write(f"\n{di}. {dem_hab} (need {dem_units:.4f} units)\n")
+        
+        # Find options for this demand
+        dem_options = [opt for opt in options if opt["demand_idx"] == di]
+        if not dem_options:
+            sys.stderr.write(f"   ❌ NO OPTIONS AVAILABLE\n")
+        else:
+            # Group by bank and tier
+            from collections import defaultdict
+            by_bank_tier = defaultdict(list)
+            for opt in dem_options:
+                bank_name = opt.get("bank_name", "Unknown")
+                tier = opt.get("tier", "unknown")
+                key = f"{bank_name} ({tier})"
+                by_bank_tier[key].append(opt)
+            
+            for key in sorted(by_bank_tier.keys()):
+                opts = by_bank_tier[key]
+                opt_types = set(o.get("type", "unknown") for o in opts)
+                avg_price = sum(o.get("unit_price", 0) for o in opts) / len(opts)
+                sys.stderr.write(f"   • {key:45s} | {len(opts):2d} opts | £{avg_price:6,.0f}/unit | {', '.join(opt_types)}\n")
+    
+    sys.stderr.write(f"\n{'-'*80}\n")
+    
+    # Group options by bank and tier for overall summary
     from collections import defaultdict
     options_by_bank_tier = defaultdict(list)
     for opt in options:
@@ -1373,7 +1403,8 @@ def optimise(demand_df: pd.DataFrame,
         key = f"{bank_name} ({tier})"
         options_by_bank_tier[key].append(opt)
     
-    # Print summary
+    # Print overall summary
+    sys.stderr.write(f"\nOVERALL OPTIONS BY BANK/TIER:\n")
     for key in sorted(options_by_bank_tier.keys()):
         opts = options_by_bank_tier[key]
         avg_price = sum(o.get("unit_price", 0) for o in opts) / len(opts)
