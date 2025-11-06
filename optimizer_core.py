@@ -1333,6 +1333,20 @@ def optimise(demand_df: pd.DataFrame,
     # Enrich banks with LPA/NCA geography data (in-memory, not persisted)
     backend["Banks"] = enrich_banks_with_geography(backend["Banks"])
     
+    # DEBUG: Log enriched bank geography
+    sys.stderr.write(f"\n{'='*80}\n")
+    sys.stderr.write(f"DEBUG: Bank Geography After Enrichment\n")
+    sys.stderr.write(f"{'='*80}\n")
+    for _, bank in backend["Banks"].iterrows():
+        bank_name = sstr(bank.get('bank_name', 'Unknown'))
+        lpa = sstr(bank.get('lpa_name', ''))
+        nca = sstr(bank.get('nca_name', ''))
+        postcode = sstr(bank.get('postcode', ''))
+        sys.stderr.write(f"  {bank_name:30s} | PC: {postcode:10s} | LPA: {lpa:30s} | NCA: {nca}\n")
+    sys.stderr.write(f"{'='*80}\n")
+    sys.stderr.write(f"Target Location: LPA='{target_lpa}', NCA='{target_nca}'\n")
+    sys.stderr.write(f"{'='*80}\n\n")
+    
     # Pick contract size from total demand (unchanged)
     chosen_size = select_size_for_demand(demand_df, backend["Pricing"])
 
@@ -1376,6 +1390,30 @@ def optimise(demand_df: pd.DataFrame,
 
     if not options:
         raise RuntimeError("No feasible options. Check prices/stock/rules or location tiers.")
+    
+    # DEBUG: Log options summary by bank and tier
+    sys.stderr.write(f"\n{'='*80}\n")
+    sys.stderr.write(f"DEBUG: Generated Options Summary\n")
+    sys.stderr.write(f"{'='*80}\n")
+    sys.stderr.write(f"Total options: {len(options)}\n\n")
+    
+    # Group options by bank and tier
+    from collections import defaultdict
+    options_by_bank_tier = defaultdict(list)
+    for opt in options:
+        bank_key = opt.get("BANK_KEY", "Unknown")
+        bank_name = opt.get("bank_name", bank_key)
+        tier = opt.get("tier", "unknown")
+        key = f"{bank_name} ({tier})"
+        options_by_bank_tier[key].append(opt)
+    
+    # Print summary
+    for key in sorted(options_by_bank_tier.keys()):
+        opts = options_by_bank_tier[key]
+        avg_price = sum(o.get("unit_price", 0) for o in opts) / len(opts)
+        sys.stderr.write(f"  {key:50s} | {len(opts):3d} options | Avg price: £{avg_price:,.0f}\n")
+    
+    sys.stderr.write(f"{'='*80}\n\n")
 
     # ---- Map options to each demand row ----
     idx_by_dem: Dict[int, List[int]] = {}
