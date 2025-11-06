@@ -38,8 +38,10 @@ try:
         NCA_URL
     )
     HAS_APP_FUNCTIONS = True
+    HAS_CLIENT_REPORT_FUNCTION = True  # Set flag for PDF generation
 except Exception as e:
     HAS_APP_FUNCTIONS = False
+    HAS_CLIENT_REPORT_FUNCTION = False
     print(f"Warning: Could not import functions from app.py: {e}")
     print("Will use fallback optimization.")
 

@@ -357,22 +357,24 @@ except Exception as e:
     db = None
 
 # ================= Mode Selection (Sidebar) =================
-# Add admin_authenticated flag to session state
-if "admin_authenticated" not in st.session_state:
-    st.session_state.admin_authenticated = False
-if "app_mode" not in st.session_state:
-    st.session_state.app_mode = "Optimiser"
+# Only run UI code when not imported by promoter app
+if os.environ.get('IMPORTING_FROM_PROMOTER_APP') != '1':
+    # Add admin_authenticated flag to session state
+    if "admin_authenticated" not in st.session_state:
+        st.session_state.admin_authenticated = False
+    if "app_mode" not in st.session_state:
+        st.session_state.app_mode = "Optimiser"
 
-# Mode selector in sidebar
-with st.sidebar:
-    st.markdown("---")
-    app_mode = st.radio(
-        "Mode",
-        ["Optimiser", "Quote Management", "Admin Dashboard"],
-        key="mode_selector",
-        index=0 if st.session_state.app_mode == "Optimiser" else (1 if st.session_state.app_mode == "Quote Management" else 2)
-    )
-    st.session_state.app_mode = app_mode
+    # Mode selector in sidebar
+    with st.sidebar:
+        st.markdown("---")
+        app_mode = st.radio(
+            "Mode",
+            ["Optimiser", "Quote Management", "Admin Dashboard"],
+            key="mode_selector",
+            index=0 if st.session_state.app_mode == "Optimiser" else (1 if st.session_state.app_mode == "Quote Management" else 2)
+        )
+        st.session_state.app_mode = app_mode
 
 # ================= Admin Dashboard Mode =================
 if st.session_state.app_mode == "Admin Dashboard":
