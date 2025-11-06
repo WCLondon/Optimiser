@@ -1,0 +1,422 @@
+"""
+optimizer_core.py - Pure Python optimization functions (NO Streamlit)
+
+This module contains the core optimization logic extracted from app.py to allow
+imports without triggering Streamlit UI code execution.
+"""
+
+import json
+import re
+from datetime import datetime
+from typing import Dict, Any, List, Tuple, Optional
+
+import numpy as np
+import pandas as pd
+import requests
+
+# Repository layer for reference/config tables
+import repo
+
+# Constants
+ADMIN_FEE_GBP = 500.0  # Standard admin fee
+ADMIN_FEE_FRACTIONAL_GBP = 300.0  # Admin fee for fractional quotes
+SINGLE_BANK_SOFT_PCT = 0.01
+UA = {"User-Agent": "WildCapital-Optimiser/1.0 (+contact@example.com)"}
+LEDGER_AREA = "area"
+LEDGER_HEDGE = "hedgerow"
+LEDGER_WATER = "watercourse"
+
+# Tier proximity ranking: lower is better (closer)
+TIER_PROXIMITY_RANK = {"local": 0, "adjacent": 1, "far": 2}
+
+# Net Gain labels
+NET_GAIN_LABEL = "Net Gain (Low-equivalent)"
+NET_GAIN_HEDGEROW_LABEL = "Net Gain (Hedgerows)"
+NET_GAIN_WATERCOURSE_LABEL = "Net Gain (Watercourses)"
+
+POSTCODES_IO = "https://api.postcodes.io/postcodes/"
+NOMINATIM_SEARCH = "https://nominatim.openstreetmap.org/search"
+NCA_URL = ("https://services.arcgis.com/JJzESW51TqeY9uat/arcgis/rest/services/"
+           "National_Character_Areas_England/FeatureServer/0")
+LPA_URL = ("https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/"
+           "Local_Authority_Districts_December_2024_Boundaries_UK_BFC/FeatureServer/0")
+
+# Watercourse catchment URLs for SRM calculation
+WATERBODY_CATCHMENT_URL = ("https://environment.data.gov.uk/spatialdata/water-framework-directive-"
+                          "river-waterbody-catchments-cycle-2/wfs")
+OPERATIONAL_CATCHMENT_URL = ("https://environment.data.gov.uk/spatialdata/water-framework-directive-"
+                            "river-operational-catchments-cycle-2/wfs")
+
+
+# ================= String Helpers =================
+def sstr(x) -> str:
+    """Safe string conversion"""
+    if x is None:
+        return ""
+    if isinstance(x, float) and (np.isnan(x) or np.isinf(x)):
+        return ""
+    return str(x).strip()
+
+
+def norm_name(s: str) -> str:
+    """Normalize name for matching (e.g., LPA/NCA names)"""
+    t = sstr(s).lower()
+    t = re.sub(r'\b(city of|royal borough of|metropolitan borough of)\b', '', t)
+    t = re.sub(r'\b(council|borough|district|county|unitary authority|unitary|city)\b', '', t)
+    t = t.replace("&", "and")
+    t = re.sub(r'[^a-z0-9]+', '', t)
+    return t
+
+
+# ================= HTTP Helpers =================
+def http_get(url, params=None, headers=None, timeout=25):
+    """HTTP GET with error handling"""
+    try:
+        r = requests.get(url, params=params or {}, headers=headers or UA, timeout=timeout)
+        r.raise_for_status()
+        return r
+    except requests.exceptions.Timeout:
+        raise RuntimeError(f"Timeout connecting to {url}")
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError(f"Connection error to {url}")
+    except requests.exceptions.HTTPError as e:
+        raise RuntimeError(f"HTTP {e.response.status_code} error for {url}")
+    except Exception as e:
+        raise RuntimeError(f"HTTP error for {url}: {e}")
+
+
+def http_post(url, data=None, headers=None, timeout=25):
+    """HTTP POST with error handling"""
+    try:
+        r = requests.post(url, data=data or {}, headers=headers or UA, timeout=timeout)
+        r.raise_for_status()
+        return r
+    except requests.exceptions.Timeout:
+        raise RuntimeError(f"Timeout connecting to {url}")
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError(f"Connection error to {url}")
+    except requests.exceptions.HTTPError as e:
+        raise RuntimeError(f"HTTP {e.response.status_code} error for {url}")
+    except Exception as e:
+        raise RuntimeError(f"HTTP POST error for {url}: {e}")
+
+
+def safe_json(r: requests.Response) -> Dict[str, Any]:
+    """Safe JSON parsing"""
+    try:
+        return r.json()
+    except Exception:
+        preview = (r.text or "")[:300]
+        raise RuntimeError(f"Invalid JSON from {r.url} (status {r.status_code}). Starts: {preview}")
+
+
+# ================= Geocoding / lookups =================
+def get_postcode_info(pc: str) -> Tuple[float, float, str]:
+    """Geocode postcode to lat/lon using postcodes.io"""
+    pc_clean = sstr(pc).replace(" ", "").upper()
+    r = http_get(POSTCODES_IO + pc_clean)
+    js = safe_json(r)
+    if js.get("status") != 200 or not js.get("result"):
+        raise RuntimeError(f"Postcode lookup failed for '{pc}'.")
+    data = js["result"]
+    return float(data["latitude"]), float(data["longitude"]), sstr(data.get("admin_district") or data.get("admin_county"))
+
+
+def geocode_address(addr: str) -> Tuple[float, float]:
+    """Geocode address to lat/lon"""
+    r = http_get(NOMINATIM_SEARCH, params={"q": sstr(addr), "format": "jsonv2", "limit": 1, "addressdetails": 0})
+    js = safe_json(r)
+    if isinstance(js, list) and js:
+        lat, lon = js[0]["lat"], js[0]["lon"]
+        return float(lat), float(lon)
+    r = http_get("https://photon.komoot.io/api/", params={"q": sstr(addr), "limit": 1})
+    js = safe_json(r)
+    feats = js.get("features") or []
+    if feats:
+        lon, lat = feats[0]["geometry"]["coordinates"]
+        return float(lat), float(lon)
+    raise RuntimeError("Address geocoding failed.")
+
+
+def arcgis_point_query(layer_url: str, lat: float, lon: float, out_fields: str) -> Dict[str, Any]:
+    """Query ArcGIS service for features at a point"""
+    geometry_dict = {"x": lon, "y": lat, "spatialReference": {"wkid": 4326}}
+    params = {
+        "f": "json", "where": "1=1",
+        "geometry": json.dumps(geometry_dict), "geometryType": "esriGeometryPoint",
+        "inSR": 4326, "spatialRel": "esriSpatialRelIntersects",
+        "outFields": out_fields or "*", "returnGeometry": "true", "outSR": 4326
+    }
+    r = http_get(f"{layer_url}/query", params=params)
+    js = safe_json(r)
+    feats = js.get("features") or []
+    return feats[0] if feats else {}
+
+
+def layer_intersect_names(layer_url: str, polygon_geom: Dict[str, Any], name_field: str) -> List[str]:
+    """Get intersecting feature names from ArcGIS layer"""
+    if not polygon_geom:
+        return []
+    data = {
+        "f": "json", "where": "1=1",
+        "geometry": json.dumps(polygon_geom), "geometryType": "esriGeometryPolygon",
+        "inSR": 4326, "spatialRel": "esriSpatialRelIntersects",
+        "outFields": name_field, "returnGeometry": "false", "outSR": 4326,
+        "geometryPrecision": 5,
+    }
+    r = http_post(f"{layer_url}/query", data=data)
+    js = safe_json(r)
+    names = [sstr((f.get("attributes") or {}).get(name_field)) for f in js.get("features", [])]
+    return sorted({n for n in names if n})
+
+
+def get_lpa_nca_for_point(lat: float, lon: float) -> Tuple[str, str]:
+    """Get LPA/NCA for coordinates"""
+    lpa = sstr((arcgis_point_query(LPA_URL, lat, lon, "LAD24NM").get("attributes") or {}).get("LAD24NM"))
+    nca = sstr((arcgis_point_query(NCA_URL, lat, lon, "NCA_Name").get("attributes") or {}).get("NCA_Name"))
+    return lpa, nca
+
+
+# ================= Ledger helpers =================
+def get_umbrella_for(hab_name: str, catalog: pd.DataFrame) -> str:
+    """Return 'hedgerow' | 'watercourse' | 'area' for a habitat name"""
+    h = sstr(hab_name)
+    if not h:
+        return LEDGER_AREA
+    if h == NET_GAIN_HEDGEROW_LABEL:
+        return LEDGER_HEDGE
+    if h == NET_GAIN_WATERCOURSE_LABEL:
+        return LEDGER_WATER
+    # Lookup in catalog
+    m = catalog[catalog["habitat_name"].astype(str).str.strip() == h]
+    umb = sstr(m.iloc[0]["UmbrellaType"]) if not m.empty and "UmbrellaType" in m.columns else ""
+    umb = umb.lower()
+    if umb == LEDGER_HEDGE:
+        return LEDGER_HEDGE
+    if umb == LEDGER_WATER:
+        return LEDGER_WATER
+    return LEDGER_AREA
+
+
+def is_hedgerow(name: str) -> bool:
+    """Check if habitat is hedgerow type"""
+    n = sstr(name).lower()
+    if "hedgerow" in n or "hedge row" in n:
+        return True
+    if name == NET_GAIN_HEDGEROW_LABEL:
+        return True
+    return False
+
+
+def is_watercourse(name: str) -> bool:
+    """Check if habitat is watercourse type"""
+    n = sstr(name).lower()
+    keywords = ["watercourse", "water course", "river", "stream", "canal", "ditch"]
+    for kw in keywords:
+        if kw in n:
+            return True
+    if name == NET_GAIN_WATERCOURSE_LABEL:
+        return True
+    return False
+
+
+# ================= Tier calculation =================
+def tier_for_bank(bank_lpa: str, bank_nca: str,
+                  target_lpa: str, target_nca: str,
+                  lpa_neigh: List[str], nca_neigh: List[str],
+                  lpa_neigh_norm: List[str], nca_neigh_norm: List[str]) -> str:
+    """Calculate tier (local/adjacent/far) for a bank"""
+    blpa_norm = norm_name(bank_lpa)
+    bnca_norm = norm_name(bank_nca)
+    tlpa_norm = norm_name(target_lpa)
+    tnca_norm = norm_name(target_nca)
+    
+    # Local tier: same LPA and same NCA
+    if blpa_norm == tlpa_norm and bnca_norm == tnca_norm:
+        return "local"
+    
+    # Adjacent tier: neighbor LPA OR neighbor NCA
+    in_lpa_neigh = blpa_norm in lpa_neigh_norm
+    in_nca_neigh = bnca_norm in nca_neigh_norm
+    if in_lpa_neigh or in_nca_neigh:
+        return "adjacent"
+    
+    # Far tier: everything else
+    return "far"
+
+
+# ================= Contract size selection =================
+def select_contract_size(total_units: float, present: List[str]) -> str:
+    """Select contract size based on total units"""
+    present_lower = {s.lower() for s in present}
+    if total_units < 5:
+        return "fractional" if "fractional" in present_lower else "small"
+    if total_units < 20:
+        return "small" if "small" in present_lower else "medium"
+    if total_units < 100:
+        return "medium" if "medium" in present_lower else "large"
+    return "large" if "large" in present_lower else "medium"
+
+
+def get_admin_fee_for_contract_size(contract_size: str) -> float:
+    """Get admin fee for contract size"""
+    size_lower = contract_size.lower()
+    if size_lower == "fractional":
+        return ADMIN_FEE_FRACTIONAL_GBP
+    return ADMIN_FEE_GBP
+
+
+def select_size_for_demand(demand_df: pd.DataFrame, pricing_df: pd.DataFrame) -> str:
+    """Select contract size based on demand"""
+    present = pricing_df["contract_size"].drop_duplicates().tolist()
+    total = float(demand_df["units_required"].sum())
+    return select_contract_size(total, present)
+
+
+# ================= Discount Helpers =================
+def apply_tier_up_discount(contract_size: str, available_sizes: List[str]) -> str:
+    """Apply tier_up discount: move contract size one level up"""
+    size_lower = contract_size.lower()
+    available_lower = [s.lower() for s in available_sizes]
+    
+    size_hierarchy = ["fractional", "small", "medium", "large"]
+    
+    try:
+        current_index = size_hierarchy.index(size_lower)
+    except ValueError:
+        return contract_size
+    
+    for next_index in range(current_index + 1, len(size_hierarchy)):
+        next_size = size_hierarchy[next_index]
+        if next_size in available_lower:
+            return next_size
+    
+    return contract_size
+
+
+def apply_percentage_discount(unit_price: float, discount_percentage: float) -> float:
+    """Apply percentage discount to unit price"""
+    return unit_price * (1.0 - discount_percentage / 100.0)
+
+
+# ================= Bank Key normalization =================
+def make_bank_key_col(df: pd.DataFrame, banks_df: pd.DataFrame) -> pd.DataFrame:
+    """Add BANK_KEY column to dataframe"""
+    out = df.copy()
+    has_df_name = "bank_name" in out.columns and out["bank_name"].astype(str).str.strip().ne("").any()
+    if not has_df_name:
+        if "bank_id" in out.columns and "bank_id" in banks_df.columns and "bank_name" in banks_df.columns:
+            m = banks_df[["bank_id","bank_name"]].drop_duplicates()
+            out = out.merge(m, on="bank_id", how="left")
+    if "bank_name" in out.columns:
+        out["BANK_KEY"] = out["bank_name"].where(out["bank_name"].astype(str).str.strip().ne(""), out.get("bank_id"))
+    else:
+        out["BANK_KEY"] = out.get("bank_id")
+    out["BANK_KEY"] = out["BANK_KEY"].map(sstr)
+    return out
+
+
+# ================= Trading Rules =================
+def enforce_catalog_rules_official(demand_row, supply_row, dist_levels_map_local, explicit_rule: bool) -> bool:
+    """Enforce catalog-based trading rules for area habitats"""
+    dh = sstr(demand_row.get("habitat_name"))
+    sh = sstr(supply_row.get("habitat_name"))
+    
+    # Net Gain label can be matched by any Low
+    if dh == NET_GAIN_LABEL:
+        s_key = sstr(supply_row.get("distinctiveness_key")).lower()
+        return s_key == "low"
+    
+    # Exact habitat match always allowed
+    if dh == sh:
+        return True
+    
+    # Check distinctiveness trading rules
+    d_key = sstr(demand_row.get("distinctiveness_key")).lower()
+    s_key = sstr(supply_row.get("distinctiveness_key")).lower()
+    
+    # Same-or-higher distinctiveness
+    if d_key not in dist_levels_map_local or s_key not in dist_levels_map_local:
+        return False
+    if dist_levels_map_local[s_key] < dist_levels_map_local[d_key]:
+        return False
+    
+    # Special case: Low/Net Gain can be matched by any Low
+    if d_key == "low" or dh == NET_GAIN_LABEL:
+        return s_key == "low"
+    
+    # For other distinctiveness levels, require exact habitat match or explicit rule
+    if not explicit_rule:
+        return dh == sh
+    
+    return True
+
+
+def enforce_hedgerow_rules(demand_row, supply_row, dist_levels_map_local) -> bool:
+    """Enforce hedgerow trading rules"""
+    dh = sstr(demand_row.get("habitat_name"))
+    sh = sstr(supply_row.get("habitat_name"))
+    
+    # Net Gain (Hedgerows) can be matched by any hedgerow
+    if dh == NET_GAIN_LABEL or dh == "Net Gain (Hedgerows)":
+        return is_hedgerow(sh)
+    
+    # Exact match always allowed
+    if dh == sh:
+        return True
+    
+    # Check distinctiveness
+    d_key = sstr(demand_row.get("distinctiveness_key")).lower()
+    s_key = sstr(supply_row.get("distinctiveness_key")).lower()
+    
+    if d_key not in dist_levels_map_local or s_key not in dist_levels_map_local:
+        return False
+    if dist_levels_map_local[s_key] < dist_levels_map_local[d_key]:
+        return False
+    
+    return True
+
+
+def enforce_watercourse_rules(demand_row, supply_row, dist_levels_map_local) -> bool:
+    """Enforce watercourse trading rules"""
+    dh = sstr(demand_row.get("habitat_name"))
+    sh = sstr(supply_row.get("habitat_name"))
+    
+    # Net Gain (Watercourses) can be matched by any watercourse
+    if dh == NET_GAIN_WATERCOURSE_LABEL:
+        return is_watercourse(sh)
+    
+    # Exact match always allowed
+    if dh == sh:
+        return True
+    
+    # Check distinctiveness
+    d_key = sstr(demand_row.get("distinctiveness_key")).lower()
+    s_key = sstr(supply_row.get("distinctiveness_key")).lower()
+    
+    if d_key not in dist_levels_map_local or s_key not in dist_levels_map_local:
+        return False
+    if dist_levels_map_local[s_key] < dist_levels_map_local[d_key]:
+        return False
+    
+    return True
+
+
+# ================= Load Backend =================
+def load_backend() -> Dict[str, pd.DataFrame]:
+    """Load all reference/config tables from database"""
+    try:
+        return repo.fetch_all_reference_tables()
+    except Exception as e:
+        raise RuntimeError(f"Failed to load reference tables from database: {e}")
+
+
+# ================= Optimization Functions =================
+# These will be added in the next step - they are very large
+# For now, create placeholder stubs
+
+# ================= Complete Optimization Functions =================
+# The following functions are extracted from app.py with minimal modifications
+# to work without Streamlit session state. They accept backend and promoter
+# discount parameters explicitly.
+
