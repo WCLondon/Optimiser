@@ -357,13 +357,15 @@ except Exception as e:
     db = None
 
 # ================= Mode Selection (Sidebar) =================
+# Initialize app_mode in session state (even when imported)
+if "app_mode" not in st.session_state:
+    st.session_state.app_mode = "Optimiser"
+
 # Only run UI code when not imported by promoter app
 if os.environ.get('IMPORTING_FROM_PROMOTER_APP') != '1':
     # Add admin_authenticated flag to session state
     if "admin_authenticated" not in st.session_state:
         st.session_state.admin_authenticated = False
-    if "app_mode" not in st.session_state:
-        st.session_state.app_mode = "Optimiser"
 
     # Mode selector in sidebar
     with st.sidebar:
@@ -377,7 +379,7 @@ if os.environ.get('IMPORTING_FROM_PROMOTER_APP') != '1':
         st.session_state.app_mode = app_mode
 
 # ================= Admin Dashboard Mode =================
-if st.session_state.app_mode == "Admin Dashboard":
+if os.environ.get('IMPORTING_FROM_PROMOTER_APP') != '1' and st.session_state.app_mode == "Admin Dashboard":
     if not st.session_state.admin_authenticated:
         st.markdown("### 🔐 Admin Access Required")
         st.info("Enter the admin password to access the submissions database.")
@@ -706,7 +708,7 @@ if st.session_state.app_mode == "Admin Dashboard":
     st.stop()
 
 # ================= Quote Management Mode =================
-if st.session_state.app_mode == "Quote Management":
+if os.environ.get('IMPORTING_FROM_PROMOTER_APP') != '1' and st.session_state.app_mode == "Quote Management":
     st.markdown("### 🔍 Quote Management & Requotes")
     
     if db is None:
@@ -714,7 +716,7 @@ if st.session_state.app_mode == "Quote Management":
         st.stop()
     
     # Logout button
-    if st.button("🔓 Return to Optimiser", key="quote_mgmt_return"):
+    if os.environ.get('IMPORTING_FROM_PROMOTER_APP') != '1' and st.button("🔓 Return to Optimiser", key="quote_mgmt_return"):
         st.session_state.app_mode = "Optimiser"
         st.rerun()
     
@@ -968,13 +970,15 @@ if st.session_state.app_mode == "Quote Management":
                                         st.session_state["selected_customer_id"] = submission['customer_id']
                                     
                                     # Set mode to Optimiser (the radio button will pick this up on next rerun via line 343)
-                                    st.session_state.app_mode = "Optimiser"
+                                    if os.environ.get('IMPORTING_FROM_PROMOTER_APP') != '1':
+                                        st.session_state.app_mode = "Optimiser"
                                     
                                     st.success("✅ Quote loaded successfully! Switching to Optimizer mode...")
                                     st.info("💡 You can now modify demand, run optimization, add/remove habitats, and download a new email report.")
                                     
                                     # Use st.rerun() to refresh the page with the new mode
-                                    st.rerun()
+                                    if os.environ.get('IMPORTING_FROM_PROMOTER_APP') != '1':
+                                        st.rerun()
                                     
                                 except Exception as e:
                                     st.error(f"Error loading quote: {e}")
@@ -1786,7 +1790,7 @@ if os.environ.get('IMPORTING_FROM_PROMOTER_APP') != '1':
         st.stop()
     
     # Validate that required tables are not empty
-    if st.session_state.app_mode == "Optimiser":
+    if os.environ.get('IMPORTING_FROM_PROMOTER_APP') != '1' and st.session_state.app_mode == "Optimiser":
         # Validate reference tables before continuing
         is_valid, errors = repo.validate_reference_tables()
         if not is_valid:
