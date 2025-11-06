@@ -98,10 +98,28 @@ promoter_name = st.session_state.promoter_name
 promoter_info = st.session_state.get('promoter_info', {})
 
 st.title(f"{promoter_name} - BNG Quote Request")
-st.markdown(f"**Logged in as:** {promoter_name}")
+
+# Show promoter info
+col1, col2 = st.columns([2, 1])
+with col1:
+    st.markdown(f"**Logged in as:** {promoter_name}")
+with col2:
+    discount_type = promoter_info.get('discount_type', 'no_discount')
+    discount_value = promoter_info.get('discount_value', 0)
+    if discount_type == 'tier_up':
+        st.markdown(f"**Discount:** Tier Up")
+    elif discount_type == 'percentage' and discount_value:
+        st.markdown(f"**Discount:** {discount_value}% off")
+    else:
+        st.markdown(f"**Discount:** None")
 
 # Logout button in sidebar
 with st.sidebar:
+    st.markdown(f"### {promoter_name}")
+    st.markdown(f"**Discount:** {discount_type}")
+    if discount_type == 'percentage':
+        st.markdown(f"**Value:** {discount_value}%")
+    st.markdown("---")
     if st.button("🚪 Logout"):
         st.session_state.logged_in = False
         st.session_state.promoter_name = ""
@@ -233,6 +251,13 @@ if submitted:
             # Get promoter discount settings
             discount_type = promoter_info.get('discount_type')
             discount_value = promoter_info.get('discount_value')
+            
+            # Display promoter discount info
+            if discount_type and discount_type != 'no_discount':
+                if discount_type == 'tier_up':
+                    st.info(f"🎯 Promoter discount: Tier up (contract size upgrade)")
+                elif discount_type == 'percentage':
+                    st.info(f"🎯 Promoter discount: {discount_value}% off unit prices")
             
             allocation_df, quote_total, contract_size = optimise(
                 demand_df=area_df,
