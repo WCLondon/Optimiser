@@ -7,6 +7,7 @@ imports without triggering Streamlit UI code execution.
 
 import json
 import re
+import sys
 import time
 from datetime import datetime
 from typing import Dict, Any, List, Tuple, Optional
@@ -22,6 +23,7 @@ import repo
 ADMIN_FEE_GBP = 500.0  # Standard admin fee
 ADMIN_FEE_FRACTIONAL_GBP = 300.0  # Admin fee for fractional quotes
 SINGLE_BANK_SOFT_PCT = 0.01
+GEOCODING_RATE_LIMIT_SECONDS = 0.15  # Rate limit between API calls
 UA = {"User-Agent": "WildCapital-Optimiser/1.0 (+contact@example.com)"}
 LEDGER_AREA = "area"
 LEDGER_HEDGE = "hedgerow"
@@ -200,6 +202,8 @@ def enrich_banks_with_geography(banks_df: pd.DataFrame) -> pd.DataFrame:
     
     enriched_banks = []
     
+    # Note: Using iterrows() here to match app.py's logic exactly
+    # While not the most efficient for large datasets, banks are typically few in number
     for idx, row in df.iterrows():
         # Convert to dict for easier manipulation
         bank = row.to_dict()
@@ -232,9 +236,9 @@ def enrich_banks_with_geography(banks_df: pd.DataFrame) -> pd.DataFrame:
                 if not nca_now:
                     bank['nca_name'] = nca_name
             
-            time.sleep(0.15)  # Rate limit
+            time.sleep(GEOCODING_RATE_LIMIT_SECONDS)
         except Exception as e:
-            print(f"Failed to geocode bank {bank.get('bank_name')}: {e}")
+            sys.stderr.write(f"Warning: Failed to geocode bank {bank.get('bank_name')}: {e}\n")
         
         enriched_banks.append(bank)
     
