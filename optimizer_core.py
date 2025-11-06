@@ -178,6 +178,69 @@ def get_lpa_nca_for_point(lat: float, lon: float) -> Tuple[str, str]:
     return lpa, nca
 
 
+def enrich_banks_with_geography(banks_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Geocode banks and add lpa_name/nca_name columns.
+    This matches app.py's enrich_banks_geography() function.
+    Only geocodes banks with empty lpa_name or nca_name.
+    
+    Args:
+        banks_df: DataFrame with banks data
+        
+    Returns:
+        DataFrame with enriched banks data including lpa_name and nca_name
+    """
+    df = banks_df.copy()
+    
+    # Ensure columns exist
+    if "lpa_name" not in df.columns:
+        df["lpa_name"] = ""
+    if "nca_name" not in df.columns:
+        df["nca_name"] = ""
+    
+    enriched_banks = []
+    
+    for idx, row in df.iterrows():
+        # Convert to dict for easier manipulation
+        bank = row.to_dict()
+        
+        # Check if already has geography data (using sstr to handle empty strings/NaN)
+        lpa_now = sstr(bank.get("lpa_name"))
+        nca_now = sstr(bank.get("nca_name"))
+        
+        if lpa_now and nca_now:
+            # Already enriched, skip
+            enriched_banks.append(bank)
+            continue
+        
+        # Try to get postcode
+        postcode = sstr(bank.get('postcode'))
+        if not postcode:
+            # No postcode, can't geocode
+            enriched_banks.append(bank)
+            continue
+        
+        try:
+            # Geocode postcode to lat/lon
+            lat, lon, _ = get_postcode_info(postcode)
+            if lat and lon:
+                # Look up LPA/NCA
+                lpa_name, nca_name = get_lpa_nca_for_point(lat, lon)
+                # Only update if empty
+                if not lpa_now:
+                    bank['lpa_name'] = lpa_name
+                if not nca_now:
+                    bank['nca_name'] = nca_name
+            
+            time.sleep(0.15)  # Rate limit
+        except Exception as e:
+            print(f"Failed to geocode bank {bank.get('bank_name')}: {e}")
+        
+        enriched_banks.append(bank)
+    
+    return pd.DataFrame(enriched_banks)
+
+
 # ================= Ledger helpers =================
 def get_umbrella_for(hab_name: str, catalog: pd.DataFrame) -> str:
     """Return 'hedgerow' | 'watercourse' | 'area' for a habitat name"""
@@ -1254,8 +1317,8 @@ def optimise(demand_df: pd.DataFrame,
     if backend is None:
         backend = load_backend()
     
-    # Geocode and persist banks with missing LPA/NCA
-    geocode_and_persist_banks(backend)
+    # Enrich banks with LPA/NCA geography data (in-memory, not persisted)
+    backend["Banks"] = enrich_banks_with_geography(backend["Banks"])
     
     # Pick contract size from total demand (unchanged)
     chosen_size = select_size_for_demand(demand_df, backend["Pricing"])
