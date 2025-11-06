@@ -176,6 +176,12 @@ if submitted:
             demand_data = metric_reader.parse_metric_requirements(metric_file)
             area_df = demand_data['area']
             
+            # Rename columns to match optimizer expectations
+            # metric_reader returns: habitat, units
+            # optimizer expects: habitat_name, units_required
+            if not area_df.empty:
+                area_df = area_df.rename(columns={'habitat': 'habitat_name', 'units': 'units_required'})
+            
             if area_df.empty:
                 st.error("❌ No habitat requirements found in metric file")
                 st.stop()
