@@ -234,7 +234,7 @@ if submitted:
             discount_type = promoter_info.get('discount_type')
             discount_value = promoter_info.get('discount_value')
             
-            allocation_df, quote_total, status_msg = optimise(
+            allocation_df, quote_total, contract_size = optimise(
                 demand_df=area_df,
                 target_lpa=target_lpa,
                 target_nca=target_nca,
@@ -249,8 +249,7 @@ if submitted:
             
             st.success(f"✓ Optimization complete: {len(allocation_df)} allocations")
             st.success(f"💰 **Total cost: £{quote_total:,.2f}**")
-            if status_msg:
-                st.info(f"ℹ️ {status_msg}")
+            st.info(f"📋 Contract size: **{contract_size}**")
         
         # ===== STEP 7: Generate PDF (if < £20k) =====
         pdf_content = None
@@ -259,9 +258,8 @@ if submitted:
         if quote_total < 20000:
             with st.spinner("Generating PDF quote..."):
                 try:
-                    # Calculate admin fee
-                    from optimizer_core import get_admin_fee_for_contract_size, select_size_for_demand
-                    contract_size = select_size_for_demand(area_df, backend["Pricing"])
+                    # Calculate admin fee using the contract size from optimizer
+                    from optimizer_core import get_admin_fee_for_contract_size
                     admin_fee = get_admin_fee_for_contract_size(contract_size)
                     
                     report_df, _ = generate_client_report_table_fixed(
@@ -304,10 +302,13 @@ if submitted:
         # ===== STEP 8: Save to Database =====
         with st.spinner("Saving submission to database..."):
             try:
+                # Calculate admin fee using the contract size from optimizer
+                from optimizer_core import get_admin_fee_for_contract_size
+                admin_fee = get_admin_fee_for_contract_size(contract_size)
+                
                 db = SubmissionsDB()
                 submission_id = db.store_submission(
                     client_name=client_name,
-                    email=contact_email,
                     reference_number=reference_number,
                     site_location=postcode or site_address,
                     target_lpa=target_lpa,
@@ -318,13 +319,23 @@ if submitted:
                     nca_neighbors=nca_neighbors,
                     demand_df=area_df,
                     allocation_df=allocation_df,
+                    contract_size=contract_size,
                     total_cost=quote_total,
+                    admin_fee=admin_fee,
+                    manual_hedgerow_rows=[],
+                    manual_watercourse_rows=[],
+                    manual_area_habitat_rows=[],
+                    username=promoter_name,
                     promoter_name=promoter_name,
-                    notes=notes
+                    promoter_discount_type=discount_type,
+                    promoter_discount_value=discount_value
                 )
                 st.success(f"✓ Submission saved (ID: #{submission_id})")
             except Exception as e:
                 st.error(f"❌ Could not save to database: {e}")
+                import traceback
+                with st.expander("Database error details"):
+                    st.code(traceback.format_exc())
         
         # ===== STEP 9: Send Email Notification =====
         with st.spinner("Sending email notification..."):
