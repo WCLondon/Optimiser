@@ -23,14 +23,25 @@ import repo
 from database import SubmissionsDB
 from email_notification import send_manual_review_email
 
-# Try to import the report generation function from app.py
+# Try to import functions from app.py
 try:
-    from app import generate_client_report_table_fixed
-    HAS_CLIENT_REPORT_FUNCTION = True
+    from app import (
+        generate_client_report_table_fixed,
+        optimise,
+        get_postcode_info,
+        geocode_address,
+        get_lpa_nca_for_point,
+        arcgis_point_query,
+        layer_intersect_names,
+        norm_name,
+        LPA_URL,
+        NCA_URL
+    )
+    HAS_APP_FUNCTIONS = True
 except Exception as e:
-    HAS_CLIENT_REPORT_FUNCTION = False
-    print(f"Warning: Could not import generate_client_report_table_fixed from app.py: {e}")
-    print("PDF generation will use simplified format.")
+    HAS_APP_FUNCTIONS = False
+    print(f"Warning: Could not import functions from app.py: {e}")
+    print("Will use fallback optimization.")
 
 # Try to import PDF generator (requires reportlab)
 try:
@@ -505,16 +516,14 @@ if submitted:
                 st.write(f"- Watercourse habitats: {len(watercourse_habitats)}")
                 
                 try:
-                    if not demand_df.empty:
+                    if not area_df.empty:
                         st.write("🔄 **Running full optimizer...**")
                         
-                        # Import the optimise function from app.py
-                        if HAS_CLIENT_REPORT_FUNCTION:  # If app.py imports worked
-                            from app import optimise
-                            
+                        # Run optimization with actual location data using imported optimise function
+                        if HAS_APP_FUNCTIONS:  # If app.py imports worked
                             # Run optimization with actual location data
                             allocation_df, quote_total, status_msg = optimise(
-                                demand_df=demand_df,
+                                demand_df=area_df,
                                 target_lpa=target_lpa,
                                 target_nca=target_nca,
                                 lpa_neigh=lpa_neighbors,
@@ -526,7 +535,7 @@ if submitted:
                             st.write(f"✅ **Optimizer complete:** {len(allocation_df)} allocations, £{quote_total:,.2f} total")
                             st.write(f"ℹ️ {status_msg}")
                         else:
-                            raise Exception("app.py not available for optimization")
+                            raise Exception("app.py functions not available for optimization")
                     else:
                         raise Exception("No demand data to optimize")
                         
