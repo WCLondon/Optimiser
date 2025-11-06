@@ -566,13 +566,30 @@ def prepare_watercourse_options(demand_df: pd.DataFrame,
             if qty_avail <= 0:
                 continue
 
-            # For promoter app: Use LPA/NCA based tiering (simplified version)
-            # The full app.py version uses watercourse catchment SRM which requires session state
-            tier = tier_for_bank(
+            # For watercourses: Use LPA/NCA based tiering to estimate SRM
+            # Without catchment data, we map geographic tier to SRM tier
+            # local tier → SRM 1.0 (local catchment)
+            # adjacent tier → SRM 4/3 (adjacent catchment) 
+            # far tier → SRM 2.0 (national)
+            geographic_tier = tier_for_bank(
                 sstr(supply_row.get("lpa_name")), sstr(supply_row.get("nca_name")),
                 target_lpa, target_nca,
                 lpa_neigh, nca_neigh, lpa_neigh_norm, nca_neigh_norm
             )
+            
+            # Map geographic tier to SRM and unit multiplier
+            if geographic_tier == "local":
+                srm = 1.0
+                unit_multiplier = 1.0  # 1x for local
+                tier = "local"
+            elif geographic_tier == "adjacent":
+                srm = 4/3
+                unit_multiplier = 4/3  # 4/3x for adjacent
+                tier = "adjacent"
+            else:  # far
+                srm = 2.0
+                unit_multiplier = 2.0  # 2x for national/far
+                tier = "far"
 
             # Find exact price, else fallback to any watercourse price in same bank/tier
             pr_match = pricing_enriched[
@@ -604,9 +621,10 @@ def prepare_watercourse_options(demand_df: pd.DataFrame,
                 "BANK_KEY": bank_key,
                 "stock_id": stock_id,
                 "tier": tier,
+                "srm": srm,  # Store SRM for reference
                 "unit_price": price,
                 "cost_per_unit": price,
-                "stock_use": {stock_id: 1.0},
+                "stock_use": {stock_id: unit_multiplier},  # Apply SRM unit multiplier
                 "type": "normal",
                 "proximity": tier,
             })
@@ -711,6 +729,9 @@ def prepare_options(demand_df: pd.DataFrame,
     Catalog = backend["HabitatCatalog"].copy()
     Stock = backend["Stock"].copy()
     Trading = backend.get("TradingRules", pd.DataFrame())
+    
+    # Build dist_levels_map from backend
+    dist_levels_map = build_dist_levels_map(backend)
 
     for df, cols in [
         (Banks, ["bank_id","bank_name","BANK_KEY","lpa_name","nca_name","lat","lon","postcode","address"]),
@@ -1056,6 +1077,9 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
     Pricing = backend["Pricing"].copy()
     Catalog = backend["HabitatCatalog"].copy()
     Stock = backend["Stock"].copy()
+    
+    # Build dist_levels_map from backend
+    dist_levels_map = build_dist_levels_map(backend)
     
     for df, cols in [
         (Banks, ["bank_id","bank_name","BANK_KEY","lpa_name","nca_name"]),
