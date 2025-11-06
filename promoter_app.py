@@ -107,7 +107,7 @@ with col2:
     discount_type = promoter_info.get('discount_type', 'no_discount')
     discount_value = promoter_info.get('discount_value', 0)
     if discount_type == 'tier_up':
-        st.markdown(f"**Discount:** Tier Up")
+        st.markdown(f"**Discount:** Tier Up (contract size upgrade)")
     elif discount_type == 'percentage' and discount_value:
         st.markdown(f"**Discount:** {discount_value}% off")
     else:
@@ -117,7 +117,9 @@ with col2:
 with st.sidebar:
     st.markdown(f"### {promoter_name}")
     st.markdown(f"**Discount:** {discount_type}")
-    if discount_type == 'percentage':
+    if discount_type == 'tier_up':
+        st.markdown("*Upgrades contract size (fractional→small→medium→large)*")
+    elif discount_type == 'percentage':
         st.markdown(f"**Value:** {discount_value}%")
     st.markdown("---")
     if st.button("🚪 Logout"):
@@ -255,9 +257,9 @@ if submitted:
             # Display promoter discount info
             if discount_type and discount_type != 'no_discount':
                 if discount_type == 'tier_up':
-                    st.info(f"🎯 Promoter discount: Tier up (contract size upgrade)")
+                    st.info(f"🎯 Promoter discount: **Tier Up** - Upgrades contract size (fractional→small→medium→large)")
                 elif discount_type == 'percentage':
-                    st.info(f"🎯 Promoter discount: {discount_value}% off unit prices")
+                    st.info(f"🎯 Promoter discount: **{discount_value}% off** unit prices")
             
             allocation_df, quote_total, contract_size = optimise(
                 demand_df=area_df,
