@@ -7,6 +7,7 @@ imports without triggering Streamlit UI code execution.
 
 import json
 import re
+import time
 from datetime import datetime
 from typing import Dict, Any, List, Tuple, Optional
 
