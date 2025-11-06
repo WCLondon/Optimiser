@@ -191,6 +191,12 @@ def enrich_banks_with_geography(banks_df: pd.DataFrame) -> pd.DataFrame:
         
     Returns:
         DataFrame with enriched banks data including lpa_name and nca_name
+        
+    Side effects:
+        - Makes API calls to postcodes.io and ArcGIS services for geocoding
+        - Rate limits API calls with 0.15s delay after successful geocoding
+        - Writes warnings to stderr for failed geocoding attempts
+        - Does NOT persist changes to database (in-memory only)
     """
     df = banks_df.copy()
     
