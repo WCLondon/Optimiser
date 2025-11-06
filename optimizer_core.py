@@ -725,40 +725,6 @@ def prepare_watercourse_options(demand_df: pd.DataFrame,
     return options, stock_caps, stock_bankkey
 
 
-def optimise(demand_df: pd.DataFrame,
-             target_lpa: str, target_nca: str,
-             lpa_neigh: List[str], nca_neigh: List[str],
-             lpa_neigh_norm: List[str], nca_neigh_norm: List[str],
-             backend: Dict[str, pd.DataFrame] = None,
-             promoter_discount_type: str = None,
-             promoter_discount_value: float = None) -> Tuple[pd.DataFrame, float, str]:
-    """
-    Run PuLP optimization - MAIN OPTIMIZER
-    
-    Args:
-        demand_df: DataFrame with habitat requirements (habitat_name, units_required)
-        target_lpa: Target LPA name
-        target_nca: Target NCA name
-        lpa_neigh: List of neighboring LPA names
-        nca_neigh: List of neighboring NCA names
-        lpa_neigh_norm: Normalized neighboring LPA names
-        nca_neigh_norm: Normalized neighboring NCA names
-        backend: Backend data dictionary (if None, will load from database)
-        promoter_discount_type: Optional promoter discount type ('tier_up', 'percentage', 'no_discount')
-        promoter_discount_value: Optional promoter discount value
-    
-    Returns:
-        Tuple of (allocation_df, total_cost, status_message)
-    """
-    # Load backend if not provided
-    if backend is None:
-        backend = load_backend()
-    
-    # PLACEHOLDER: Full optimization logic needs to be extracted from app.py
-    # This is a complex function with ~400 lines of code
-    raise NotImplementedError("optimise function needs full implementation - placeholder only")
-
-
 def generate_client_report_table_fixed(alloc_df: pd.DataFrame, 
                                        demand_df: pd.DataFrame, 
                                        total_cost: float, 
