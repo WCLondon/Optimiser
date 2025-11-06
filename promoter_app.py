@@ -354,6 +354,28 @@ if st.session_state.submission_complete and st.session_state.submission_result:
 # Form
 with st.form("promoter_form"):
     st.subheader("Contact Information")
+    
+    # Client name fields
+    col1, col2, col3 = st.columns([1, 2, 2])
+    with col1:
+        client_title = st.selectbox(
+            "Title *",
+            options=["", "Mr", "Mrs", "Miss", "Ms", "Dr", "Prof"],
+            help="Client title"
+        )
+    with col2:
+        client_first_name = st.text_input(
+            "First Name *",
+            placeholder="John",
+            help="Client's first name"
+        )
+    with col3:
+        client_surname = st.text_input(
+            "Surname *",
+            placeholder="Smith",
+            help="Client's surname"
+        )
+    
     contact_email = st.text_input(
         "Contact Email *",
         placeholder="your.email@example.com",
@@ -378,11 +400,6 @@ with st.form("promoter_form"):
     st.caption("⚠️ Please provide at least one of address or postcode")
     
     st.subheader("Additional Details")
-    client_reference = st.text_input(
-        "Client Reference (optional)",
-        placeholder="Project reference or identifier"
-    )
-    
     notes = st.text_area(
         "Notes (optional)",
         placeholder="Any additional information or special requirements",
@@ -409,6 +426,15 @@ with st.form("promoter_form"):
 if submitted:
     # Validation
     errors = []
+    
+    if not client_title:
+        errors.append("Client title is required")
+    
+    if not client_first_name:
+        errors.append("Client first name is required")
+    
+    if not client_surname:
+        errors.append("Client surname is required")
     
     if not contact_email:
         errors.append("Contact email is required")
@@ -571,10 +597,15 @@ if submitted:
                 manual_hedgerow_rows = hedgerow_habitats
                 manual_watercourse_rows = watercourse_habitats
                 
+                # Prepare client name and reference
+                timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+                client_name = f"{client_title} {client_first_name} {client_surname}"
+                ref_number = f"PROM-{timestamp}"
+                
                 # Save submission using correct method
                 submission_id = db.store_submission(
-                    client_name=contact_email.split('@')[0],  # Use email prefix as name
-                    reference_number=client_reference if client_reference else f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+                    client_name=client_name,
+                    reference_number=ref_number,
                     site_location=site_address if site_address else site_postcode,
                     target_lpa=target_lpa,  # From postcode geocoding
                     target_nca=target_nca,
@@ -616,8 +647,8 @@ if submitted:
                                 demand_df=demand_df,
                                 total_cost=quote_total,
                                 admin_fee=0.0,
-                                client_name=contact_email.split('@')[0],
-                                ref_number=client_reference if client_reference else f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+                                client_name=client_name,
+                                ref_number=ref_number,
                                 location=site_address if site_address else site_postcode,
                                 manual_hedgerow_rows=manual_hedgerow_rows,
                                 manual_watercourse_rows=manual_watercourse_rows,
@@ -661,8 +692,8 @@ if submitted:
                         if PDF_GENERATION_AVAILABLE and report_df is not None and not report_df.empty:
                             st.write("🔄 Creating PDF with ReportLab...")
                             pdf_content = generate_quote_pdf(
-                                client_name=contact_email.split('@')[0],
-                                reference_number=client_reference if client_reference else f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+                                client_name=client_name,
+                                reference_number=ref_number,
                                 site_location=site_address if site_address else site_postcode,
                                 quote_total=quote_total,
                                 admin_fee=0.0,
@@ -687,7 +718,8 @@ if submitted:
                         pdf_content = f"""BNG QUOTE SUMMARY
 
 Promoter: {PROMOTER_SLUG}
-Reference: {client_reference if client_reference else f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}"}
+Reference: {ref_number}
+Client: {client_name}
 Contact: {contact_email}
 Site: {site_address if site_address else site_postcode}
 
@@ -738,8 +770,8 @@ quotes@wildcapital.co.uk
                     'metric_file_content': metric_file_content,
                     'metric_file_name': metric_file_name,
                     'contact_email': contact_email,
+                    'client_name': client_name,
                     'site_location': site_address if site_address else site_postcode,
-                    'client_reference': client_reference,
                     'notes': notes
                 }
                 st.session_state.submission_complete = True
