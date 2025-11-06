@@ -1297,21 +1297,27 @@ def optimise(demand_df: pd.DataFrame,
         backend = load_backend()
     
     # Enrich banks with LPA/NCA geography data (in-memory, not persisted)
+    print(f"\n🔍 Enriching {len(backend['Banks'])} banks with geography data...")
     backend["Banks"] = enrich_banks_with_geography(backend["Banks"])
     
-    # DEBUG: Log enriched bank geography
-    sys.stderr.write(f"\n{'='*80}\n")
-    sys.stderr.write(f"DEBUG: Bank Geography After Enrichment\n")
-    sys.stderr.write(f"{'='*80}\n")
+    # Count enriched banks
+    enriched_count = 0
+    for _, bank in backend["Banks"].iterrows():
+        if sstr(bank.get('lpa_name')) and sstr(bank.get('nca_name')):
+            enriched_count += 1
+    print(f"✓ {enriched_count}/{len(backend['Banks'])} banks have LPA/NCA data")
+    
+    # Show which banks are at which tiers for this target
+    print(f"\n📍 Target: LPA='{target_lpa}', NCA='{target_nca}'")
+    print("🏦 Bank tiers for this location:")
     for _, bank in backend["Banks"].iterrows():
         bank_name = sstr(bank.get('bank_name', 'Unknown'))
-        lpa = sstr(bank.get('lpa_name', ''))
-        nca = sstr(bank.get('nca_name', ''))
-        postcode = sstr(bank.get('postcode', ''))
-        sys.stderr.write(f"  {bank_name:30s} | PC: {postcode:10s} | LPA: {lpa:30s} | NCA: {nca}\n")
-    sys.stderr.write(f"{'='*80}\n")
-    sys.stderr.write(f"Target Location: LPA='{target_lpa}', NCA='{target_nca}'\n")
-    sys.stderr.write(f"{'='*80}\n\n")
+        bank_lpa = sstr(bank.get('lpa_name', ''))
+        bank_nca = sstr(bank.get('nca_name', ''))
+        if bank_lpa or bank_nca:
+            tier = tier_for_bank(bank_lpa, bank_nca, target_lpa, target_nca,
+                                lpa_neigh, nca_neigh, lpa_neigh_norm, nca_neigh_norm)
+            print(f"  • {bank_name:30s} | {tier:8s} | LPA: {bank_lpa[:20]:20s} | NCA: {bank_nca[:20]}")
     
     # Pick contract size from total demand (unchanged)
     chosen_size = select_size_for_demand(demand_df, backend["Pricing"])
