@@ -202,8 +202,9 @@ def enrich_banks_with_geography(banks_df: pd.DataFrame) -> pd.DataFrame:
     
     enriched_banks = []
     
-    # Note: Using iterrows() here to match app.py's logic exactly
-    # While not the most efficient for large datasets, banks are typically few in number
+    # Note: Using iterrows() to match app.py's enrich_banks_geography() logic exactly.
+    # This ensures consistent behavior between app.py and optimizer_core.py.
+    # Banks are typically few in number (< 100), so performance impact is minimal.
     for idx, row in df.iterrows():
         # Convert to dict for easier manipulation
         bank = row.to_dict()
@@ -235,10 +236,12 @@ def enrich_banks_with_geography(banks_df: pd.DataFrame) -> pd.DataFrame:
                     bank['lpa_name'] = lpa_name
                 if not nca_now:
                     bank['nca_name'] = nca_name
-            
-            time.sleep(GEOCODING_RATE_LIMIT_SECONDS)
+                
+                # Rate limit only after successful API calls
+                time.sleep(GEOCODING_RATE_LIMIT_SECONDS)
         except Exception as e:
-            sys.stderr.write(f"Warning: Failed to geocode bank {bank.get('bank_name')}: {e}\n")
+            bank_name = sstr(bank.get('bank_name', 'Unknown'))
+            sys.stderr.write(f"Warning: Failed to geocode bank {bank_name}: {e}\n")
         
         enriched_banks.append(bank)
     
