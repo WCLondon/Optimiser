@@ -344,7 +344,9 @@ def require_login():
             st.stop()
     st.stop()
 
-require_login()
+# Only require login when running as main app (not when imported)
+if os.environ.get('IMPORTING_FROM_PROMOTER_APP') != '1':
+    require_login()
 
 # ================= Database Initialization =================
 # Initialize database (will create tables if they don't exist)
