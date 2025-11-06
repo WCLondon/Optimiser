@@ -278,6 +278,56 @@ if submitted:
             st.success(f"💰 **Total cost: £{quote_total:,.2f}**")
             st.info(f"📋 Contract size: **{contract_size}**")
         
+        # ===== STEP 6.5: Show Allocation Detail =====
+        with st.expander("📋 Allocation Detail", expanded=True):
+            if not allocation_df.empty:
+                # Display key columns for debugging
+                display_cols = [
+                    "demand_habitat", "BANK_KEY", "bank_name", "supply_habitat", 
+                    "allocation_type", "tier", "units_supplied", "unit_price", "cost"
+                ]
+                # Only include columns that exist in the dataframe
+                available_cols = [col for col in display_cols if col in allocation_df.columns]
+                
+                display_df = allocation_df[available_cols].copy()
+                
+                # Format numeric columns
+                if "units_supplied" in display_df.columns:
+                    display_df["units_supplied"] = display_df["units_supplied"].apply(lambda x: f"{x:.4f}")
+                if "unit_price" in display_df.columns:
+                    display_df["unit_price"] = display_df["unit_price"].apply(lambda x: f"£{x:,.2f}")
+                if "cost" in display_df.columns:
+                    display_df["cost"] = display_df["cost"].apply(lambda x: f"£{x:,.2f}")
+                
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                
+                # Show summary by bank
+                st.markdown("#### Summary by Bank")
+                bank_summary = allocation_df.groupby("bank_name").agg({
+                    "units_supplied": "sum",
+                    "cost": "sum"
+                }).reset_index()
+                bank_summary.columns = ["Bank", "Total Units", "Total Cost"]
+                bank_summary["Total Units"] = bank_summary["Total Units"].apply(lambda x: f"{x:.4f}")
+                bank_summary["Total Cost"] = bank_summary["Total Cost"].apply(lambda x: f"£{x:,.2f}")
+                st.dataframe(bank_summary, use_container_width=True, hide_index=True)
+                
+                # Show summary by habitat
+                st.markdown("#### Summary by Demand Habitat")
+                habitat_summary = allocation_df.groupby("demand_habitat").agg({
+                    "units_supplied": "sum",
+                    "cost": "sum"
+                }).reset_index()
+                habitat_summary.columns = ["Habitat", "Total Units", "Total Cost"]
+                habitat_summary["Total Units"] = habitat_summary["Total Units"].apply(lambda x: f"{x:.4f}")
+                habitat_summary["Total Cost"] = habitat_summary["Total Cost"].apply(lambda x: f"£{x:,.2f}")
+                st.dataframe(habitat_summary, use_container_width=True, hide_index=True)
+                
+                if "price_source" in allocation_df.columns:
+                    st.caption("Note: `price_source='group-proxy'` or `any-low-proxy` indicate proxy pricing rules.")
+            else:
+                st.info("No allocations to display.")
+        
         # ===== STEP 7: Generate PDF (if < £20k) =====
         pdf_content = None
         reference_number = f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
