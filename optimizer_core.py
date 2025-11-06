@@ -1253,6 +1253,9 @@ def optimise(demand_df: pd.DataFrame,
     if backend is None:
         backend = load_backend()
     
+    # Geocode and persist banks with missing LPA/NCA
+    geocode_and_persist_banks(backend)
+    
     # Pick contract size from total demand (unchanged)
     chosen_size = select_size_for_demand(demand_df, backend["Pricing"])
 
