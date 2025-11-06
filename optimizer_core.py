@@ -248,14 +248,18 @@ def tier_for_bank(bank_lpa: str, bank_nca: str,
 # ================= Contract size selection =================
 def select_contract_size(total_units: float, present: List[str]) -> str:
     """Select contract size based on total units"""
-    present_lower = {s.lower() for s in present}
-    if total_units < 5:
-        return "fractional" if "fractional" in present_lower else "small"
-    if total_units < 20:
-        return "small" if "small" in present_lower else "medium"
-    if total_units < 100:
-        return "medium" if "medium" in present_lower else "large"
-    return "large" if "large" in present_lower else "medium"
+    tiers = set([sstr(x).lower() for x in present])
+    if "fractional" in tiers and total_units < 0.1: 
+        return "fractional"
+    if "small" in tiers and total_units < 2.5: 
+        return "small"
+    if "medium" in tiers and total_units < 15: 
+        return "medium"
+    # Fallback: select largest available size
+    for t in ["large", "medium", "small", "fractional"]:
+        if t in tiers: 
+            return t
+    return sstr(next(iter(present), "small")).lower()
 
 
 def get_admin_fee_for_contract_size(contract_size: str) -> float:
