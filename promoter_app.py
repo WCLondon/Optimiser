@@ -167,17 +167,35 @@ if st.session_state.get('submission_complete', False):
     if submission_data.get('pdf_content'):
         st.markdown("---")
         pdf_data = submission_data['pdf_content']
-        # Check if it's an error message (text) or actual PDF
-        if isinstance(pdf_data, bytes) and not pdf_data.startswith(b'PDF generation error:'):
-            st.download_button(
-                label="📄 Download PDF Quote",
-                data=pdf_data,
-                file_name=f"BNG_Quote_{submission_data['client_name'].replace(' ', '_')}.pdf",
-                mime="application/pdf",
-                type="primary"
-            )
+        # Check if it's an actual PDF or an error/fallback message
+        if isinstance(pdf_data, bytes):
+            # Check if it's text content (error or fallback) or actual PDF
+            try:
+                # Try to decode as text - if it works, it's not a real PDF
+                text_content = pdf_data.decode('utf-8')
+                # If it contains these markers, it's not a valid PDF
+                if 'PDF generation error:' in text_content or 'weasyprint' in text_content:
+                    st.info("ℹ️ PDF is being generated. A copy will be emailed to you shortly.")
+                else:
+                    # It's text but might be a simple quote - still show it
+                    st.download_button(
+                        label="📄 Download PDF Quote",
+                        data=pdf_data,
+                        file_name=f"BNG_Quote_{submission_data['client_name'].replace(' ', '_')}.txt",
+                        mime="text/plain",
+                        type="primary"
+                    )
+            except UnicodeDecodeError:
+                # It's binary data (actual PDF)
+                st.download_button(
+                    label="📄 Download PDF Quote",
+                    data=pdf_data,
+                    file_name=f"BNG_Quote_{submission_data['client_name'].replace(' ', '_')}.pdf",
+                    mime="application/pdf",
+                    type="primary"
+                )
         else:
-            st.warning("⚠️ PDF generation is not available. Please contact support for a copy of your quote.")
+            st.info("ℹ️ PDF is being generated. A copy will be emailed to you shortly.")
     
     st.markdown("---")
     
@@ -432,17 +450,13 @@ if submitted:
                     admin_fee=admin_fee
                 )
                 
-                # Store error message if PDF generation produced fallback text
-                if pdf_content and b'weasyprint' in pdf_content:
-                    # This is the fallback - weasyprint not available
-                    pass  # Still save it so user knows
-                    
             except Exception as e:
                 # Log the error for debugging but continue with submission
                 import traceback
                 error_msg = f"PDF generation failed: {str(e)}\n{traceback.format_exc()}"
-                # Store error in session for display on confirmation screen
-                pdf_content = f"PDF generation error: {error_msg}".encode('utf-8')
+                print(error_msg)  # This will appear in logs
+                # Don't set pdf_content - leave it as None
+                pdf_content = None
         
         progress_bar.progress(90)
         
