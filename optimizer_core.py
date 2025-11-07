@@ -291,26 +291,79 @@ def get_umbrella_for(hab_name: str, catalog: pd.DataFrame) -> str:
     return LEDGER_AREA
 
 
-def is_hedgerow(name: str) -> bool:
-    """Check if habitat is hedgerow type"""
-    n = sstr(name).lower()
-    if "hedgerow" in n or "hedge row" in n:
+def is_hedgerow(name: str, catalog: Optional[pd.DataFrame] = None) -> bool:
+    """
+    Check if habitat is hedgerow type.
+    
+    This function checks both the habitat name for hedgerow keywords AND
+    the UmbrellaType column in the HabitatCatalog table. This matches
+    app.py's is_hedgerow() logic exactly.
+    
+    Args:
+        name: Habitat name to check
+        catalog: Optional HabitatCatalog DataFrame for UmbrellaType lookup
+        
+    Returns:
+        True if habitat is hedgerow type, False otherwise
+    """
+    name_str = sstr(name)
+    
+    # Check if it's the hedgerow net gain label
+    if name_str == "Net Gain (Hedgerows)":
         return True
-    if name == NET_GAIN_HEDGEROW_LABEL:
-        return True
-    return False
+    
+    # Check UmbrellaType column in HabitatCatalog if available
+    # This is CRITICAL - some habitats are classified as hedgerow type
+    # via UmbrellaType column even if name doesn't contain "hedgerow"
+    try:
+        if catalog is not None and "UmbrellaType" in catalog.columns:
+            match = catalog[catalog["habitat_name"].astype(str).str.strip() == name_str]
+            if not match.empty:
+                umbrella_type = sstr(match.iloc[0]["UmbrellaType"]).lower()
+                return umbrella_type == "hedgerow"
+    except Exception:
+        # If catalog lookup fails, fall back to name-based check
+        pass
+    
+    # Fallback to text matching
+    return "hedgerow" in name_str.lower()
 
 
-def is_watercourse(name: str) -> bool:
-    """Check if habitat is watercourse type"""
-    n = sstr(name).lower()
-    keywords = ["watercourse", "water course", "river", "stream", "canal", "ditch"]
-    for kw in keywords:
-        if kw in n:
-            return True
-    if name == NET_GAIN_WATERCOURSE_LABEL:
+def is_watercourse(name: str, catalog: Optional[pd.DataFrame] = None) -> bool:
+    """
+    Check if habitat is watercourse type.
+    
+    This function checks both the habitat name for watercourse keywords AND
+    the UmbrellaType column in the HabitatCatalog table. This matches
+    app.py's is_watercourse() logic exactly.
+    
+    Args:
+        name: Habitat name to check
+        catalog: Optional HabitatCatalog DataFrame for UmbrellaType lookup
+        
+    Returns:
+        True if habitat is watercourse type, False otherwise
+    """
+    name_str = sstr(name)
+    
+    # Check if it's the watercourse net gain label
+    if name_str == "Net Gain (Watercourse)":
         return True
-    return False
+    
+    # Check UmbrellaType column in HabitatCatalog if available
+    try:
+        if catalog is not None and "UmbrellaType" in catalog.columns:
+            match = catalog[catalog["habitat_name"].astype(str).str.strip() == name_str]
+            if not match.empty:
+                umbrella_type = sstr(match.iloc[0]["UmbrellaType"]).lower()
+                return umbrella_type == "watercourse"
+    except Exception:
+        # If catalog lookup fails, fall back to name-based check
+        pass
+    
+    # Fallback to text matching
+    name_lower = name_str.lower()
+    return "watercourse" in name_lower or "water" in name_lower
 
 
 # ================= Tier calculation =================
@@ -1286,6 +1339,16 @@ def optimise(demand_df: pd.DataFrame,
     
     # Enrich banks with LPA/NCA geography data (in-memory, not persisted)
     backend["Banks"] = enrich_banks_with_geography(backend["Banks"])
+    
+    # Calculate quantity_available from available_excl_quotes (matching app.py logic)
+    # The Stock table has available_excl_quotes but quantity_available is NULL/0
+    if "Stock" in backend and not backend["Stock"].empty:
+        stock_df = backend["Stock"]
+        if "available_excl_quotes" in stock_df.columns:
+            # Simple mode: quantity_available = available_excl_quotes
+            # (ignoring quoted units for promoter app)
+            stock_df["quantity_available"] = stock_df["available_excl_quotes"].fillna(0)
+            backend["Stock"] = stock_df
     
     # Collect debug information
     debug_lines = []
