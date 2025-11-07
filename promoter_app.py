@@ -169,6 +169,8 @@ if st.session_state.get('submission_complete', False):
         st.markdown("---")
         
         pdf_data = submission_data.get('pdf_content')
+        pdf_debug = submission_data.get('pdf_debug_message', '')
+        
         if pdf_data:
             # Check if it's an actual PDF or an error/fallback message
             if isinstance(pdf_data, bytes) and len(pdf_data) > 0:
@@ -179,6 +181,8 @@ if st.session_state.get('submission_complete', False):
                     # Only show error message if it's explicitly an error
                     if text_content.startswith('PDF generation error:'):
                         st.error("⚠️ There was an error generating the PDF. Our team has been notified and will email you a copy shortly.")
+                        if pdf_debug:
+                            st.code(pdf_debug, language="text")
                     else:
                         # It decoded as text but doesn't have error marker - might be fallback text
                         # Show as downloadable text file
@@ -189,6 +193,9 @@ if st.session_state.get('submission_complete', False):
                             mime="text/plain",
                             type="primary"
                         )
+                        if pdf_debug:
+                            with st.expander("Debug Information"):
+                                st.code(pdf_debug, language="text")
                 except UnicodeDecodeError:
                     # It's binary data (actual PDF) - this is what we want!
                     st.download_button(
@@ -201,13 +208,14 @@ if st.session_state.get('submission_complete', False):
             else:
                 st.warning("⚠️ PDF generation encountered an issue. A copy will be emailed to you shortly.")
                 # Show debug information
-                if submission_data.get('pdf_debug_message'):
-                    st.code(submission_data['pdf_debug_message'], language=None)
+                if pdf_debug:
+                    st.code(pdf_debug, language="text")
         else:
             # No PDF content at all - show informative message
             st.warning("⚠️ PDF could not be generated. Please contact support or check the logs. A copy will be emailed to you.")
             # Show debug information
-            if submission_data.get('pdf_debug_message'):
+            if pdf_debug:
+                st.code(pdf_debug, language="text")
                 st.code(submission_data['pdf_debug_message'], language=None)
     
     st.markdown("---")
@@ -431,6 +439,7 @@ if submitted:
         progress_bar.progress(80)
         
         pdf_content = None
+        pdf_debug_message = ""
         reference_number = f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         
         # Calculate admin fee
@@ -465,23 +474,21 @@ if submitted:
                     admin_fee=admin_fee
                 )
                 
-                # Store PDF debug message for display
-                submission_data['pdf_debug_message'] = pdf_debug_message
-                
                 if pdf_content:
                     print(f"DEBUG: PDF generated successfully, size: {len(pdf_content)} bytes")
                 else:
                     print("DEBUG: PDF generation returned None")
+                    print(f"DEBUG MESSAGE: {pdf_debug_message}")
                 
             except Exception as e:
                 # Log the error for debugging but continue with submission
                 import traceback
-                error_msg = f"PDF generation failed: {str(e)}\n{traceback.format_exc()}"
-                print(f"ERROR: {error_msg}")  # This will appear in logs
-                # Don't set pdf_content - leave it as None
+                pdf_debug_message = f"PDF generation failed: {str(e)}\n{traceback.format_exc()}"
+                print(f"ERROR: {pdf_debug_message}")
                 pdf_content = None
         else:
             print(f"DEBUG: Quote total £{quote_total:.2f} is >= £20,000, skipping PDF generation")
+            pdf_debug_message = f"PDF not generated because quote total (£{quote_total:.2f}) is >= £20,000"
         
         progress_bar.progress(90)
         
@@ -552,7 +559,8 @@ if submitted:
             'num_habitats': len(area_df),
             'allocation_df': allocation_df,
             'debug_info': debug_info,
-            'pdf_content': pdf_content
+            'pdf_content': pdf_content,
+            'pdf_debug_message': pdf_debug_message
         }
         
         # Rerun to show confirmation screen
