@@ -427,7 +427,8 @@ if submitted:
                     reference_number=reference_number,
                     site_location=postcode or site_address,
                     quote_total=quote_total,
-                    report_df=report_df
+                    report_df=report_df,
+                    admin_fee=admin_fee
                 )
             except Exception as e:
                 pass  # PDF generation failed, but continue
