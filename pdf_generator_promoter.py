@@ -14,7 +14,7 @@ def generate_quote_pdf(client_name: str,
                       site_location: str,
                       quote_total: float,
                       report_df: pd.DataFrame,
-                      admin_fee: float = 500.0) -> bytes:
+                      admin_fee: float = 500.0) -> Optional[bytes]:
     """
     Generate a PDF quote document for a client using HTML table.
     
@@ -27,24 +27,15 @@ def generate_quote_pdf(client_name: str,
         admin_fee: Admin fee amount (£300 for fractional, £500 for small/medium)
     
     Returns:
-        PDF content as bytes
+        PDF content as bytes, or None if PDF generation failed
     """
     try:
         from weasyprint import HTML
-    except ImportError:
-        # Fallback if weasyprint is not available
-        pdf_content = f"""PDF Quote
-Client: {client_name}
-Reference: {reference_number}
-Location: {site_location}
-Habitat Offset Cost: £{quote_total:,.2f}
-Admin Fee: £{admin_fee:,.2f}
-Total: £{(quote_total + admin_fee):,.2f}
-
-Note: Full PDF generation requires weasyprint library.
-Please install with: pip install weasyprint
-""".encode('utf-8')
-        return pdf_content
+        print("DEBUG PDF: weasyprint imported successfully")
+    except ImportError as e:
+        # Return None if weasyprint is not available
+        print(f"ERROR PDF: weasyprint import failed: {e}")
+        return None
     
     # Calculate total with admin fee
     total_with_admin = quote_total + admin_fee
@@ -225,6 +216,13 @@ Please install with: pip install weasyprint
     """
     
     # Generate PDF from HTML
-    pdf_bytes = HTML(string=html_content).write_pdf()
-    
-    return pdf_bytes
+    try:
+        print("DEBUG PDF: Attempting to generate PDF from HTML...")
+        pdf_bytes = HTML(string=html_content).write_pdf()
+        print(f"DEBUG PDF: PDF generated successfully, size: {len(pdf_bytes)} bytes")
+        return pdf_bytes
+    except Exception as e:
+        print(f"ERROR PDF: PDF generation from HTML failed: {e}")
+        import traceback
+        print(f"ERROR PDF: {traceback.format_exc()}")
+        return None

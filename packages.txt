@@ -7,3 +7,6 @@ libfreetype6
 libffi-dev
 shared-mime-info
 fonts-dejavu-core
+libglib2.0-0
+libxml2
+libxslt1.1
