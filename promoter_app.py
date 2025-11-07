@@ -118,6 +118,10 @@ st.title(f"{promoter_name} - BNG Quote Request")
 # Show promoter info
 st.markdown(f"**Logged in as:** {promoter_name}")
 
+# Get discount info for sidebar and later use
+discount_type = promoter_info.get('discount_type', 'no_discount')
+discount_value = promoter_info.get('discount_value', 0)
+
 # Logout button in sidebar
 with st.sidebar:
     st.markdown(f"### {promoter_name}")
