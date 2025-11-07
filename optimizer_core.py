@@ -1389,6 +1389,14 @@ def optimise(demand_df: pd.DataFrame,
     debug_lines.append("📊 Available Options by Demand Habitat:")
     debug_lines.append("-" * 80)
     
+    # Create BANK_KEY to bank_name mapping
+    bank_key_to_name = {}
+    for _, bank in backend["Banks"].iterrows():
+        bkey = sstr(bank.get('BANK_KEY', ''))
+        bname = sstr(bank.get('bank_name', 'Unknown'))
+        if bkey:
+            bank_key_to_name[bkey] = bname
+    
     from collections import defaultdict
     for di, drow in demand_df.iterrows():
         dem_hab = sstr(drow.get("habitat_name", "Unknown"))
@@ -1403,7 +1411,8 @@ def optimise(demand_df: pd.DataFrame,
             # Group by bank and tier
             by_bank_tier = defaultdict(list)
             for opt in dem_options:
-                bank_name = opt.get("bank_name", "Unknown")
+                bank_key = opt.get("BANK_KEY", "Unknown")
+                bank_name = bank_key_to_name.get(bank_key, bank_key)
                 tier = opt.get("tier", "unknown")
                 key = f"{bank_name} ({tier})"
                 by_bank_tier[key].append(opt)
