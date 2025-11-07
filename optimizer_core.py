@@ -532,35 +532,6 @@ def build_dist_levels_map(backend: Dict[str, pd.DataFrame]) -> Dict[str, float]:
 
 
 # ================= Optimization Functions =================
-# These will be added in the next step - they are very large
-# For now, create placeholder stubs
-
-def prepare_options(demand_df: pd.DataFrame,
-                   chosen_size: str,
-                   target_lpa: str, target_nca: str,
-                   lpa_neigh: List[str], nca_neigh: List[str],
-                   lpa_neigh_norm: List[str], nca_neigh_norm: List[str],
-                   backend: Dict[str, pd.DataFrame],
-                   promoter_discount_type: str = None,
-                   promoter_discount_value: float = None) -> Tuple[List[dict], Dict[str, float], Dict[str, str]]:
-    """Prepare options for area habitats - PLACEHOLDER"""
-    # This is a complex function that will need to be extracted from app.py
-    # For now, return empty structures
-    return [], {}, {}
-
-
-def prepare_hedgerow_options(demand_df: pd.DataFrame,
-                             chosen_size: str,
-                             target_lpa: str, target_nca: str,
-                             lpa_neigh: List[str], nca_neigh: List[str],
-                             lpa_neigh_norm: List[str], nca_neigh_norm: List[str],
-                             backend: Dict[str, pd.DataFrame],
-                             promoter_discount_type: str = None,
-                             promoter_discount_value: float = None) -> Tuple[List[dict], Dict[str, float], Dict[str, str]]:
-    """Prepare options for hedgerow habitats - PLACEHOLDER"""
-    return [], {}, {}
-
-
 def prepare_watercourse_options(demand_df: pd.DataFrame,
                                 chosen_size: str,
                                 target_lpa: str, target_nca: str,
