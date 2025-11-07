@@ -1313,7 +1313,14 @@ def optimise(demand_df: pd.DataFrame,
         backend = load_backend()
     
     # Enrich banks with LPA/NCA geography data (in-memory, not persisted)
-    print(f"\n🔍 Enriching {len(backend['Banks'])} banks with geography data...")
+    try:
+        import streamlit as st
+        st.write(f"\n🔍 Enriching {len(backend['Banks'])} banks with geography data...")
+        use_streamlit = True
+    except:
+        print(f"\n🔍 Enriching {len(backend['Banks'])} banks with geography data...")
+        use_streamlit = False
+    
     backend["Banks"] = enrich_banks_with_geography(backend["Banks"])
     
     # Count enriched banks
@@ -1321,11 +1328,20 @@ def optimise(demand_df: pd.DataFrame,
     for _, bank in backend["Banks"].iterrows():
         if sstr(bank.get('lpa_name')) and sstr(bank.get('nca_name')):
             enriched_count += 1
-    print(f"✓ {enriched_count}/{len(backend['Banks'])} banks have LPA/NCA data")
+    
+    msg = f"✓ {enriched_count}/{len(backend['Banks'])} banks have LPA/NCA data"
+    if use_streamlit:
+        st.write(msg)
+    else:
+        print(msg)
     
     # Show which banks are at which tiers for this target
-    print(f"\n📍 Target: LPA='{target_lpa}', NCA='{target_nca}'")
-    print("🏦 Bank tiers for this location:")
+    msg2 = f"\n📍 Target: LPA='{target_lpa}', NCA='{target_nca}'\n🏦 Bank tiers for this location:"
+    if use_streamlit:
+        st.write(msg2)
+    else:
+        print(msg2)
+        
     for _, bank in backend["Banks"].iterrows():
         bank_name = sstr(bank.get('bank_name', 'Unknown'))
         bank_lpa = sstr(bank.get('lpa_name', ''))
@@ -1333,7 +1349,11 @@ def optimise(demand_df: pd.DataFrame,
         if bank_lpa or bank_nca:
             tier = tier_for_bank(bank_lpa, bank_nca, target_lpa, target_nca,
                                 lpa_neigh, nca_neigh, lpa_neigh_norm, nca_neigh_norm)
-            print(f"  • {bank_name:30s} | {tier:8s} | LPA: {bank_lpa[:20]:20s} | NCA: {bank_nca[:20]}")
+            tier_msg = f"  • {bank_name:30s} | {tier:8s} | LPA: {bank_lpa[:20]:20s} | NCA: {bank_nca[:20]}"
+            if use_streamlit:
+                st.text(tier_msg)
+            else:
+                print(tier_msg)
     
     # Pick contract size from total demand (unchanged)
     chosen_size = select_size_for_demand(demand_df, backend["Pricing"])
