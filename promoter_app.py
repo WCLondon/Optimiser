@@ -116,18 +116,7 @@ promoter_info = st.session_state.get('promoter_info', {})
 st.title(f"{promoter_name} - BNG Quote Request")
 
 # Show promoter info
-col1, col2 = st.columns([2, 1])
-with col1:
-    st.markdown(f"**Logged in as:** {promoter_name}")
-with col2:
-    discount_type = promoter_info.get('discount_type', 'no_discount')
-    discount_value = promoter_info.get('discount_value', 0)
-    if discount_type == 'tier_up':
-        st.markdown(f"**Discount:** Tier Up (contract size upgrade)")
-    elif discount_type == 'percentage' and discount_value:
-        st.markdown(f"**Discount:** {discount_value}% off")
-    else:
-        st.markdown(f"**Discount:** None")
+st.markdown(f"**Logged in as:** {promoter_name}")
 
 # Logout button in sidebar
 with st.sidebar:
@@ -165,10 +154,28 @@ if st.session_state.get('submission_complete', False):
         st.write(f"**Location:** {submission_data['location']}")
         st.write(f"**Contact:** {submission_data['contact_email']}")
     with col2:
-        st.write(f"**Total Cost:** £{submission_data['quote_total']:,.2f}")
-        st.write(f"**Admin Fee:** £{submission_data['admin_fee']:,.2f}")
+        st.write(f"**Total Cost:** £{round(submission_data['quote_total']):,.0f}")
+        st.write(f"**Admin Fee:** £{submission_data['admin_fee']:,.0f}")
         st.write(f"**Contract Size:** {submission_data['contract_size']}")
         st.write(f"**Habitats:** {submission_data['num_habitats']}")
+    
+    # PDF download button - show prominently if available
+    if submission_data.get('pdf_content'):
+        st.markdown("---")
+        pdf_data = submission_data['pdf_content']
+        # Check if it's an error message (text) or actual PDF
+        if isinstance(pdf_data, bytes) and not pdf_data.startswith(b'PDF generation error:'):
+            st.download_button(
+                label="📄 Download PDF Quote",
+                data=pdf_data,
+                file_name=f"BNG_Quote_{submission_data['client_name'].replace(' ', '_')}.pdf",
+                mime="application/pdf",
+                type="primary"
+            )
+        else:
+            st.warning("⚠️ PDF generation is not available. Please contact support for a copy of your quote.")
+    
+    st.markdown("---")
     
     # Show allocation detail in expander
     with st.expander("🔍 Technical Details & Debug Information", expanded=False):
@@ -220,17 +227,6 @@ if st.session_state.get('submission_complete', False):
             habitat_summary["Total Units"] = habitat_summary["Total Units"].apply(lambda x: f"{x:.4f}")
             habitat_summary["Total Cost"] = habitat_summary["Total Cost"].apply(lambda x: f"£{x:,.2f}")
             st.dataframe(habitat_summary, use_container_width=True, hide_index=True)
-    
-    # PDF download if available
-    if submission_data.get('pdf_content'):
-        st.markdown("---")
-        st.download_button(
-            label="⬇️ Download Quote PDF",
-            data=submission_data['pdf_content'],
-            file_name=f"BNG_Quote_{submission_data['client_name'].replace(' ', '_')}.pdf",
-            mime="application/pdf",
-            type="primary"
-        )
     
     # Button to submit another quote
     st.markdown("---")
@@ -406,6 +402,7 @@ if submitted:
         from optimizer_core import get_admin_fee_for_contract_size
         admin_fee = get_admin_fee_for_contract_size(contract_size)
         
+        # Generate PDF for quotes under £20,000
         if quote_total < 20000:
             try:
                 report_df, _ = generate_client_report_table_fixed(
@@ -430,8 +427,18 @@ if submitted:
                     report_df=report_df,
                     admin_fee=admin_fee
                 )
+                
+                # Store error message if PDF generation produced fallback text
+                if pdf_content and b'weasyprint' in pdf_content:
+                    # This is the fallback - weasyprint not available
+                    pass  # Still save it so user knows
+                    
             except Exception as e:
-                pass  # PDF generation failed, but continue
+                # Log the error for debugging but continue with submission
+                import traceback
+                error_msg = f"PDF generation failed: {str(e)}\n{traceback.format_exc()}"
+                # Store error in session for display on confirmation screen
+                pdf_content = f"PDF generation error: {error_msg}".encode('utf-8')
         
         progress_bar.progress(90)
         
