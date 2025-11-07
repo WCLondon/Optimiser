@@ -19,8 +19,6 @@ from optimizer_core import (
 from pdf_generator_promoter import generate_quote_pdf
 from email_notification import send_email_notification
 from database import SubmissionsDB
-import time
-import random
 
 # Constants
 LPA_URL = ("https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/"
@@ -246,8 +244,6 @@ if st.session_state.get('submission_complete', False):
 # ================= QUOTE REQUEST FORM =================
 with st.form("quote_form"):
     st.subheader("👤 Client Details")
-    contact_email = st.text_input("Contact Email *", key="email", 
-                                   help="Email address for quote delivery")
     
     col1, col2, col3 = st.columns([1, 2, 2])
     with col1:
@@ -256,6 +252,9 @@ with st.form("quote_form"):
         first_name = st.text_input("First Name *", key="fname")
     with col3:
         surname = st.text_input("Surname *", key="sname")
+    
+    contact_email = st.text_input("Contact Email *", key="email", 
+                                   help="Email address for quote delivery")
     
     st.subheader("📍 Site Location")
     site_address = st.text_input("Site Address", key="addr", 
