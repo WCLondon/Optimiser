@@ -168,25 +168,26 @@ if st.session_state.get('submission_complete', False):
         st.markdown("---")
         pdf_data = submission_data['pdf_content']
         # Check if it's an actual PDF or an error/fallback message
-        if isinstance(pdf_data, bytes):
-            # Check if it's text content (error or fallback) or actual PDF
+        if isinstance(pdf_data, bytes) and len(pdf_data) > 0:
+            # Check if it's text content (error message) or actual PDF binary
             try:
-                # Try to decode as text - if it works, it's not a real PDF
+                # Try to decode as text - if it works and contains error markers, it's not a real PDF
                 text_content = pdf_data.decode('utf-8')
-                # If it contains these markers, it's not a valid PDF
-                if 'PDF generation error:' in text_content or 'weasyprint' in text_content:
-                    st.info("ℹ️ PDF is being generated. A copy will be emailed to you shortly.")
+                # Only show info message if it's explicitly an error
+                if text_content.startswith('PDF generation error:'):
+                    st.error("⚠️ There was an error generating the PDF. Our team has been notified and will email you a copy shortly.")
                 else:
-                    # It's text but might be a simple quote - still show it
+                    # It decoded as text but doesn't have error marker - might be fallback text
+                    # Show as downloadable text file
                     st.download_button(
-                        label="📄 Download PDF Quote",
+                        label="📄 Download Quote",
                         data=pdf_data,
                         file_name=f"BNG_Quote_{submission_data['client_name'].replace(' ', '_')}.txt",
                         mime="text/plain",
                         type="primary"
                     )
             except UnicodeDecodeError:
-                # It's binary data (actual PDF)
+                # It's binary data (actual PDF) - this is what we want
                 st.download_button(
                     label="📄 Download PDF Quote",
                     data=pdf_data,
@@ -195,7 +196,7 @@ if st.session_state.get('submission_complete', False):
                     type="primary"
                 )
         else:
-            st.info("ℹ️ PDF is being generated. A copy will be emailed to you shortly.")
+            st.info("ℹ️ Your quote is being prepared. A copy will be emailed to you shortly.")
     
     st.markdown("---")
     
