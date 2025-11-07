@@ -432,7 +432,7 @@ def enforce_catalog_rules_official(demand_row, supply_row, dist_levels_map_local
     dh = sstr(demand_row.get("habitat_name"))
     sh = sstr(supply_row.get("habitat_name"))
     
-    # Net Gain label can be matched by any supply
+    # Net Gain label can be matched by any supply (trading down is allowed for Net Gain)
     if dh == NET_GAIN_LABEL:
         return True
     
@@ -446,8 +446,10 @@ def enforce_catalog_rules_official(demand_row, supply_row, dist_levels_map_local
     d_dist_name = sstr(demand_row.get("distinctiveness_name"))
     s_dist_name = sstr(supply_row.get("distinctiveness_name"))
     d_key = d_dist_name.lower()
-    d_val = dist_levels_map_local.get(d_dist_name, dist_levels_map_local.get(d_key, -1e9))
-    s_val = dist_levels_map_local.get(s_dist_name, dist_levels_map_local.get(s_dist_name.lower(), -1e9))
+    s_key = s_dist_name.lower()
+    INVALID_DIST_VALUE = -1e9
+    d_val = dist_levels_map_local.get(d_dist_name, dist_levels_map_local.get(d_key, INVALID_DIST_VALUE))
+    s_val = dist_levels_map_local.get(s_dist_name, dist_levels_map_local.get(s_key, INVALID_DIST_VALUE))
     
     # Low distinctiveness demand can be matched by any supply
     if d_key == "low":
