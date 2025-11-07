@@ -261,7 +261,7 @@ if submitted:
                 elif discount_type == 'percentage':
                     st.info(f"🎯 Promoter discount: **{discount_value}% off** unit prices")
             
-            allocation_df, quote_total, contract_size = optimise(
+            allocation_df, quote_total, contract_size, debug_info = optimise(
                 demand_df=area_df,
                 target_lpa=target_lpa,
                 target_nca=target_nca,
@@ -271,7 +271,8 @@ if submitted:
                 nca_neigh_norm=[norm_name(n) for n in nca_neighbors],
                 backend=backend,
                 promoter_discount_type=discount_type,
-                promoter_discount_value=discount_value
+                promoter_discount_value=discount_value,
+                return_debug_info=True
             )
             
             st.success(f"✓ Optimization complete: {len(allocation_df)} allocations")
@@ -280,6 +281,12 @@ if submitted:
         
         # ===== STEP 6.5: Show Allocation Detail =====
         with st.expander("📋 Allocation Detail", expanded=True):
+            # Show debug information first
+            if debug_info:
+                st.markdown("#### 🔍 Bank Enrichment & Tier Classification")
+                st.text(debug_info)
+                st.markdown("---")
+            
             if not allocation_df.empty:
                 # Display key columns for debugging
                 display_cols = [

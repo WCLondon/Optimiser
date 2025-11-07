@@ -1306,22 +1306,19 @@ def optimise(demand_df: pd.DataFrame,
              lpa_neigh_norm: List[str], nca_neigh_norm: List[str],
              backend: Dict[str, pd.DataFrame] = None,
              promoter_discount_type: str = None,
-             promoter_discount_value: float = None
-             ) -> Tuple[pd.DataFrame, float, str]:
+             promoter_discount_value: float = None,
+             return_debug_info: bool = False
+             ) -> Tuple[pd.DataFrame, float, str, Optional[str]]:
     # Load backend if not provided
     if backend is None:
         backend = load_backend()
     
     # Enrich banks with LPA/NCA geography data (in-memory, not persisted)
-    try:
-        import streamlit as st
-        st.write(f"\n🔍 Enriching {len(backend['Banks'])} banks with geography data...")
-        use_streamlit = True
-    except:
-        print(f"\n🔍 Enriching {len(backend['Banks'])} banks with geography data...")
-        use_streamlit = False
-    
     backend["Banks"] = enrich_banks_with_geography(backend["Banks"])
+    
+    # Collect debug information
+    debug_lines = []
+    debug_lines.append(f"🔍 Enriching {len(backend['Banks'])} banks with geography data...")
     
     # Count enriched banks
     enriched_count = 0
@@ -1329,18 +1326,10 @@ def optimise(demand_df: pd.DataFrame,
         if sstr(bank.get('lpa_name')) and sstr(bank.get('nca_name')):
             enriched_count += 1
     
-    msg = f"✓ {enriched_count}/{len(backend['Banks'])} banks have LPA/NCA data"
-    if use_streamlit:
-        st.write(msg)
-    else:
-        print(msg)
-    
-    # Show which banks are at which tiers for this target
-    msg2 = f"\n📍 Target: LPA='{target_lpa}', NCA='{target_nca}'\n🏦 Bank tiers for this location:"
-    if use_streamlit:
-        st.write(msg2)
-    else:
-        print(msg2)
+    debug_lines.append(f"✓ {enriched_count}/{len(backend['Banks'])} banks have LPA/NCA data")
+    debug_lines.append("")
+    debug_lines.append(f"📍 Target: LPA='{target_lpa}', NCA='{target_nca}'")
+    debug_lines.append("🏦 Bank tiers for this location:")
         
     for _, bank in backend["Banks"].iterrows():
         bank_name = sstr(bank.get('bank_name', 'Unknown'))
@@ -1349,11 +1338,7 @@ def optimise(demand_df: pd.DataFrame,
         if bank_lpa or bank_nca:
             tier = tier_for_bank(bank_lpa, bank_nca, target_lpa, target_nca,
                                 lpa_neigh, nca_neigh, lpa_neigh_norm, nca_neigh_norm)
-            tier_msg = f"  • {bank_name:30s} | {tier:8s} | LPA: {bank_lpa[:20]:20s} | NCA: {bank_nca[:20]}"
-            if use_streamlit:
-                st.text(tier_msg)
-            else:
-                print(tier_msg)
+            debug_lines.append(f"  • {bank_name:30s} | {tier:8s} | LPA: {bank_lpa[:30]:30s} | NCA: {bank_nca[:30]}")
     
     # Pick contract size from total demand (unchanged)
     chosen_size = select_size_for_demand(demand_df, backend["Pricing"])
@@ -1628,10 +1613,13 @@ def optimise(demand_df: pd.DataFrame,
                 statusC = pulp.LpStatus[probC.status]
                 if statusC in ("Optimal", "Feasible"):
                     allocC, costC = extract(xC, zC)
-                    return allocC, costC, chosen_size
-                return allocB, costB, chosen_size
+                    debug_info = "\n".join(debug_lines) if return_debug_info else None
+                    return allocC, costC, chosen_size, debug_info
+                debug_info = "\n".join(debug_lines) if return_debug_info else None
+                return allocB, costB, chosen_size, debug_info
 
-        return allocA, costA, chosen_size
+        debug_info = "\n".join(debug_lines) if return_debug_info else None
+        return allocA, costA, chosen_size, debug_info
 
     except Exception:
         # ---- Greedy fallback (unchanged) ----
@@ -1712,6 +1700,9 @@ def optimise(demand_df: pd.DataFrame,
         # Apply minimum delivery enforcement for greedy fallback
         alloc_df = pd.DataFrame(rows)
         alloc_df, total_cost = enforce_minimum_delivery(alloc_df)
-        return alloc_df, float(total_cost), chosen_size
+        
+        debug_info = "\n".join(debug_lines) if return_debug_info else None
+        return alloc_df, float(total_cost), chosen_size, debug_info
+
 
 
