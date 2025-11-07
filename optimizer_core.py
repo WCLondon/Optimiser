@@ -425,37 +425,42 @@ def make_bank_key_col(df: pd.DataFrame, banks_df: pd.DataFrame) -> pd.DataFrame:
 # ================= Trading Rules =================
 def enforce_catalog_rules_official(demand_row, supply_row, dist_levels_map_local, explicit_rule: bool) -> bool:
     """Enforce catalog-based trading rules for area habitats"""
+    # If explicit trading rule exists, allow it
+    if explicit_rule:
+        return True
+    
     dh = sstr(demand_row.get("habitat_name"))
     sh = sstr(supply_row.get("habitat_name"))
     
-    # Net Gain label can be matched by any Low
+    # Net Gain label can be matched by any supply
     if dh == NET_GAIN_LABEL:
-        s_key = sstr(supply_row.get("distinctiveness_name")).lower()
-        return s_key == "low"
+        return True
     
     # Exact habitat match always allowed
     if dh == sh:
         return True
     
     # Check distinctiveness trading rules
-    d_key = sstr(demand_row.get("distinctiveness_name")).lower()
-    s_key = sstr(supply_row.get("distinctiveness_name")).lower()
+    d_group = sstr(demand_row.get("broader_type"))
+    s_group = sstr(supply_row.get("broader_type"))
+    d_dist_name = sstr(demand_row.get("distinctiveness_name"))
+    s_dist_name = sstr(supply_row.get("distinctiveness_name"))
+    d_key = d_dist_name.lower()
+    d_val = dist_levels_map_local.get(d_dist_name, dist_levels_map_local.get(d_key, -1e9))
+    s_val = dist_levels_map_local.get(s_dist_name, dist_levels_map_local.get(s_dist_name.lower(), -1e9))
     
-    # Same-or-higher distinctiveness
-    if d_key not in dist_levels_map_local or s_key not in dist_levels_map_local:
-        return False
-    if dist_levels_map_local[s_key] < dist_levels_map_local[d_key]:
-        return False
+    # Low distinctiveness demand can be matched by any supply
+    if d_key == "low":
+        return True
     
-    # Special case: Low/Net Gain can be matched by any Low
-    if d_key == "low" or dh == NET_GAIN_LABEL:
-        return s_key == "low"
+    # Medium distinctiveness: same broader_type OR higher distinctiveness
+    if d_key == "medium":
+        same_group = (d_group and s_group and d_group == s_group)
+        higher_distinctiveness = (s_val > d_val)
+        return bool(same_group or higher_distinctiveness)
     
-    # For other distinctiveness levels, require exact habitat match or explicit rule
-    if not explicit_rule:
-        return dh == sh
-    
-    return True
+    # High / Very High: require exact habitat match
+    return sh == dh
 
 
 def enforce_hedgerow_rules(demand_row, supply_row, dist_levels_map_local) -> bool:
