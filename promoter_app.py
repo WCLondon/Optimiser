@@ -156,7 +156,7 @@ with st.form("quote_form"):
                          help="Any additional information about the project")
     
     st.subheader("📄 BNG Metric File")
-    metric_file = st.file_uploader("Upload Metric File *", type=['xlsx', 'xlsb'], key="metric",
+    metric_file = st.file_uploader("Upload Metric File *", type=['xlsx', 'xlsm', 'xlsb'], key="metric",
                                     help="Upload the BNG Metric 4.0 file for this project")
     
     st.markdown("---")
