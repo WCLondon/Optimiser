@@ -29,12 +29,18 @@ def generate_quote_pdf(client_name: str,
     Returns:
         PDF content as bytes, or None if PDF generation failed
     """
+    print(f"DEBUG PDF: Starting PDF generation for {client_name}")
+    print(f"DEBUG PDF: Report DF shape: {report_df.shape if report_df is not None else 'None'}")
+    print(f"DEBUG PDF: Report DF columns: {list(report_df.columns) if report_df is not None else 'None'}")
+    
     try:
         from weasyprint import HTML
         print("DEBUG PDF: weasyprint imported successfully")
     except ImportError as e:
         # Return None if weasyprint is not available
         print(f"ERROR PDF: weasyprint import failed: {e}")
+        import traceback
+        print(f"ERROR PDF traceback: {traceback.format_exc()}")
         return None
     
     # Calculate total with admin fee
