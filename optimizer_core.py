@@ -7,6 +7,7 @@ imports without triggering Streamlit UI code execution.
 
 import json
 import re
+import sys
 import time
 from datetime import datetime
 from typing import Dict, Any, List, Tuple, Optional
@@ -22,6 +23,7 @@ import repo
 ADMIN_FEE_GBP = 500.0  # Standard admin fee
 ADMIN_FEE_FRACTIONAL_GBP = 300.0  # Admin fee for fractional quotes
 SINGLE_BANK_SOFT_PCT = 0.01
+GEOCODING_RATE_LIMIT_SECONDS = 0.15  # Rate limit between API calls
 UA = {"User-Agent": "WildCapital-Optimiser/1.0 (+contact@example.com)"}
 LEDGER_AREA = "area"
 LEDGER_HEDGE = "hedgerow"
@@ -176,6 +178,96 @@ def get_lpa_nca_for_point(lat: float, lon: float) -> Tuple[str, str]:
     lpa = sstr((arcgis_point_query(LPA_URL, lat, lon, "LAD24NM").get("attributes") or {}).get("LAD24NM"))
     nca = sstr((arcgis_point_query(NCA_URL, lat, lon, "NCA_Name").get("attributes") or {}).get("NCA_Name"))
     return lpa, nca
+
+
+def enrich_banks_with_geography(banks_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Geocode banks and add lpa_name/nca_name columns.
+    This matches app.py's enrich_banks_geography() function.
+    Only geocodes banks with empty lpa_name or nca_name.
+    
+    Args:
+        banks_df: DataFrame with banks data
+        
+    Returns:
+        DataFrame with enriched banks data including lpa_name and nca_name
+        
+    Side effects:
+        - Makes API calls to ArcGIS services for LPA/NCA lookup
+        - May make API calls to postcodes.io if lat/lon not available
+        - Rate limits API calls with 0.15s delay after successful geocoding
+        - Writes warnings to stderr for failed geocoding attempts
+        - Does NOT persist changes to database (in-memory only)
+    """
+    df = banks_df.copy()
+    
+    # Ensure columns exist
+    if "lpa_name" not in df.columns:
+        df["lpa_name"] = ""
+    if "nca_name" not in df.columns:
+        df["nca_name"] = ""
+    
+    enriched_banks = []
+    
+    # Note: Using iterrows() to match app.py's enrich_banks_geography() logic exactly.
+    # This ensures consistent behavior between app.py and optimizer_core.py.
+    # Banks are typically few in number (< 100), so performance impact is minimal.
+    for idx, row in df.iterrows():
+        # Convert to dict for easier manipulation
+        bank = row.to_dict()
+        
+        # Check if already has geography data (using sstr to handle empty strings/NaN)
+        lpa_now = sstr(bank.get("lpa_name"))
+        nca_now = sstr(bank.get("nca_name"))
+        
+        if lpa_now and nca_now:
+            # Already enriched, skip
+            enriched_banks.append(bank)
+            continue
+        
+        # Try to get lat/lon coordinates for this bank
+        # Priority: 1) existing lat/lon, 2) geocode postcode, 3) skip
+        lat, lon = None, None
+        
+        # First check if bank already has lat/lon coordinates
+        if "lat" in bank and "lon" in bank:
+            try:
+                lat = float(bank["lat"])
+                lon = float(bank["lon"])
+                if not (np.isfinite(lat) and np.isfinite(lon)):
+                    lat, lon = None, None
+            except (ValueError, TypeError):
+                lat, lon = None, None
+        
+        # If no lat/lon, try geocoding the postcode
+        if lat is None or lon is None:
+            postcode = sstr(bank.get('postcode'))
+            if postcode:
+                try:
+                    lat, lon, _ = get_postcode_info(postcode)
+                except Exception as e:
+                    bank_name = sstr(bank.get('bank_name', 'Unknown'))
+                    sys.stderr.write(f"Warning: Failed to geocode bank {bank_name}: {e}\n")
+        
+        # If we have coordinates, look up LPA/NCA
+        if lat and lon:
+            try:
+                lpa_name, nca_name = get_lpa_nca_for_point(lat, lon)
+                # Only update if empty
+                if not lpa_now:
+                    bank['lpa_name'] = lpa_name
+                if not nca_now:
+                    bank['nca_name'] = nca_name
+                
+                # Rate limit only after successful API calls
+                time.sleep(GEOCODING_RATE_LIMIT_SECONDS)
+            except Exception as e:
+                bank_name = sstr(bank.get('bank_name', 'Unknown'))
+                sys.stderr.write(f"Warning: Failed to lookup LPA/NCA for bank {bank_name}: {e}\n")
+        
+        enriched_banks.append(bank)
+    
+    return pd.DataFrame(enriched_banks)
 
 
 # ================= Ledger helpers =================
@@ -440,35 +532,6 @@ def build_dist_levels_map(backend: Dict[str, pd.DataFrame]) -> Dict[str, float]:
 
 
 # ================= Optimization Functions =================
-# These will be added in the next step - they are very large
-# For now, create placeholder stubs
-
-def prepare_options(demand_df: pd.DataFrame,
-                   chosen_size: str,
-                   target_lpa: str, target_nca: str,
-                   lpa_neigh: List[str], nca_neigh: List[str],
-                   lpa_neigh_norm: List[str], nca_neigh_norm: List[str],
-                   backend: Dict[str, pd.DataFrame],
-                   promoter_discount_type: str = None,
-                   promoter_discount_value: float = None) -> Tuple[List[dict], Dict[str, float], Dict[str, str]]:
-    """Prepare options for area habitats - PLACEHOLDER"""
-    # This is a complex function that will need to be extracted from app.py
-    # For now, return empty structures
-    return [], {}, {}
-
-
-def prepare_hedgerow_options(demand_df: pd.DataFrame,
-                             chosen_size: str,
-                             target_lpa: str, target_nca: str,
-                             lpa_neigh: List[str], nca_neigh: List[str],
-                             lpa_neigh_norm: List[str], nca_neigh_norm: List[str],
-                             backend: Dict[str, pd.DataFrame],
-                             promoter_discount_type: str = None,
-                             promoter_discount_value: float = None) -> Tuple[List[dict], Dict[str, float], Dict[str, str]]:
-    """Prepare options for hedgerow habitats - PLACEHOLDER"""
-    return [], {}, {}
-
-
 def prepare_watercourse_options(demand_df: pd.DataFrame,
                                 chosen_size: str,
                                 target_lpa: str, target_nca: str,
@@ -647,40 +710,6 @@ def prepare_watercourse_options(demand_df: pd.DataFrame,
             stock_bankkey[stock_id] = bank_key
 
     return options, stock_caps, stock_bankkey
-
-
-def optimise(demand_df: pd.DataFrame,
-             target_lpa: str, target_nca: str,
-             lpa_neigh: List[str], nca_neigh: List[str],
-             lpa_neigh_norm: List[str], nca_neigh_norm: List[str],
-             backend: Dict[str, pd.DataFrame] = None,
-             promoter_discount_type: str = None,
-             promoter_discount_value: float = None) -> Tuple[pd.DataFrame, float, str]:
-    """
-    Run PuLP optimization - MAIN OPTIMIZER
-    
-    Args:
-        demand_df: DataFrame with habitat requirements (habitat_name, units_required)
-        target_lpa: Target LPA name
-        target_nca: Target NCA name
-        lpa_neigh: List of neighboring LPA names
-        nca_neigh: List of neighboring NCA names
-        lpa_neigh_norm: Normalized neighboring LPA names
-        nca_neigh_norm: Normalized neighboring NCA names
-        backend: Backend data dictionary (if None, will load from database)
-        promoter_discount_type: Optional promoter discount type ('tier_up', 'percentage', 'no_discount')
-        promoter_discount_value: Optional promoter discount value
-    
-    Returns:
-        Tuple of (allocation_df, total_cost, status_message)
-    """
-    # Load backend if not provided
-    if backend is None:
-        backend = load_backend()
-    
-    # PLACEHOLDER: Full optimization logic needs to be extracted from app.py
-    # This is a complex function with ~400 lines of code
-    raise NotImplementedError("optimise function needs full implementation - placeholder only")
 
 
 def generate_client_report_table_fixed(alloc_df: pd.DataFrame, 
@@ -1248,14 +1277,39 @@ def optimise(demand_df: pd.DataFrame,
              lpa_neigh_norm: List[str], nca_neigh_norm: List[str],
              backend: Dict[str, pd.DataFrame] = None,
              promoter_discount_type: str = None,
-             promoter_discount_value: float = None
-             ) -> Tuple[pd.DataFrame, float, str]:
+             promoter_discount_value: float = None,
+             return_debug_info: bool = False
+             ) -> Tuple[pd.DataFrame, float, str, Optional[str]]:
     # Load backend if not provided
     if backend is None:
         backend = load_backend()
     
-    # Geocode and persist banks with missing LPA/NCA
-    geocode_and_persist_banks(backend)
+    # Enrich banks with LPA/NCA geography data (in-memory, not persisted)
+    backend["Banks"] = enrich_banks_with_geography(backend["Banks"])
+    
+    # Collect debug information
+    debug_lines = []
+    debug_lines.append(f"🔍 Enriching {len(backend['Banks'])} banks with geography data...")
+    
+    # Count enriched banks
+    enriched_count = 0
+    for _, bank in backend["Banks"].iterrows():
+        if sstr(bank.get('lpa_name')) and sstr(bank.get('nca_name')):
+            enriched_count += 1
+    
+    debug_lines.append(f"✓ {enriched_count}/{len(backend['Banks'])} banks have LPA/NCA data")
+    debug_lines.append("")
+    debug_lines.append(f"📍 Target: LPA='{target_lpa}', NCA='{target_nca}'")
+    debug_lines.append("🏦 Bank tiers for this location:")
+        
+    for _, bank in backend["Banks"].iterrows():
+        bank_name = sstr(bank.get('bank_name', 'Unknown'))
+        bank_lpa = sstr(bank.get('lpa_name', ''))
+        bank_nca = sstr(bank.get('nca_name', ''))
+        if bank_lpa or bank_nca:
+            tier = tier_for_bank(bank_lpa, bank_nca, target_lpa, target_nca,
+                                lpa_neigh, nca_neigh, lpa_neigh_norm, nca_neigh_norm)
+            debug_lines.append(f"  • {bank_name:30s} | {tier:8s} | LPA: {bank_lpa[:30]:30s} | NCA: {bank_nca[:30]}")
     
     # Pick contract size from total demand (unchanged)
     chosen_size = select_size_for_demand(demand_df, backend["Pricing"])
@@ -1300,6 +1354,45 @@ def optimise(demand_df: pd.DataFrame,
 
     if not options:
         raise RuntimeError("No feasible options. Check prices/stock/rules or location tiers.")
+    
+    # Add options summary to debug output (visible in UI)
+    debug_lines.append("")
+    debug_lines.append("📊 Available Options by Demand Habitat:")
+    debug_lines.append("-" * 80)
+    
+    # Create BANK_KEY to bank_name mapping
+    bank_key_to_name = {}
+    for _, bank in backend["Banks"].iterrows():
+        bkey = sstr(bank.get('BANK_KEY', ''))
+        bname = sstr(bank.get('bank_name', 'Unknown'))
+        if bkey:
+            bank_key_to_name[bkey] = bname
+    
+    from collections import defaultdict
+    for di, drow in demand_df.iterrows():
+        dem_hab = sstr(drow.get("habitat_name", "Unknown"))
+        dem_units = float(drow.get("units_required", 0))
+        debug_lines.append(f"\n{di}. {dem_hab} (need {dem_units:.4f} units)")
+        
+        # Find options for this demand
+        dem_options = [opt for opt in options if opt["demand_idx"] == di]
+        if not dem_options:
+            debug_lines.append(f"   ❌ NO OPTIONS AVAILABLE")
+        else:
+            # Group by bank and tier
+            by_bank_tier = defaultdict(list)
+            for opt in dem_options:
+                bank_key = opt.get("BANK_KEY", "Unknown")
+                bank_name = bank_key_to_name.get(bank_key, bank_key)
+                tier = opt.get("tier", "unknown")
+                key = f"{bank_name} ({tier})"
+                by_bank_tier[key].append(opt)
+            
+            for key in sorted(by_bank_tier.keys()):
+                opts = by_bank_tier[key]
+                opt_types = set(o.get("type", "unknown") for o in opts)
+                avg_price = sum(o.get("unit_price", 0) for o in opts) / len(opts)
+                debug_lines.append(f"   • {key:45s} | {len(opts):2d} opts | £{avg_price:6,.0f}/unit | {', '.join(opt_types)}")
 
     # ---- Map options to each demand row ----
     idx_by_dem: Dict[int, List[int]] = {}
@@ -1475,10 +1568,13 @@ def optimise(demand_df: pd.DataFrame,
                 statusC = pulp.LpStatus[probC.status]
                 if statusC in ("Optimal", "Feasible"):
                     allocC, costC = extract(xC, zC)
-                    return allocC, costC, chosen_size
-                return allocB, costB, chosen_size
+                    debug_info = "\n".join(debug_lines) if return_debug_info else None
+                    return allocC, costC, chosen_size, debug_info
+                debug_info = "\n".join(debug_lines) if return_debug_info else None
+                return allocB, costB, chosen_size, debug_info
 
-        return allocA, costA, chosen_size
+        debug_info = "\n".join(debug_lines) if return_debug_info else None
+        return allocA, costA, chosen_size, debug_info
 
     except Exception:
         # ---- Greedy fallback (unchanged) ----
@@ -1559,6 +1655,9 @@ def optimise(demand_df: pd.DataFrame,
         # Apply minimum delivery enforcement for greedy fallback
         alloc_df = pd.DataFrame(rows)
         alloc_df, total_cost = enforce_minimum_delivery(alloc_df)
-        return alloc_df, float(total_cost), chosen_size
+        
+        debug_info = "\n".join(debug_lines) if return_debug_info else None
+        return alloc_df, float(total_cost), chosen_size, debug_info
+
 
 
