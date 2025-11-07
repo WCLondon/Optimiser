@@ -430,7 +430,7 @@ def enforce_catalog_rules_official(demand_row, supply_row, dist_levels_map_local
     
     # Net Gain label can be matched by any Low
     if dh == NET_GAIN_LABEL:
-        s_key = sstr(supply_row.get("distinctiveness_key")).lower()
+        s_key = sstr(supply_row.get("distinctiveness_name")).lower()
         return s_key == "low"
     
     # Exact habitat match always allowed
@@ -438,8 +438,8 @@ def enforce_catalog_rules_official(demand_row, supply_row, dist_levels_map_local
         return True
     
     # Check distinctiveness trading rules
-    d_key = sstr(demand_row.get("distinctiveness_key")).lower()
-    s_key = sstr(supply_row.get("distinctiveness_key")).lower()
+    d_key = sstr(demand_row.get("distinctiveness_name")).lower()
+    s_key = sstr(supply_row.get("distinctiveness_name")).lower()
     
     # Same-or-higher distinctiveness
     if d_key not in dist_levels_map_local or s_key not in dist_levels_map_local:
@@ -472,8 +472,8 @@ def enforce_hedgerow_rules(demand_row, supply_row, dist_levels_map_local) -> boo
         return True
     
     # Check distinctiveness
-    d_key = sstr(demand_row.get("distinctiveness_key")).lower()
-    s_key = sstr(supply_row.get("distinctiveness_key")).lower()
+    d_key = sstr(demand_row.get("distinctiveness_name")).lower()
+    s_key = sstr(supply_row.get("distinctiveness_name")).lower()
     
     if d_key not in dist_levels_map_local or s_key not in dist_levels_map_local:
         return False
@@ -497,8 +497,8 @@ def enforce_watercourse_rules(demand_row, supply_row, dist_levels_map_local) -> 
         return True
     
     # Check distinctiveness
-    d_key = sstr(demand_row.get("distinctiveness_key")).lower()
-    s_key = sstr(supply_row.get("distinctiveness_key")).lower()
+    d_key = sstr(demand_row.get("distinctiveness_name")).lower()
+    s_key = sstr(supply_row.get("distinctiveness_name")).lower()
     
     if d_key not in dist_levels_map_local or s_key not in dist_levels_map_local:
         return False
