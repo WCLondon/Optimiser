@@ -163,40 +163,46 @@ if st.session_state.get('submission_complete', False):
         st.write(f"**Contract Size:** {submission_data['contract_size']}")
         st.write(f"**Habitats:** {submission_data['num_habitats']}")
     
-    # PDF download button - show prominently if available
-    if submission_data.get('pdf_content'):
+    # PDF download button - show prominently for quotes under £20,000
+    quote_total_val = submission_data.get('quote_total', 0)
+    if quote_total_val < 20000:
         st.markdown("---")
-        pdf_data = submission_data['pdf_content']
-        # Check if it's an actual PDF or an error/fallback message
-        if isinstance(pdf_data, bytes) and len(pdf_data) > 0:
-            # Check if it's text content (error message) or actual PDF binary
-            try:
-                # Try to decode as text - if it works and contains error markers, it's not a real PDF
-                text_content = pdf_data.decode('utf-8')
-                # Only show info message if it's explicitly an error
-                if text_content.startswith('PDF generation error:'):
-                    st.error("⚠️ There was an error generating the PDF. Our team has been notified and will email you a copy shortly.")
-                else:
-                    # It decoded as text but doesn't have error marker - might be fallback text
-                    # Show as downloadable text file
+        
+        pdf_data = submission_data.get('pdf_content')
+        if pdf_data:
+            # Check if it's an actual PDF or an error/fallback message
+            if isinstance(pdf_data, bytes) and len(pdf_data) > 0:
+                # Check if it's text content (error message) or actual PDF binary
+                try:
+                    # Try to decode as text - if it works and contains error markers, it's not a real PDF
+                    text_content = pdf_data.decode('utf-8')
+                    # Only show error message if it's explicitly an error
+                    if text_content.startswith('PDF generation error:'):
+                        st.error("⚠️ There was an error generating the PDF. Our team has been notified and will email you a copy shortly.")
+                    else:
+                        # It decoded as text but doesn't have error marker - might be fallback text
+                        # Show as downloadable text file
+                        st.download_button(
+                            label="📄 Download Quote",
+                            data=pdf_data,
+                            file_name=f"BNG_Quote_{submission_data['client_name'].replace(' ', '_')}.txt",
+                            mime="text/plain",
+                            type="primary"
+                        )
+                except UnicodeDecodeError:
+                    # It's binary data (actual PDF) - this is what we want!
                     st.download_button(
-                        label="📄 Download Quote",
+                        label="📄 Download PDF Quote",
                         data=pdf_data,
-                        file_name=f"BNG_Quote_{submission_data['client_name'].replace(' ', '_')}.txt",
-                        mime="text/plain",
+                        file_name=f"BNG_Quote_{submission_data['client_name'].replace(' ', '_')}.pdf",
+                        mime="application/pdf",
                         type="primary"
                     )
-            except UnicodeDecodeError:
-                # It's binary data (actual PDF) - this is what we want
-                st.download_button(
-                    label="📄 Download PDF Quote",
-                    data=pdf_data,
-                    file_name=f"BNG_Quote_{submission_data['client_name'].replace(' ', '_')}.pdf",
-                    mime="application/pdf",
-                    type="primary"
-                )
+            else:
+                st.warning("⚠️ PDF generation encountered an issue. A copy will be emailed to you shortly.")
         else:
-            st.info("ℹ️ Your quote is being prepared. A copy will be emailed to you shortly.")
+            # No PDF content at all - show informative message
+            st.warning("⚠️ PDF could not be generated. Please contact support or check the logs. A copy will be emailed to you.")
     
     st.markdown("---")
     
@@ -428,6 +434,7 @@ if submitted:
         # Generate PDF for quotes under £20,000
         if quote_total < 20000:
             try:
+                print(f"DEBUG: Generating PDF for quote total £{quote_total:.2f}")
                 report_df, _ = generate_client_report_table_fixed(
                     alloc_df=allocation_df,
                     demand_df=area_df,
@@ -442,6 +449,7 @@ if submitted:
                     promoter_discount_value=discount_value
                 )
                 
+                print(f"DEBUG: Report table generated successfully, generating PDF...")
                 pdf_content = generate_quote_pdf(
                     client_name=client_name,
                     reference_number=reference_number,
@@ -451,13 +459,20 @@ if submitted:
                     admin_fee=admin_fee
                 )
                 
+                if pdf_content:
+                    print(f"DEBUG: PDF generated successfully, size: {len(pdf_content)} bytes")
+                else:
+                    print("DEBUG: PDF generation returned None")
+                
             except Exception as e:
                 # Log the error for debugging but continue with submission
                 import traceback
                 error_msg = f"PDF generation failed: {str(e)}\n{traceback.format_exc()}"
-                print(error_msg)  # This will appear in logs
+                print(f"ERROR: {error_msg}")  # This will appear in logs
                 # Don't set pdf_content - leave it as None
                 pdf_content = None
+        else:
+            print(f"DEBUG: Quote total £{quote_total:.2f} is >= £20,000, skipping PDF generation")
         
         progress_bar.progress(90)
         
