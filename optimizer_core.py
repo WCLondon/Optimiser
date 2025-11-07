@@ -193,7 +193,8 @@ def enrich_banks_with_geography(banks_df: pd.DataFrame) -> pd.DataFrame:
         DataFrame with enriched banks data including lpa_name and nca_name
         
     Side effects:
-        - Makes API calls to postcodes.io and ArcGIS services for geocoding
+        - Makes API calls to ArcGIS services for LPA/NCA lookup
+        - May make API calls to postcodes.io if lat/lon not available
         - Rate limits API calls with 0.15s delay after successful geocoding
         - Writes warnings to stderr for failed geocoding attempts
         - Does NOT persist changes to database (in-memory only)
@@ -224,18 +225,33 @@ def enrich_banks_with_geography(banks_df: pd.DataFrame) -> pd.DataFrame:
             enriched_banks.append(bank)
             continue
         
-        # Try to get postcode
-        postcode = sstr(bank.get('postcode'))
-        if not postcode:
-            # No postcode, can't geocode
-            enriched_banks.append(bank)
-            continue
+        # Try to get lat/lon coordinates for this bank
+        # Priority: 1) existing lat/lon, 2) geocode postcode, 3) skip
+        lat, lon = None, None
         
-        try:
-            # Geocode postcode to lat/lon
-            lat, lon, _ = get_postcode_info(postcode)
-            if lat and lon:
-                # Look up LPA/NCA
+        # First check if bank already has lat/lon coordinates
+        if "lat" in bank and "lon" in bank:
+            try:
+                lat = float(bank["lat"])
+                lon = float(bank["lon"])
+                if not (np.isfinite(lat) and np.isfinite(lon)):
+                    lat, lon = None, None
+            except (ValueError, TypeError):
+                lat, lon = None, None
+        
+        # If no lat/lon, try geocoding the postcode
+        if lat is None or lon is None:
+            postcode = sstr(bank.get('postcode'))
+            if postcode:
+                try:
+                    lat, lon, _ = get_postcode_info(postcode)
+                except Exception as e:
+                    bank_name = sstr(bank.get('bank_name', 'Unknown'))
+                    sys.stderr.write(f"Warning: Failed to geocode bank {bank_name}: {e}\n")
+        
+        # If we have coordinates, look up LPA/NCA
+        if lat and lon:
+            try:
                 lpa_name, nca_name = get_lpa_nca_for_point(lat, lon)
                 # Only update if empty
                 if not lpa_now:
@@ -245,9 +261,9 @@ def enrich_banks_with_geography(banks_df: pd.DataFrame) -> pd.DataFrame:
                 
                 # Rate limit only after successful API calls
                 time.sleep(GEOCODING_RATE_LIMIT_SECONDS)
-        except Exception as e:
-            bank_name = sstr(bank.get('bank_name', 'Unknown'))
-            sys.stderr.write(f"Warning: Failed to geocode bank {bank_name}: {e}\n")
+            except Exception as e:
+                bank_name = sstr(bank.get('bank_name', 'Unknown'))
+                sys.stderr.write(f"Warning: Failed to lookup LPA/NCA for bank {bank_name}: {e}\n")
         
         enriched_banks.append(bank)
     
