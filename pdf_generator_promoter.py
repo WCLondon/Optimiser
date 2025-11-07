@@ -7,7 +7,6 @@ HTML table styling as app.py for consistency.
 
 from typing import Optional
 import pandas as pd
-from io import BytesIO
 
 
 def generate_quote_pdf(client_name: str,
@@ -31,7 +30,7 @@ def generate_quote_pdf(client_name: str,
         PDF content as bytes
     """
     try:
-        from weasyprint import HTML, CSS
+        from weasyprint import HTML
     except ImportError:
         # Fallback if weasyprint is not available
         pdf_content = f"""PDF Quote
@@ -50,10 +49,9 @@ Please install with: pip install weasyprint
     # Calculate total with admin fee
     total_with_admin = quote_total + admin_fee
     
-    # Build HTML table from report_df
+    # Process report_df rows and generate HTML table rows with section headers
     html_rows = ""
     
-    # Get unique habitat types from report_df
     if not report_df.empty:
         # Check if we have section indicators in the dataframe
         current_section = None
@@ -85,8 +83,8 @@ Please install with: pip install weasyprint
             """
     
     # Calculate totals
-    total_demand_units = report_df.get("# Units", pd.Series()).sum() if "# Units" in report_df.columns else 0
-    total_supply_units = report_df.get("# Units_Supply", pd.Series()).sum() if "# Units_Supply" in report_df.columns else 0
+    total_demand_units = report_df['# Units'].sum() if '# Units' in report_df.columns else 0
+    total_supply_units = report_df['# Units_Supply'].sum() if '# Units_Supply' in report_df.columns else 0
     
     # Format units with up to 3 decimal places
     def format_units_total(value):
