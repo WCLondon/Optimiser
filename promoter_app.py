@@ -200,9 +200,15 @@ if st.session_state.get('submission_complete', False):
                     )
             else:
                 st.warning("⚠️ PDF generation encountered an issue. A copy will be emailed to you shortly.")
+                # Show debug information
+                if submission_data.get('pdf_debug_message'):
+                    st.code(submission_data['pdf_debug_message'], language=None)
         else:
             # No PDF content at all - show informative message
             st.warning("⚠️ PDF could not be generated. Please contact support or check the logs. A copy will be emailed to you.")
+            # Show debug information
+            if submission_data.get('pdf_debug_message'):
+                st.code(submission_data['pdf_debug_message'], language=None)
     
     st.markdown("---")
     
@@ -450,7 +456,7 @@ if submitted:
                 )
                 
                 print(f"DEBUG: Report table generated successfully, generating PDF...")
-                pdf_content = generate_quote_pdf(
+                pdf_content, pdf_debug_message = generate_quote_pdf(
                     client_name=client_name,
                     reference_number=reference_number,
                     site_location=postcode or site_address,
@@ -458,6 +464,9 @@ if submitted:
                     report_df=report_df,
                     admin_fee=admin_fee
                 )
+                
+                # Store PDF debug message for display
+                submission_data['pdf_debug_message'] = pdf_debug_message
                 
                 if pdf_content:
                     print(f"DEBUG: PDF generated successfully, size: {len(pdf_content)} bytes")

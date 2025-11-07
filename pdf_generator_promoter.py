@@ -14,7 +14,7 @@ def generate_quote_pdf(client_name: str,
                       site_location: str,
                       quote_total: float,
                       report_df: pd.DataFrame,
-                      admin_fee: float = 500.0) -> Optional[bytes]:
+                      admin_fee: float = 500.0) -> tuple[Optional[bytes], str]:
     """
     Generate a PDF quote document for a client using HTML table.
     
@@ -27,21 +27,31 @@ def generate_quote_pdf(client_name: str,
         admin_fee: Admin fee amount (£300 for fractional, £500 for small/medium)
     
     Returns:
-        PDF content as bytes, or None if PDF generation failed
+        Tuple of (PDF content as bytes or None if failed, debug message string)
     """
+    debug_messages = []
+    debug_messages.append(f"Starting PDF generation for {client_name}")
+    debug_messages.append(f"Report DF shape: {report_df.shape if report_df is not None else 'None'}")
+    debug_messages.append(f"Report DF columns: {list(report_df.columns) if report_df is not None else 'None'}")
+    
     print(f"DEBUG PDF: Starting PDF generation for {client_name}")
     print(f"DEBUG PDF: Report DF shape: {report_df.shape if report_df is not None else 'None'}")
     print(f"DEBUG PDF: Report DF columns: {list(report_df.columns) if report_df is not None else 'None'}")
     
     try:
         from weasyprint import HTML
+        debug_messages.append("✓ weasyprint imported successfully")
         print("DEBUG PDF: weasyprint imported successfully")
     except ImportError as e:
         # Return None if weasyprint is not available
+        error_msg = f"✗ weasyprint import failed: {e}"
+        debug_messages.append(error_msg)
         print(f"ERROR PDF: weasyprint import failed: {e}")
         import traceback
-        print(f"ERROR PDF traceback: {traceback.format_exc()}")
-        return None
+        traceback_str = traceback.format_exc()
+        debug_messages.append(f"Traceback:\n{traceback_str}")
+        print(f"ERROR PDF traceback: {traceback_str}")
+        return None, "\n".join(debug_messages)
     
     # Calculate total with admin fee
     total_with_admin = quote_total + admin_fee
@@ -223,12 +233,18 @@ def generate_quote_pdf(client_name: str,
     
     # Generate PDF from HTML
     try:
+        debug_messages.append("Attempting to generate PDF from HTML...")
         print("DEBUG PDF: Attempting to generate PDF from HTML...")
         pdf_bytes = HTML(string=html_content).write_pdf()
+        debug_messages.append(f"✓ PDF generated successfully, size: {len(pdf_bytes)} bytes")
         print(f"DEBUG PDF: PDF generated successfully, size: {len(pdf_bytes)} bytes")
-        return pdf_bytes
+        return pdf_bytes, "\n".join(debug_messages)
     except Exception as e:
+        error_msg = f"✗ PDF generation from HTML failed: {e}"
+        debug_messages.append(error_msg)
         print(f"ERROR PDF: PDF generation from HTML failed: {e}")
         import traceback
-        print(f"ERROR PDF: {traceback.format_exc()}")
-        return None
+        traceback_str = traceback.format_exc()
+        debug_messages.append(f"Traceback:\n{traceback_str}")
+        print(f"ERROR PDF: {traceback_str}")
+        return None, "\n".join(debug_messages)
