@@ -1384,27 +1384,23 @@ def optimise(demand_df: pd.DataFrame,
     if not options:
         raise RuntimeError("No feasible options. Check prices/stock/rules or location tiers.")
     
-    # DEBUG: Log options summary by bank and tier
-    sys.stderr.write(f"\n{'='*80}\n")
-    sys.stderr.write(f"DEBUG: Generated Options Summary\n")
-    sys.stderr.write(f"{'='*80}\n")
-    sys.stderr.write(f"Total options: {len(options)}\n\n")
+    # Add options summary to debug output (visible in UI)
+    debug_lines.append("")
+    debug_lines.append("📊 Available Options by Demand Habitat:")
+    debug_lines.append("-" * 80)
     
-    # First, show demand habitats and their available options
-    sys.stderr.write(f"DEMAND HABITATS AND AVAILABLE OPTIONS:\n")
-    sys.stderr.write(f"{'-'*80}\n")
+    from collections import defaultdict
     for di, drow in demand_df.iterrows():
         dem_hab = sstr(drow.get("habitat_name", "Unknown"))
         dem_units = float(drow.get("units_required", 0))
-        sys.stderr.write(f"\n{di}. {dem_hab} (need {dem_units:.4f} units)\n")
+        debug_lines.append(f"\n{di}. {dem_hab} (need {dem_units:.4f} units)")
         
         # Find options for this demand
         dem_options = [opt for opt in options if opt["demand_idx"] == di]
         if not dem_options:
-            sys.stderr.write(f"   ❌ NO OPTIONS AVAILABLE\n")
+            debug_lines.append(f"   ❌ NO OPTIONS AVAILABLE")
         else:
             # Group by bank and tier
-            from collections import defaultdict
             by_bank_tier = defaultdict(list)
             for opt in dem_options:
                 bank_name = opt.get("bank_name", "Unknown")
@@ -1416,28 +1412,7 @@ def optimise(demand_df: pd.DataFrame,
                 opts = by_bank_tier[key]
                 opt_types = set(o.get("type", "unknown") for o in opts)
                 avg_price = sum(o.get("unit_price", 0) for o in opts) / len(opts)
-                sys.stderr.write(f"   • {key:45s} | {len(opts):2d} opts | £{avg_price:6,.0f}/unit | {', '.join(opt_types)}\n")
-    
-    sys.stderr.write(f"\n{'-'*80}\n")
-    
-    # Group options by bank and tier for overall summary
-    from collections import defaultdict
-    options_by_bank_tier = defaultdict(list)
-    for opt in options:
-        bank_key = opt.get("BANK_KEY", "Unknown")
-        bank_name = opt.get("bank_name", bank_key)
-        tier = opt.get("tier", "unknown")
-        key = f"{bank_name} ({tier})"
-        options_by_bank_tier[key].append(opt)
-    
-    # Print overall summary
-    sys.stderr.write(f"\nOVERALL OPTIONS BY BANK/TIER:\n")
-    for key in sorted(options_by_bank_tier.keys()):
-        opts = options_by_bank_tier[key]
-        avg_price = sum(o.get("unit_price", 0) for o in opts) / len(opts)
-        sys.stderr.write(f"  {key:50s} | {len(opts):3d} options | Avg price: £{avg_price:,.0f}\n")
-    
-    sys.stderr.write(f"{'='*80}\n\n")
+                debug_lines.append(f"   • {key:45s} | {len(opts):2d} opts | £{avg_price:6,.0f}/unit | {', '.join(opt_types)}")
 
     # ---- Map options to each demand row ----
     idx_by_dem: Dict[int, List[int]] = {}
