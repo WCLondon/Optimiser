@@ -451,8 +451,8 @@ def enforce_catalog_rules_official(demand_row, supply_row, dist_levels_map_local
     d_val = dist_levels_map_local.get(d_dist_name, dist_levels_map_local.get(d_key, INVALID_DIST_VALUE))
     s_val = dist_levels_map_local.get(s_dist_name, dist_levels_map_local.get(s_key, INVALID_DIST_VALUE))
     
-    # Low distinctiveness demand can be matched by any supply
-    if d_key == "low":
+    # Low or Very Low distinctiveness demand can be matched by any supply
+    if d_key == "low" or d_key == "very low" or d_key == "v.low":
         return True
     
     # Medium distinctiveness: same broader_type OR higher distinctiveness
@@ -482,9 +482,13 @@ def enforce_hedgerow_rules(demand_row, supply_row, dist_levels_map_local) -> boo
     d_key = sstr(demand_row.get("distinctiveness_name")).lower()
     s_key = sstr(supply_row.get("distinctiveness_name")).lower()
     
-    if d_key not in dist_levels_map_local or s_key not in dist_levels_map_local:
-        return False
-    if dist_levels_map_local[s_key] < dist_levels_map_local[d_key]:
+    # Get distinctiveness levels with fallback for missing values
+    # Very Low = 0 (lowest), if not in map assume it's Very Low
+    d_level = dist_levels_map_local.get(d_key, 0.0)
+    s_level = dist_levels_map_local.get(s_key, 0.0)
+    
+    # Supply distinctiveness must be >= demand distinctiveness
+    if s_level < d_level:
         return False
     
     return True
@@ -507,9 +511,13 @@ def enforce_watercourse_rules(demand_row, supply_row, dist_levels_map_local) -> 
     d_key = sstr(demand_row.get("distinctiveness_name")).lower()
     s_key = sstr(supply_row.get("distinctiveness_name")).lower()
     
-    if d_key not in dist_levels_map_local or s_key not in dist_levels_map_local:
-        return False
-    if dist_levels_map_local[s_key] < dist_levels_map_local[d_key]:
+    # Get distinctiveness levels with fallback for missing values
+    # Very Low = 0 (lowest), if not in map assume it's Very Low
+    d_level = dist_levels_map_local.get(d_key, 0.0)
+    s_level = dist_levels_map_local.get(s_key, 0.0)
+    
+    # Supply distinctiveness must be >= demand distinctiveness
+    if s_level < d_level:
         return False
     
     return True
@@ -2022,12 +2030,16 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
         })
         
         # Find all eligible supply habitats
+        checked_supplies = 0
+        passed_rules = 0
         for _, supply_row in stock_full.iterrows():
             supply_hab = sstr(supply_row["habitat_name"])
+            checked_supplies += 1
             
             # Check hedgerow trading rules
             if not enforce_hedgerow_rules(demand_cat_row, supply_row, dist_levels_map):
                 continue
+            passed_rules += 1
             
             bank_key = sstr(supply_row["BANK_KEY"])
             stock_id = sstr(supply_row["stock_id"])
