@@ -482,10 +482,12 @@ def enforce_hedgerow_rules(demand_row, supply_row, dist_levels_map_local) -> boo
     d_key = sstr(demand_row.get("distinctiveness_name")).lower()
     s_key = sstr(supply_row.get("distinctiveness_name")).lower()
     
-    # Get distinctiveness levels with fallback for missing values
-    # Very Low = 0 (lowest), if not in map assume it's Very Low
-    d_level = dist_levels_map_local.get(d_key, 0.0)
-    s_level = dist_levels_map_local.get(s_key, 0.0)
+    # Get distinctiveness levels from database
+    if d_key not in dist_levels_map_local or s_key not in dist_levels_map_local:
+        return False
+    
+    d_level = dist_levels_map_local[d_key]
+    s_level = dist_levels_map_local[s_key]
     
     # Supply distinctiveness must be >= demand distinctiveness
     if s_level < d_level:
@@ -511,10 +513,12 @@ def enforce_watercourse_rules(demand_row, supply_row, dist_levels_map_local) -> 
     d_key = sstr(demand_row.get("distinctiveness_name")).lower()
     s_key = sstr(supply_row.get("distinctiveness_name")).lower()
     
-    # Get distinctiveness levels with fallback for missing values
-    # Very Low = 0 (lowest), if not in map assume it's Very Low
-    d_level = dist_levels_map_local.get(d_key, 0.0)
-    s_level = dist_levels_map_local.get(s_key, 0.0)
+    # Get distinctiveness levels from database
+    if d_key not in dist_levels_map_local or s_key not in dist_levels_map_local:
+        return False
+    
+    d_level = dist_levels_map_local[d_key]
+    s_level = dist_levels_map_local[s_key]
     
     # Supply distinctiveness must be >= demand distinctiveness
     if s_level < d_level:
