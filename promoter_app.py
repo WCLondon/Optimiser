@@ -543,8 +543,16 @@ if submitted:
         # ===== STEP 9: Send Email Notification =====
         show_loading_message("Sending notifications...")
         try:
-            reviewer_emails = st.secrets.get("REVIEWER_EMAILS", "").split(",")
-            reviewer_emails = [e.strip() for e in reviewer_emails if e.strip()]
+            # Get reviewer emails from secrets - it's an array
+            reviewer_emails_raw = st.secrets.get("REVIEWER_EMAILS", [])
+            
+            # Handle both array and string formats
+            if isinstance(reviewer_emails_raw, list):
+                reviewer_emails = [e.strip() for e in reviewer_emails_raw if e and e.strip()]
+            elif isinstance(reviewer_emails_raw, str):
+                reviewer_emails = [e.strip() for e in reviewer_emails_raw.split(",") if e.strip()]
+            else:
+                reviewer_emails = []
             
             if reviewer_emails:
                 send_email_notification(
@@ -559,6 +567,7 @@ if submitted:
                     notes=notes
                 )
         except Exception as e:
+            print(f"[EMAIL] Email notification failed: {e}")
             pass  # Email send failed, but continue
         
         progress_bar.progress(100)
