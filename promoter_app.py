@@ -358,11 +358,29 @@ if submitted:
         message_index += 1
         progress_bar.progress(20)
         demand_data = metric_reader.parse_metric_requirements(metric_file)
-        area_df = demand_data['area']
         
-        # Rename columns to match optimizer expectations
+        # Extract all habitat types from metric
+        area_df = demand_data['area']
+        hedgerow_df = demand_data.get('hedgerows', pd.DataFrame())
+        watercourse_df = demand_data.get('watercourses', pd.DataFrame())
+        
+        # Rename columns to match optimizer expectations for area habitats
         if not area_df.empty:
             area_df = area_df.rename(columns={'habitat': 'habitat_name', 'units': 'units_required'})
+        
+        # Process hedgerow habitats and add to area_df
+        if not hedgerow_df.empty:
+            hedgerow_processed = hedgerow_df.rename(columns={'habitat': 'habitat_name', 'units': 'units_required'})
+            # For hedgerows that don't match catalog, use Net Gain (Hedgerows) label
+            # For now, append all hedgerow data to area_df for processing
+            area_df = pd.concat([area_df, hedgerow_processed], ignore_index=True)
+        
+        # Process watercourse habitats and add to area_df
+        if not watercourse_df.empty:
+            watercourse_processed = watercourse_df.rename(columns={'habitat': 'habitat_name', 'units': 'units_required'})
+            # For watercourses that don't match catalog, use Net Gain (Watercourses) label
+            # For now, append all watercourse data to area_df for processing
+            area_df = pd.concat([area_df, watercourse_processed], ignore_index=True)
         
         if area_df.empty:
             st.error("❌ No habitat requirements found in metric file")
