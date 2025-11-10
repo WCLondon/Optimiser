@@ -1968,6 +1968,16 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
         else:
             cat_match = Catalog[Catalog["habitat_name"] == dem_hab]
             if cat_match.empty:
+                # Debug: print what's in the catalog vs what we're looking for
+                print(f"[DEBUG] Habitat '{dem_hab}' not found in catalog")
+                print(f"[DEBUG] Habitat repr: {repr(dem_hab)}")
+                print(f"[DEBUG] Catalog has {len(Catalog)} habitats")
+                # Check for similar names
+                similar = Catalog[Catalog["habitat_name"].str.contains("ornamental", case=False, na=False)]
+                if not similar.empty:
+                    print(f"[DEBUG] Found similar habitats:")
+                    for _, row in similar.iterrows():
+                        print(f"  - {repr(row['habitat_name'])}")
                 continue
             demand_dist = sstr(cat_match.iloc[0]["distinctiveness_name"])
             demand_broader = sstr(cat_match.iloc[0]["broader_type"])
