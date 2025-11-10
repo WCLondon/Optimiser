@@ -409,11 +409,17 @@ if submitted:
             hedgerow_processed = hedgerow_df.rename(columns={'habitat': 'habitat_name', 'units': 'units_required'})
             
             # Check if habitats exist in catalog - if not, use Net Gain (Hedgerows)
+            # This handles cases where metric file has habitat names that don't exactly match catalog
             catalog_habitats = set(backend["HabitatCatalog"]["habitat_name"].dropna().unique())
+            
             for idx, row in hedgerow_processed.iterrows():
                 habitat = str(row["habitat_name"]).strip()
                 if habitat and habitat not in catalog_habitats:
+                    # Log the conversion for debugging
+                    print(f"[HEDGEROW] '{habitat}' not in catalog, converting to Net Gain (Hedgerows)")
                     hedgerow_processed.at[idx, "habitat_name"] = "Net Gain (Hedgerows)"
+                else:
+                    print(f"[HEDGEROW] '{habitat}' found in catalog, using as-is")
             
             area_df = pd.concat([area_df, hedgerow_processed], ignore_index=True)
         
@@ -422,11 +428,17 @@ if submitted:
             watercourse_processed = watercourse_df.rename(columns={'habitat': 'habitat_name', 'units': 'units_required'})
             
             # Check if habitats exist in catalog - if not, use Net Gain (Watercourses)
+            # This handles cases where metric file has habitat names that don't exactly match catalog
             catalog_habitats = set(backend["HabitatCatalog"]["habitat_name"].dropna().unique())
+            
             for idx, row in watercourse_processed.iterrows():
                 habitat = str(row["habitat_name"]).strip()
                 if habitat and habitat not in catalog_habitats:
+                    # Log the conversion for debugging
+                    print(f"[WATERCOURSE] '{habitat}' not in catalog, converting to Net Gain (Watercourses)")
                     watercourse_processed.at[idx, "habitat_name"] = "Net Gain (Watercourses)"
+                else:
+                    print(f"[WATERCOURSE] '{habitat}' found in catalog, using as-is")
             
             area_df = pd.concat([area_df, watercourse_processed], ignore_index=True)
         
