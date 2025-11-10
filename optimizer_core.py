@@ -451,8 +451,8 @@ def enforce_catalog_rules_official(demand_row, supply_row, dist_levels_map_local
     d_val = dist_levels_map_local.get(d_dist_name, dist_levels_map_local.get(d_key, INVALID_DIST_VALUE))
     s_val = dist_levels_map_local.get(s_dist_name, dist_levels_map_local.get(s_key, INVALID_DIST_VALUE))
     
-    # Low distinctiveness demand can be matched by any supply
-    if d_key == "low":
+    # Low or Very Low distinctiveness demand can be matched by any supply
+    if d_key == "low" or d_key == "very low" or d_key == "v.low":
         return True
     
     # Medium distinctiveness: same broader_type OR higher distinctiveness
@@ -482,9 +482,15 @@ def enforce_hedgerow_rules(demand_row, supply_row, dist_levels_map_local) -> boo
     d_key = sstr(demand_row.get("distinctiveness_name")).lower()
     s_key = sstr(supply_row.get("distinctiveness_name")).lower()
     
+    # Get distinctiveness levels from database
     if d_key not in dist_levels_map_local or s_key not in dist_levels_map_local:
         return False
-    if dist_levels_map_local[s_key] < dist_levels_map_local[d_key]:
+    
+    d_level = dist_levels_map_local[d_key]
+    s_level = dist_levels_map_local[s_key]
+    
+    # Supply distinctiveness must be >= demand distinctiveness
+    if s_level < d_level:
         return False
     
     return True
@@ -507,9 +513,15 @@ def enforce_watercourse_rules(demand_row, supply_row, dist_levels_map_local) -> 
     d_key = sstr(demand_row.get("distinctiveness_name")).lower()
     s_key = sstr(supply_row.get("distinctiveness_name")).lower()
     
+    # Get distinctiveness levels from database
     if d_key not in dist_levels_map_local or s_key not in dist_levels_map_local:
         return False
-    if dist_levels_map_local[s_key] < dist_levels_map_local[d_key]:
+    
+    d_level = dist_levels_map_local[d_key]
+    s_level = dist_levels_map_local[s_key]
+    
+    # Supply distinctiveness must be >= demand distinctiveness
+    if s_level < d_level:
         return False
     
     return True
@@ -625,6 +637,23 @@ def prepare_watercourse_options(demand_df: pd.DataFrame,
         else:
             cat_match = Catalog[Catalog["habitat_name"] == dem_hab]
             if cat_match.empty:
+                # Debug: habitat not found in catalog - store info for error message
+                import sys
+                error_msg = f"\n[DEBUG] Watercourse habitat '{dem_hab}' not found in catalog\n"
+                error_msg += f"Repr: {repr(dem_hab)}\n"
+                error_msg += f"Catalog has {len(Catalog)} total habitats\n"
+                
+                # Show sample watercourse habitats in catalog  
+                wc_catalog_habs = Catalog[Catalog["habitat_name"].map(is_watercourse)]
+                error_msg += f"\nSample of {len(wc_catalog_habs)} watercourse habitats:\n"
+                for _, row in wc_catalog_habs.head(10).iterrows():
+                    error_msg += f"  - {repr(row['habitat_name'])}\n"
+                
+                print(error_msg, file=sys.stderr)
+                # Store debug info to add to exception later
+                if not hasattr(prepare_watercourse_options, '_debug_info'):
+                    prepare_watercourse_options._debug_info = []
+                prepare_watercourse_options._debug_info.append(error_msg)
                 continue
             demand_dist = sstr(cat_match.iloc[0]["distinctiveness_name"])
             demand_broader = sstr(cat_match.iloc[0]["broader_type"])
@@ -763,9 +792,775 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame,
     if backend is None:
         backend = load_backend()
     
-    # PLACEHOLDER: Full report generation logic needs to be extracted from app.py
-    # This is a large function with complex formatting logic
-    raise NotImplementedError("generate_client_report_table_fixed function needs full implementation - placeholder only")
+    # Build dist_levels_map from backend
+    dist_levels_map = build_dist_levels_map(backend)
+    
+    if manual_hedgerow_rows is None:
+        manual_hedgerow_rows = []
+    if manual_watercourse_rows is None:
+        manual_watercourse_rows = []
+    if manual_area_rows is None:
+        manual_area_rows = []
+    if removed_allocation_rows is None:
+        removed_allocation_rows = []
+    
+    # Helper function to round unit price to nearest £50
+    def round_to_50(price):
+        return round(price / 50) * 50
+    
+    # Helper function to format units with up to 3 decimal places (4 sig figs)
+    def format_units_dynamic(value):
+        """
+        Format units to show up to 3 decimal places (4 significant figures).
+        - Maximum 3 decimal places
+        - Remove trailing zeros after the decimal point (but keep minimum 2)
+        """
+        if value == 0:
+            return "0.00"
+        
+        # Format with 3 decimals
+        formatted = f"{value:.3f}"
+        parts = formatted.split('.')
+        if len(parts) == 2:
+            integer_part = parts[0]
+            decimal_part = parts[1].rstrip('0')
+            # Ensure at least 2 decimal places
+            if len(decimal_part) < 2:
+                decimal_part = decimal_part.ljust(2, '0')
+            return f"{integer_part}.{decimal_part}"
+        return formatted
+    
+    # Helper function to format total row units (max 3 decimals, remove trailing zeros)
+    def format_units_total(value):
+        """
+        Format total row units with up to 3 decimal places.
+        - Maximum 3 decimal places
+        - Remove trailing zeros (but keep at least 2 decimal places)
+        """
+        if value == 0:
+            return "0.00"
+        
+        # Format with 3 decimals
+        formatted = f"{value:.3f}"
+        parts = formatted.split('.')
+        if len(parts) == 2:
+            integer_part = parts[0]
+            decimal_part = parts[1].rstrip('0')
+            # Ensure at least 2 decimal places
+            if len(decimal_part) < 2:
+                decimal_part = decimal_part.ljust(2, '0')
+            return f"{integer_part}.{decimal_part}"
+        return formatted
+    
+    # Filter out removed allocation rows
+    if "_row_id" not in alloc_df.columns:
+        alloc_df = alloc_df.copy()
+        alloc_df["_row_id"] = range(len(alloc_df))
+    alloc_df = alloc_df[~alloc_df["_row_id"].isin(removed_allocation_rows)]
+    
+    # Separate by habitat types
+    area_habitats = []
+    hedgerow_habitats = []
+    watercourse_habitats = []
+    
+    # Process each demand
+    for _, demand_row in demand_df.iterrows():
+        demand_habitat = demand_row["habitat_name"]
+        demand_units = demand_row["units_required"]
+        
+        # Find corresponding allocation(s)
+        matching_allocs = alloc_df[alloc_df["demand_habitat"] == demand_habitat]
+        
+        if matching_allocs.empty:
+            continue
+            
+        for _, alloc_row in matching_allocs.iterrows():
+            # Determine demand distinctiveness
+            if demand_habitat == NET_GAIN_LABEL:
+                demand_distinctiveness = "10% Net Gain"
+                demand_habitat_display = "Any"
+            elif demand_habitat == "Net Gain (Hedgerows)":
+                demand_distinctiveness = "10% Net Gain"
+                demand_habitat_display = "Any (Hedgerows)"
+            else:
+                # Look up from catalog
+                cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == demand_habitat]
+                if not cat_match.empty:
+                    demand_distinctiveness = cat_match["distinctiveness_name"].iloc[0]
+                    demand_habitat_display = demand_habitat
+                else:
+                    demand_distinctiveness = "Medium"  # Default
+                    demand_habitat_display = demand_habitat
+            
+            # Supply info
+            supply_habitat = alloc_row["supply_habitat"]
+            supply_units = alloc_row["units_supplied"]
+            unit_price = alloc_row["unit_price"]
+            offset_cost = alloc_row["cost"]
+            
+            # Apply SUO discount to unit price and offset cost
+            if suo_discount_fraction > 0:
+                unit_price = unit_price * (1 - suo_discount_fraction)
+                offset_cost = offset_cost * (1 - suo_discount_fraction)
+            
+            # Round unit price to nearest £50 for display only
+            unit_price_display = round_to_50(unit_price)
+            # Round offset cost to nearest pound for display
+            offset_cost_display = round(offset_cost)
+            
+            # For paired allocations, show only the highest distinctiveness habitat
+            allocation_type = sstr(alloc_row.get("allocation_type", "normal"))
+            if allocation_type == "paired" and "paired_parts" in alloc_row and alloc_row["paired_parts"]:
+                try:
+                    paired_parts = json.loads(sstr(alloc_row["paired_parts"]))
+                    if paired_parts and len(paired_parts) >= 2:
+                        # Get distinctiveness for each habitat in the pair
+                        habitat_distinctiveness = []
+                        for idx, part in enumerate(paired_parts):
+                            habitat = sstr(part.get("habitat", ""))
+                            cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat]
+                            if not cat_match.empty:
+                                dist_name = cat_match["distinctiveness_name"].iloc[0]
+                                dist_value = dist_levels_map.get(dist_name, dist_levels_map.get(dist_name.lower(), 0))
+                                habitat_distinctiveness.append({
+                                    "habitat": habitat,
+                                    "distinctiveness_name": dist_name,
+                                    "distinctiveness_value": dist_value,
+                                    "index": idx  # Track original index to prefer demand habitat in ties
+                                })
+                        
+                        # Select the habitat with highest distinctiveness value
+                        # In case of tie, prefer the demand habitat (index 0)
+                        if habitat_distinctiveness:
+                            highest_dist = max(habitat_distinctiveness, key=lambda x: (x["distinctiveness_value"], -x["index"]))
+                            supply_habitat = highest_dist["habitat"]
+                            supply_distinctiveness = highest_dist["distinctiveness_name"]
+                        else:
+                            # Fallback to default lookup
+                            supply_cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == supply_habitat]
+                            if not supply_cat_match.empty:
+                                supply_distinctiveness = supply_cat_match["distinctiveness_name"].iloc[0]
+                            else:
+                                supply_distinctiveness = "Medium"
+                    else:
+                        # Fallback to default lookup
+                        supply_cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == supply_habitat]
+                        if not supply_cat_match.empty:
+                            supply_distinctiveness = supply_cat_match["distinctiveness_name"].iloc[0]
+                        else:
+                            supply_distinctiveness = "Medium"
+                except Exception:
+                    # If paired_parts parsing fails, fallback to default lookup
+                    supply_cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == supply_habitat]
+                    if not supply_cat_match.empty:
+                        supply_distinctiveness = supply_cat_match["distinctiveness_name"].iloc[0]
+                    else:
+                        supply_distinctiveness = "Medium"
+            else:
+                # Normal allocation - lookup distinctiveness
+                supply_cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == supply_habitat]
+                if not supply_cat_match.empty:
+                    supply_distinctiveness = supply_cat_match["distinctiveness_name"].iloc[0]
+                else:
+                    supply_distinctiveness = "Medium"  # Default
+            
+            row_data = {
+                "Distinctiveness": demand_distinctiveness,
+                "Habitats Lost": demand_habitat_display,
+                "# Units": format_units_dynamic(demand_units),
+                "Distinctiveness_Supply": supply_distinctiveness,
+                "Habitats Supplied": supply_habitat,
+                "# Units_Supply": format_units_dynamic(supply_units),
+                "Price Per Unit": f"£{unit_price_display:,.0f}",
+                "Offset Cost": f"£{offset_cost_display:,.0f}"
+            }
+            
+            # Categorize by habitat type
+            if demand_habitat == "Net Gain (Hedgerows)" or "hedgerow" in demand_habitat.lower() or "hedgerow" in supply_habitat.lower():
+                hedgerow_habitats.append(row_data)
+            elif "watercourse" in demand_habitat.lower() or "water" in supply_habitat.lower():
+                watercourse_habitats.append(row_data)
+            else:
+                area_habitats.append(row_data)
+    
+    # Process manual hedgerow entries
+    manual_hedgerow_cost = 0.0
+    for row in manual_hedgerow_rows:
+        habitat_lost = sstr(row.get("habitat_lost", ""))
+        habitat_name = sstr(row.get("habitat_name", ""))
+        units = float(row.get("units", 0.0) or 0.0)
+        price_per_unit = float(row.get("price_per_unit", 0.0) or 0.0)
+        
+        if habitat_name and units > 0:
+            # Use price_per_unit from upstream, round for display only
+            price_per_unit_display = round_to_50(price_per_unit)
+            # Calculate offset cost using actual price, round to nearest pound for display
+            offset_cost = units * price_per_unit
+            offset_cost_display = round(offset_cost)
+            manual_hedgerow_cost += offset_cost
+            
+            # Determine distinctiveness for lost habitat
+            if habitat_lost == NET_GAIN_LABEL:
+                demand_distinctiveness = "10% Net Gain"
+                demand_habitat_display = "Any"
+            elif habitat_lost == "Net Gain (Hedgerows)":
+                demand_distinctiveness = "10% Net Gain"
+                demand_habitat_display = "Any (Hedgerows)"
+            else:
+                cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat_lost]
+                if not cat_match.empty:
+                    demand_distinctiveness = cat_match["distinctiveness_name"].iloc[0]
+                    demand_habitat_display = habitat_lost
+                else:
+                    demand_distinctiveness = "Medium"
+                    demand_habitat_display = habitat_lost if habitat_lost else "Not specified"
+            
+            # Determine distinctiveness for supplied habitat
+            if habitat_name == NET_GAIN_LABEL:
+                supply_distinctiveness = "10% Net Gain"
+                supply_habitat_display = "Any"
+            elif habitat_name == "Net Gain (Hedgerows)":
+                supply_distinctiveness = "10% Net Gain"
+                supply_habitat_display = "Any (Hedgerows)"
+            else:
+                cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat_name]
+                if not cat_match.empty:
+                    supply_distinctiveness = cat_match["distinctiveness_name"].iloc[0]
+                    supply_habitat_display = habitat_name
+                else:
+                    supply_distinctiveness = "Medium"
+                    supply_habitat_display = habitat_name
+            
+            row_data = {
+                "Distinctiveness": demand_distinctiveness,
+                "Habitats Lost": demand_habitat_display,
+                "# Units": format_units_dynamic(units),
+                "Distinctiveness_Supply": supply_distinctiveness,
+                "Habitats Supplied": supply_habitat_display,
+                "# Units_Supply": format_units_dynamic(units),
+                "Price Per Unit": f"£{price_per_unit_display:,.0f}",
+                "Offset Cost": f"£{offset_cost_display:,.0f}"
+            }
+            hedgerow_habitats.append(row_data)
+    
+    # Process manual watercourse entries
+    manual_watercourse_cost = 0.0
+    for row in manual_watercourse_rows:
+        habitat_lost = sstr(row.get("habitat_lost", ""))
+        habitat_name = sstr(row.get("habitat_name", ""))
+        units = float(row.get("units", 0.0) or 0.0)
+        price_per_unit = float(row.get("price_per_unit", 0.0) or 0.0)
+        
+        if habitat_name and units > 0:
+            # Use price_per_unit from upstream, round for display only
+            price_per_unit_display = round_to_50(price_per_unit)
+            # Calculate offset cost using actual price, round to nearest pound for display
+            offset_cost = units * price_per_unit
+            offset_cost_display = round(offset_cost)
+            manual_watercourse_cost += offset_cost
+            
+            # Determine distinctiveness for lost habitat
+            if habitat_lost == NET_GAIN_LABEL:
+                demand_distinctiveness = "10% Net Gain"
+                demand_habitat_display = "Any"
+            elif habitat_lost == "Net Gain (Hedgerows)":
+                demand_distinctiveness = "10% Net Gain"
+                demand_habitat_display = "Any (Hedgerows)"
+            else:
+                cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat_lost]
+                if not cat_match.empty:
+                    demand_distinctiveness = cat_match["distinctiveness_name"].iloc[0]
+                    demand_habitat_display = habitat_lost
+                else:
+                    demand_distinctiveness = "Medium"
+                    demand_habitat_display = habitat_lost if habitat_lost else "Not specified"
+            
+            # Determine distinctiveness for supplied habitat
+            if habitat_name == NET_GAIN_LABEL:
+                supply_distinctiveness = "10% Net Gain"
+                supply_habitat_display = "Any"
+            elif habitat_name == "Net Gain (Watercourses)":
+                supply_distinctiveness = "10% Net Gain"
+                supply_habitat_display = "Any (Watercourses)"
+            else:
+                cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat_name]
+                if not cat_match.empty:
+                    supply_distinctiveness = cat_match["distinctiveness_name"].iloc[0]
+                    supply_habitat_display = habitat_name
+                else:
+                    supply_distinctiveness = "Medium"
+                    supply_habitat_display = habitat_name
+            
+            row_data = {
+                "Distinctiveness": demand_distinctiveness,
+                "Habitats Lost": demand_habitat_display,
+                "# Units": format_units_dynamic(units),
+                "Distinctiveness_Supply": supply_distinctiveness,
+                "Habitats Supplied": supply_habitat_display,
+                "# Units_Supply": format_units_dynamic(units),
+                "Price Per Unit": f"£{price_per_unit_display:,.0f}",
+                "Offset Cost": f"£{offset_cost_display:,.0f}"
+            }
+            watercourse_habitats.append(row_data)
+    
+    # Process manual area habitat entries
+    manual_area_cost = 0.0
+    for row in manual_area_rows:
+        habitat_lost = sstr(row.get("habitat_lost", ""))
+        units = float(row.get("units", 0.0) or 0.0)
+        is_paired = bool(row.get("paired", False))
+        
+        if units > 0:
+            if is_paired:
+                # Paired entry - process both habitats separately
+                demand_habitat = sstr(row.get("demand_habitat", ""))
+                companion_habitat = sstr(row.get("companion_habitat", ""))
+                demand_bank = sstr(row.get("demand_bank", ""))
+                companion_bank = sstr(row.get("companion_bank", ""))
+                demand_price = float(row.get("demand_price", 0.0) or 0.0)
+                companion_price = float(row.get("companion_price", 0.0) or 0.0)
+                demand_stock = float(row.get("demand_stock_use", 0.5))
+                companion_stock = 1.0 - demand_stock
+                srm_tier = sstr(row.get("srm_tier", "adjacent"))
+                
+                # Calculate units for each habitat
+                demand_units = units * demand_stock
+                companion_units = units * companion_stock
+                
+                # Use prices from upstream, round for display only
+                demand_price_display = round_to_50(demand_price)
+                companion_price_display = round_to_50(companion_price)
+                
+                # Calculate costs using actual prices, round to nearest pound for display
+                demand_cost = demand_units * demand_price
+                companion_cost = companion_units * companion_price
+                demand_cost_display = round(demand_cost)
+                companion_cost_display = round(companion_cost)
+                total_paired_cost = demand_cost + companion_cost
+                manual_area_cost += total_paired_cost
+                
+                # Determine distinctiveness for lost habitat
+                if habitat_lost == NET_GAIN_LABEL:
+                    demand_distinctiveness = "10% Net Gain"
+                    demand_habitat_display = "Any"
+                else:
+                    cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat_lost]
+                    if not cat_match.empty:
+                        demand_distinctiveness = cat_match["distinctiveness_name"].iloc[0]
+                        demand_habitat_display = habitat_lost
+                    else:
+                        demand_distinctiveness = "Medium"
+                        demand_habitat_display = habitat_lost if habitat_lost else "Not specified"
+                
+                # Get spatial risk information
+                spatial_risk_offset_by = sstr(row.get("spatial_risk_offset_by", "None"))
+                spatial_risk_srm = sstr(row.get("spatial_risk_srm", ""))
+                
+                # Add entry for demand habitat
+                if demand_habitat:
+                    demand_cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == demand_habitat]
+                    if not demand_cat_match.empty:
+                        demand_supply_dist = demand_cat_match["distinctiveness_name"].iloc[0]
+                    else:
+                        demand_supply_dist = "Medium"
+                    
+                    # Build habitat display with spatial risk indicator
+                    demand_display = f"{demand_habitat} (Paired - {srm_tier}) from {demand_bank}"
+                    if spatial_risk_offset_by == "Demand Habitat":
+                        demand_display += f" [Offsets Spatial Risk: {spatial_risk_srm}]"
+                    
+                    row_data = {
+                        "Distinctiveness": demand_distinctiveness,
+                        "Habitats Lost": demand_habitat_display,
+                        "# Units": format_units_dynamic(units),
+                        "Distinctiveness_Supply": demand_supply_dist,
+                        "Habitats Supplied": demand_display,
+                        "# Units_Supply": format_units_dynamic(demand_units),
+                        "Price Per Unit": f"£{demand_price_display:,.0f}",
+                        "Offset Cost": f"£{demand_cost_display:,.0f}"
+                    }
+                    area_habitats.append(row_data)
+                
+                # Add entry for companion habitat
+                if companion_habitat:
+                    companion_cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == companion_habitat]
+                    if not companion_cat_match.empty:
+                        companion_supply_dist = companion_cat_match["distinctiveness_name"].iloc[0]
+                    else:
+                        companion_supply_dist = "Medium"
+                    
+                    # Build habitat display with spatial risk indicator
+                    companion_display = f"{companion_habitat} (Paired - companion) from {companion_bank}"
+                    if spatial_risk_offset_by == "Companion Habitat":
+                        companion_display += f" [Offsets Spatial Risk: {spatial_risk_srm}]"
+                    
+                    row_data = {
+                        "Distinctiveness": demand_distinctiveness,
+                        "Habitats Lost": demand_habitat_display,
+                        "# Units": format_units_dynamic(units),
+                        "Distinctiveness_Supply": companion_supply_dist,
+                        "Habitats Supplied": companion_display,
+                        "# Units_Supply": format_units_dynamic(companion_units),
+                        "Price Per Unit": f"£{companion_price_display:,.0f}",
+                        "Offset Cost": f"£{companion_cost_display:,.0f}"
+                    }
+                    area_habitats.append(row_data)
+                    
+            else:
+                # Simple non-paired entry (original logic)
+                habitat_name = sstr(row.get("habitat_name", ""))
+                price_per_unit = float(row.get("price_per_unit", 0.0) or 0.0)
+                
+                if habitat_name:
+                    # Use price_per_unit from upstream, round for display only
+                    price_per_unit_display = round_to_50(price_per_unit)
+                    # Calculate offset cost using actual price, round to nearest pound for display
+                    offset_cost = units * price_per_unit
+                    offset_cost_display = round(offset_cost)
+                    manual_area_cost += offset_cost
+                    
+                    # Determine distinctiveness for lost habitat
+                    if habitat_lost == NET_GAIN_LABEL:
+                        demand_distinctiveness = "10% Net Gain"
+                        demand_habitat_display = "Any"
+                    else:
+                        cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat_lost]
+                        if not cat_match.empty:
+                            demand_distinctiveness = cat_match["distinctiveness_name"].iloc[0]
+                            demand_habitat_display = habitat_lost
+                        else:
+                            demand_distinctiveness = "Medium"
+                            demand_habitat_display = habitat_lost if habitat_lost else "Not specified"
+                    
+                    # Determine distinctiveness for supplied habitat
+                    if habitat_name == NET_GAIN_LABEL:
+                        supply_distinctiveness = "10% Net Gain"
+                        supply_habitat_display = "Any"
+                    else:
+                        cat_match = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"] == habitat_name]
+                        if not cat_match.empty:
+                            supply_distinctiveness = cat_match["distinctiveness_name"].iloc[0]
+                            supply_habitat_display = habitat_name
+                        else:
+                            supply_distinctiveness = "Medium"
+                            supply_habitat_display = habitat_name
+                    
+                    row_data = {
+                        "Distinctiveness": demand_distinctiveness,
+                        "Habitats Lost": demand_habitat_display,
+                        "# Units": format_units_dynamic(units),
+                        "Distinctiveness_Supply": supply_distinctiveness,
+                        "Habitats Supplied": supply_habitat_display,
+                        "# Units_Supply": format_units_dynamic(units),
+                        "Price Per Unit": f"£{price_per_unit_display:,.0f}",
+                        "Offset Cost": f"£{offset_cost_display:,.0f}"
+                    }
+                    area_habitats.append(row_data)
+    
+    # Calculate total cost from actual line items (which have SUO discount already applied)
+    # Sum up all offset costs from the line items
+    optimizer_cost = 0.0
+    for habitat_list in [area_habitats, hedgerow_habitats, watercourse_habitats]:
+        for row in habitat_list:
+            cost_str = row["Offset Cost"].replace("£", "").replace(",", "")
+            optimizer_cost += float(cost_str)
+    
+    # Add manual entries
+    total_cost_with_manual = optimizer_cost + manual_hedgerow_cost + manual_watercourse_cost + manual_area_cost
+    total_with_admin = total_cost_with_manual + admin_fee
+    
+    # Bundle Low + 10% Net Gain rows together for each habitat type
+    def bundle_low_and_net_gain(habitats_list):
+        """Bundle Low distinctiveness and 10% Net Gain rows together"""
+        bundled = []
+        low_rows = {}
+        net_gain_rows = {}
+        other_rows = []
+        
+        # Separate rows by distinctiveness
+        for row in habitats_list:
+            dist = row["Distinctiveness"]
+            supply_dist = row["Distinctiveness_Supply"]
+            
+            # Check if this is a Low or Net Gain row
+            if dist == "Low" or dist == "10% Net Gain":
+                # Group by supply habitat for bundling
+                supply_hab = row["Habitats Supplied"]
+                if dist == "Low":
+                    if supply_hab not in low_rows:
+                        low_rows[supply_hab] = []
+                    low_rows[supply_hab].append(row)
+                else:  # 10% Net Gain
+                    if supply_hab not in net_gain_rows:
+                        net_gain_rows[supply_hab] = []
+                    net_gain_rows[supply_hab].append(row)
+            else:
+                other_rows.append(row)
+        
+        # Bundle Low + Net Gain rows for same supply habitat
+        all_supply_habitats = set(list(low_rows.keys()) + list(net_gain_rows.keys()))
+        for supply_hab in sorted(all_supply_habitats):
+            low_list = low_rows.get(supply_hab, [])
+            ng_list = net_gain_rows.get(supply_hab, [])
+            
+            if low_list and ng_list:
+                # Bundle them together
+                total_units = sum(float(r["# Units"].replace(",", "")) for r in low_list + ng_list)
+                total_supply_units = sum(float(r["# Units_Supply"].replace(",", "")) for r in low_list + ng_list)
+                total_cost = sum(float(r["Offset Cost"].replace("£", "").replace(",", "")) for r in low_list + ng_list)
+                
+                # Use weighted average for price per unit
+                avg_price = total_cost / total_supply_units if total_supply_units > 0 else 0
+                
+                bundled_row = {
+                    "Distinctiveness": "Low + 10% Net Gain",
+                    "Habitats Lost": low_list[0]["Habitats Lost"] if low_list else ng_list[0]["Habitats Lost"],
+                    "# Units": format_units_dynamic(total_units),
+                    "Distinctiveness_Supply": low_list[0]["Distinctiveness_Supply"] if low_list else ng_list[0]["Distinctiveness_Supply"],
+                    "Habitats Supplied": supply_hab,
+                    "# Units_Supply": format_units_dynamic(total_supply_units),
+                    "Price Per Unit": f"£{round_to_50(avg_price):,.0f}",
+                    "Offset Cost": f"£{round(total_cost):,.0f}"
+                }
+                bundled.append(bundled_row)
+            elif low_list:
+                # Only Low rows, add them as is
+                bundled.extend(low_list)
+            elif ng_list:
+                # Only Net Gain rows, add them as is
+                bundled.extend(ng_list)
+        
+        # Add other rows
+        bundled.extend(other_rows)
+        return bundled
+    
+    # Apply bundling to each habitat type
+    area_habitats = bundle_low_and_net_gain(area_habitats)
+    hedgerow_habitats = bundle_low_and_net_gain(hedgerow_habitats)
+    watercourse_habitats = bundle_low_and_net_gain(watercourse_habitats)
+    
+    # Sort habitats by distinctiveness priority (High > Medium > Low + Net Gain > Very Low)
+    def sort_by_distinctiveness(habitats_list):
+        """Sort habitat rows by distinctiveness priority"""
+        distinctiveness_order = {
+            "Very High": 0,
+            "V.High": 0,
+            "High": 1,
+            "Medium": 2,
+            "Low + 10% Net Gain": 3,
+            "Low": 4,
+            "10% Net Gain": 5,
+            "Very Low": 6,
+            "V.Low": 6
+        }
+        
+        def get_sort_key(row):
+            dist = row.get("Distinctiveness", "")
+            return distinctiveness_order.get(dist, 99)  # Unknown distinctiveness goes to end
+        
+        return sorted(habitats_list, key=get_sort_key)
+    
+    # Apply sorting to each habitat type
+    area_habitats = sort_by_distinctiveness(area_habitats)
+    hedgerow_habitats = sort_by_distinctiveness(hedgerow_habitats)
+    watercourse_habitats = sort_by_distinctiveness(watercourse_habitats)
+    
+    # Build HTML table with improved styling (30% narrower, better colors)
+    html_table = """
+    <table border="1" style="border-collapse: collapse; width: 70%; margin: 0 auto; font-family: Arial, sans-serif; font-size: 11px;">
+        <thead>
+            <tr>
+                <th colspan="3" style="text-align: center; padding: 8px; border: 1px solid #000; font-weight: bold; background-color: #F8C237; color: #000;">Development Impact</th>
+                <th colspan="5" style="text-align: center; padding: 8px; border: 1px solid #000; font-weight: bold; background-color: #2A514A; color: #FFFFFF;">Mitigation Supplied from Wild Capital</th>
+            </tr>
+            <tr>
+                <th style="padding: 6px; border: 1px solid #000; font-weight: bold; background-color: #F8C237; color: #000;">Distinctiveness</th>
+                <th style="padding: 6px; border: 1px solid #000; font-weight: bold; background-color: #F8C237; color: #000;">Habitats Lost</th>
+                <th style="padding: 6px; border: 1px solid #000; font-weight: bold; background-color: #F8C237; color: #000;"># Units</th>
+                <th style="padding: 6px; border: 1px solid #000; font-weight: bold; background-color: #2A514A; color: #FFFFFF;">Distinctiveness</th>
+                <th style="padding: 6px; border: 1px solid #000; font-weight: bold; background-color: #2A514A; color: #FFFFFF;">Habitats Supplied</th>
+                <th style="padding: 6px; border: 1px solid #000; font-weight: bold; background-color: #2A514A; color: #FFFFFF;"># Units</th>
+                <th style="padding: 6px; border: 1px solid #000; font-weight: bold; background-color: #2A514A; color: #FFFFFF;">Price Per Unit</th>
+                <th style="padding: 6px; border: 1px solid #000; font-weight: bold; background-color: #2A514A; color: #FFFFFF;">Offset Cost</th>
+            </tr>
+        </thead>
+        <tbody>
+    """
+    
+    # Add Area Habitats section with light green background
+    if area_habitats:
+        html_table += """
+            <tr style="background-color: #D9F2D0;">
+                <td colspan="8" style="padding: 6px; border: 1px solid #000; font-weight: bold; color: #000;">Area Habitats</td>
+            </tr>
+        """
+        for habitat in area_habitats:
+            html_table += f"""
+            <tr>
+                <td style="padding: 6px; border: 1px solid #000;">{habitat["Distinctiveness"]}</td>
+                <td style="padding: 6px; border: 1px solid #000;">{habitat["Habitats Lost"]}</td>
+                <td style="padding: 6px; border: 1px solid #000; text-align: right;">{habitat["# Units"]}</td>
+                <td style="padding: 6px; border: 1px solid #000;">{habitat["Distinctiveness_Supply"]}</td>
+                <td style="padding: 6px; border: 1px solid #000;">{habitat["Habitats Supplied"]}</td>
+                <td style="padding: 6px; border: 1px solid #000; text-align: right;">{habitat["# Units_Supply"]}</td>
+                <td style="padding: 6px; border: 1px solid #000; text-align: right;">{habitat["Price Per Unit"]}</td>
+                <td style="padding: 6px; border: 1px solid #000; text-align: right;">{habitat["Offset Cost"]}</td>
+            </tr>
+            """
+    
+    # Add Hedgerow Habitats section with light green background
+    if hedgerow_habitats:
+        html_table += """
+            <tr style="background-color: #D9F2D0;">
+                <td colspan="8" style="padding: 6px; border: 1px solid #000; font-weight: bold; color: #000;">Hedgerow Habitats</td>
+            </tr>
+        """
+        for habitat in hedgerow_habitats:
+            html_table += f"""
+            <tr>
+                <td style="padding: 6px; border: 1px solid #000;">{habitat["Distinctiveness"]}</td>
+                <td style="padding: 6px; border: 1px solid #000;">{habitat["Habitats Lost"]}</td>
+                <td style="padding: 6px; border: 1px solid #000; text-align: right;">{habitat["# Units"]}</td>
+                <td style="padding: 6px; border: 1px solid #000;">{habitat["Distinctiveness_Supply"]}</td>
+                <td style="padding: 6px; border: 1px solid #000;">{habitat["Habitats Supplied"]}</td>
+                <td style="padding: 6px; border: 1px solid #000; text-align: right;">{habitat["# Units_Supply"]}</td>
+                <td style="padding: 6px; border: 1px solid #000; text-align: right;">{habitat["Price Per Unit"]}</td>
+                <td style="padding: 6px; border: 1px solid #000; text-align: right;">{habitat["Offset Cost"]}</td>
+            </tr>
+            """
+    
+    # Add Watercourse Habitats section with light green background
+    if watercourse_habitats:
+        html_table += """
+            <tr style="background-color: #D9F2D0;">
+                <td colspan="8" style="padding: 6px; border: 1px solid #000; font-weight: bold; color: #000;">Watercourse Habitats</td>
+            </tr>
+        """
+        for habitat in watercourse_habitats:
+            html_table += f"""
+            <tr>
+                <td style="padding: 6px; border: 1px solid #000;">{habitat["Distinctiveness"]}</td>
+                <td style="padding: 6px; border: 1px solid #000;">{habitat["Habitats Lost"]}</td>
+                <td style="padding: 6px; border: 1px solid #000; text-align: right;">{habitat["# Units"]}</td>
+                <td style="padding: 6px; border: 1px solid #000;">{habitat["Distinctiveness_Supply"]}</td>
+                <td style="padding: 6px; border: 1px solid #000;">{habitat["Habitats Supplied"]}</td>
+                <td style="padding: 6px; border: 1px solid #000; text-align: right;">{habitat["# Units_Supply"]}</td>
+                <td style="padding: 6px; border: 1px solid #000; text-align: right;">{habitat["Price Per Unit"]}</td>
+                <td style="padding: 6px; border: 1px solid #000; text-align: right;">{habitat["Offset Cost"]}</td>
+            </tr>
+            """
+    
+    
+    
+    # Calculate total units including manual entries
+    total_demand_units = demand_df['units_required'].sum()
+    total_supply_units = alloc_df['units_supplied'].sum()
+    
+    # Add manual units
+    for row in manual_hedgerow_rows:
+        units = float(row.get("units", 0.0) or 0.0)
+        if units > 0:
+            total_demand_units += units
+            total_supply_units += units
+    
+    for row in manual_watercourse_rows:
+        units = float(row.get("units", 0.0) or 0.0)
+        if units > 0:
+            total_demand_units += units
+            total_supply_units += units
+    
+    # Add Planning Discharge Pack and Total
+    html_table += f"""
+        <tr>
+            <td colspan="7" style="padding: 6px; border: 1px solid #000; text-align: right; font-weight: bold;">Planning Discharge Pack</td>
+            <td style="padding: 6px; border: 1px solid #000; text-align: right;">£{admin_fee:,.0f}</td>
+        </tr>
+        <tr style="background-color: #f0f0f0; font-weight: bold;">
+            <td style="padding: 6px; border: 1px solid #000;">Total</td>
+            <td style="padding: 6px; border: 1px solid #000;"></td>
+            <td style="padding: 6px; border: 1px solid #000; text-align: right;">{format_units_total(total_demand_units)}</td>
+            <td style="padding: 6px; border: 1px solid #000;"></td>
+            <td style="padding: 6px; border: 1px solid #000;"></td>
+            <td style="padding: 6px; border: 1px solid #000; text-align: right;">{format_units_total(total_supply_units)}</td>
+            <td style="padding: 6px; border: 1px solid #000;"></td>
+            <td style="padding: 6px; border: 1px solid #000; text-align: right;">£{total_with_admin:,.0f}</td>
+        </tr>
+    </tbody>
+    </table>
+    """
+    
+    # Determine next steps based on amount (programmatic ending)
+    if total_with_admin < 10000:
+        next_steps = """<strong>Next Steps</strong>
+<br><br>
+BNG is a pre-commencement, not a pre-planning, condition.
+<br><br>
+To accept the quote, let us know—we'll request some basic details before sending the Allocation Agreement. The price is fixed for 30 days, but unit availability is only guaranteed once the agreement is signed.
+<br><br>
+Once you sign the agreement, pay the settlement fee and provide us with your metric and decision notice we will allocate the units to you.
+<br><br>
+If you have any questions, please reply to this email or call 01962 436574."""
+    else:
+        next_steps = """<strong>Next Steps</strong>
+<br><br>
+BNG is a pre-commencement, not a pre-planning, condition.
+<br><br>
+To accept the quote, let us know—we'll request some basic details before sending the Allocation Agreement. The price is fixed for 30 days, but unit availability is only guaranteed once the agreement is signed.
+<br><br>
+We offer two contract options:
+<br><br>
+1. <strong>Buy It Now:</strong> Pay in full on signing; units allocated immediately.<br>
+2. <strong>Reservation & Purchase:</strong> Pay a reservation fee to hold units for up to 6 months, with the option to draw them down anytime in that period.
+<br><br>
+If you have any questions, please reply to this email or call 01962 436574."""
+    
+    # Generate full email body matching exact template
+    # Dynamic intro text based on promoter selection
+    if promoter_name:
+        intro_text = f"{promoter_name} has advised us that you need Biodiversity Net Gain units for your development in {location}, and we're here to help you discharge your BNG condition."
+    else:
+        intro_text = f"Thank you for enquiring about BNG Units for your development in {location}"
+    
+    email_body = f"""
+<div style="font-family: Arial, sans-serif; font-size: 12px; line-height: 1.4;">
+
+<strong>Dear {client_name}</strong>
+<br><br>
+<strong>Our Ref: {ref_number}</strong>
+<br><br>
+{intro_text}
+<br><br>
+<strong>About Us</strong>
+<br><br>
+Wild Capital is a national supplier of BNG Units and environmental mitigation credits (Nutrient Neutrality, SANG), backed by institutional finance. We create and manage a large portfolio of nature recovery projects, owning the freehold to all mitigation land for the highest integrity and long-term assurance.
+<br><br>
+Our key advantages:
+<br><br>
+1. <strong>Permanent Nature Recovery:</strong> We dedicate all land to conservation in perpetuity, not just for the 30-year minimum.<br>
+2. <strong>Independently Managed Endowment:</strong> Long-term management funds are fully insured and overseen by independent asset managers.<br>
+3. <strong>Independent Governance:</strong> Leading third-party ecologists and contractors oversee all monitoring and habitat management, ensuring objectivity.<br>
+4. <strong>Full Ownership and Responsibility:</strong> We hold the freehold and assume complete responsibility for all delivery and management - no ambiguity.
+<br><br>
+<strong>Your Quote - £{total_with_admin:,.0f} + VAT</strong>
+<br><br>
+See a detailed breakdown of the pricing below. I've attached a PDF outlining the BNG offset and condition discharge process. If you have any questions, please let us know—we're here to help.
+<br><br>
+
+{html_table}
+
+<br><br>
+Prices exclude VAT. Any legal costs for contract amendments will be charged to the client and must be paid before allocation.
+<br><br>
+{next_steps}
+
+</div>
+    """
+    
+    # Create simplified dataframe for display
+    all_habitats = area_habitats + hedgerow_habitats + watercourse_habitats
+    report_df = pd.DataFrame(all_habitats) if all_habitats else pd.DataFrame()
+    
+    return report_df, email_body
 def prepare_options(demand_df: pd.DataFrame,
                     chosen_size: str,
                     target_lpa: str, target_nca: str,
@@ -1202,6 +1997,32 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
         else:
             cat_match = Catalog[Catalog["habitat_name"] == dem_hab]
             if cat_match.empty:
+                # Debug: habitat not found in catalog - store info for error message
+                import sys
+                error_msg = f"\n[DEBUG] Habitat '{dem_hab}' not found in catalog\n"
+                error_msg += f"Repr: {repr(dem_hab)}\n"
+                error_msg += f"Catalog has {len(Catalog)} total habitats\n"
+                
+                # Check for similar names
+                similar = Catalog[Catalog["habitat_name"].str.contains("ornamental", case=False, na=False)]
+                if not similar.empty:
+                    error_msg += f"Found {len(similar)} habitat(s) with 'ornamental':\n"
+                    for _, row in similar.head(5).iterrows():
+                        error_msg += f"  - {repr(row['habitat_name'])}\n"
+                else:
+                    error_msg += "No habitats with 'ornamental' found\n"
+                
+                # Show sample hedgerow habitats in catalog
+                hedgerow_habs = Catalog[Catalog["habitat_name"].map(is_hedgerow)]
+                error_msg += f"\nSample of {len(hedgerow_habs)} hedgerow habitats:\n"
+                for _, row in hedgerow_habs.head(10).iterrows():
+                    error_msg += f"  - {repr(row['habitat_name'])}\n"
+                
+                print(error_msg, file=sys.stderr)
+                # Store debug info to add to exception later
+                if not hasattr(prepare_hedgerow_options, '_debug_info'):
+                    prepare_hedgerow_options._debug_info = []
+                prepare_hedgerow_options._debug_info.append(error_msg)
                 continue
             demand_dist = sstr(cat_match.iloc[0]["distinctiveness_name"])
             demand_broader = sstr(cat_match.iloc[0]["broader_type"])
@@ -1213,12 +2034,16 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
         })
         
         # Find all eligible supply habitats
+        checked_supplies = 0
+        passed_rules = 0
         for _, supply_row in stock_full.iterrows():
             supply_hab = sstr(supply_row["habitat_name"])
+            checked_supplies += 1
             
             # Check hedgerow trading rules
             if not enforce_hedgerow_rules(demand_cat_row, supply_row, dist_levels_map):
                 continue
+            passed_rules += 1
             
             bank_key = sstr(supply_row["BANK_KEY"])
             stock_id = sstr(supply_row["stock_id"])
@@ -1414,7 +2239,57 @@ def optimise(demand_df: pd.DataFrame,
     bad = [di for di, idxs in idx_by_dem.items() if len(idxs) == 0]
     if bad:
         names = [sstr(demand_df.iloc[di]["habitat_name"]) for di in bad]
-        raise RuntimeError("No legal options for: " + ", ".join(names))
+        error_msg = "No legal options for: " + ", ".join(names)
+        
+        # Add detailed debug info for troubleshooting catalog mismatches
+        debug_info = []
+        
+        # Check for hedgerow/watercourse debug info from preparation functions
+        if hasattr(prepare_hedgerow_options, '_debug_info') and prepare_hedgerow_options._debug_info:
+            debug_info.extend(prepare_hedgerow_options._debug_info)
+            prepare_hedgerow_options._debug_info = []
+        if hasattr(prepare_watercourse_options, '_debug_info') and prepare_watercourse_options._debug_info:
+            debug_info.extend(prepare_watercourse_options._debug_info)
+            prepare_watercourse_options._debug_info = []
+        
+        # Also add catalog lookup info directly here
+        if not debug_info:  # Only if we didn't get info from prepare functions
+            Catalog = backend["HabitatCatalog"].copy()
+            for name in names:
+                debug_msg = f"\n[DEBUG] Habitat '{name}' has no legal options\n"
+                debug_msg += f"Repr: {repr(name)}\n"
+                debug_msg += f"Catalog has {len(Catalog)} total habitats\n"
+                
+                # Check if it's a hedgerow or watercourse
+                if is_hedgerow(name):
+                    debug_msg += "This is a HEDGEROW habitat\n"
+                    # Look for similar names
+                    if "ornamental" in name.lower():
+                        similar = Catalog[Catalog["habitat_name"].str.contains("ornamental", case=False, na=False)]
+                        if not similar.empty:
+                            debug_msg += f"Found {len(similar)} habitat(s) with 'ornamental':\n"
+                            for _, row in similar.head(5).iterrows():
+                                debug_msg += f"  - {repr(row['habitat_name'])}\n"
+                    
+                    # Show sample hedgerow habitats
+                    hedgerow_habs = Catalog[Catalog["habitat_name"].map(is_hedgerow)]
+                    debug_msg += f"\nSample of {len(hedgerow_habs)} hedgerow habitats in catalog:\n"
+                    for _, row in hedgerow_habs.head(10).iterrows():
+                        debug_msg += f"  - {repr(row['habitat_name'])}\n"
+                
+                elif is_watercourse(name):
+                    debug_msg += "This is a WATERCOURSE habitat\n"
+                    watercourse_habs = Catalog[Catalog["habitat_name"].map(is_watercourse)]
+                    debug_msg += f"\nSample of {len(watercourse_habs)} watercourse habitats in catalog:\n"
+                    for _, row in watercourse_habs.head(10).iterrows():
+                        debug_msg += f"  - {repr(row['habitat_name'])}\n"
+                
+                debug_info.append(debug_msg)
+        
+        if debug_info:
+            error_msg += "\n\n" + "\n".join(debug_info)
+        
+        raise RuntimeError(error_msg)
 
     bank_keys = sorted({opt["BANK_KEY"] for opt in options})
 
@@ -1456,8 +2331,10 @@ def optimise(demand_df: pd.DataFrame,
                 obj += -eps2 * pulp.lpSum([bank_capacity_total[b] * y[b] for b in bank_keys])
             prob += obj
 
-            # Hard limit: <= 2 banks
-            prob += pulp.lpSum([y[b] for b in bank_keys]) <= 2
+            # Dynamic bank limit: <= 2 banks normally, <= 5 banks if total demand > 5 units
+            total_demand_units = sum(dem_need.values())
+            max_banks = 5 if total_demand_units > 5 else 2
+            prob += pulp.lpSum([y[b] for b in bank_keys]) <= max_banks
 
             # Link option selection to bank usage
             for i, opt in enumerate(options):
@@ -1587,10 +2464,14 @@ def optimise(demand_df: pd.DataFrame,
         # ---- Greedy fallback (unchanged) ----
         caps = stock_caps.copy()
         used_banks: List[str] = []
+        
+        # Calculate total demand units to determine bank limit
+        total_demand_units = demand_df["units_required"].sum()
+        max_banks_greedy = 5 if total_demand_units > 5 else 2
 
         def bank_ok(b):
             cand = set(used_banks); cand.add(b)
-            return len(cand) <= 2
+            return len(cand) <= max_banks_greedy
 
         rows = []
         total_cost = 0.0

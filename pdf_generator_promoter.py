@@ -136,14 +136,31 @@ def generate_quote_pdf(client_name: str,
             f"£{admin_fee:,.0f}"
         ])
         
-        # Total row
-        total_demand_units = report_df['# Units'].sum() if '# Units' in report_df.columns else 0
-        total_supply_units = report_df['# Units_Supply'].sum() if '# Units_Supply' in report_df.columns else 0
+        # Total row - convert string values to float before summing
+        def safe_float_sum(series):
+            """Safely sum a series that may contain string or numeric values"""
+            total = 0.0
+            for val in series:
+                try:
+                    # Remove commas and convert to float
+                    if isinstance(val, str):
+                        val = val.replace(',', '')
+                    total += float(val)
+                except (ValueError, TypeError):
+                    continue
+            return total
+        
+        total_demand_units = safe_float_sum(report_df['# Units']) if '# Units' in report_df.columns else 0
+        total_supply_units = safe_float_sum(report_df['# Units_Supply']) if '# Units_Supply' in report_df.columns else 0
         total_with_admin = quote_total + admin_fee
         
         def format_units_total(value):
+            """Format units for display in the total row"""
             if value == 0:
                 return "0.00"
+            # Ensure value is numeric
+            if isinstance(value, str):
+                value = float(value.replace(',', ''))
             formatted = f"{value:.3f}"
             parts = formatted.split('.')
             if len(parts) == 2:
