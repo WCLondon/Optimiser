@@ -163,6 +163,28 @@ if st.session_state.get('submission_complete', False):
         st.write(f"**Contract Size:** {submission_data['contract_size']}")
         st.write(f"**Habitats:** {submission_data['num_habitats']}")
     
+    # Display SUO discount if applicable
+    if submission_data.get('suo_applicable', False) and submission_data.get('suo_results'):
+        st.markdown("---")
+        st.markdown("### 🎯 Surplus Uplift Offset (SUO) - Cost Discount Applied")
+        
+        suo_results = submission_data['suo_results']
+        discount_pct = suo_results['discount_fraction'] * 100
+        
+        st.success(f"✅ SUO Discount Applied: {discount_pct:.1f}% cost reduction based on eligible on-site surplus")
+        
+        # Show SUO summary metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Eligible Surplus", f"{suo_results['eligible_surplus']:.2f} units", 
+                     help="Total surplus from Medium+ distinctiveness habitats")
+        with col2:
+            st.metric("Usable (50% headroom)", f"{suo_results['usable_surplus']:.2f} units",
+                     help="50% of eligible surplus available for offset")
+        with col3:
+            st.metric("Discount Applied", f"{discount_pct:.1f}%",
+                     help="Percentage discount on allocation costs")
+    
     # PDF download button - show prominently for quotes under £20,000
     quote_total_val = submission_data.get('quote_total', 0)
     if quote_total_val < 20000:
@@ -364,6 +386,20 @@ if submitted:
         hedgerow_df = demand_data.get('hedgerows', pd.DataFrame())
         watercourse_df = demand_data.get('watercourses', pd.DataFrame())
         
+        # Store surplus for SUO calculation (if available)
+        metric_surplus = demand_data.get('surplus', pd.DataFrame())
+        has_suo_surplus = False
+        if not metric_surplus.empty:
+            # Check if there's usable surplus (Medium+ distinctiveness)
+            distinctiveness_order = {"Very Low": 0, "Low": 1, "Medium": 2, "High": 3, "Very High": 4}
+            eligible_surplus = metric_surplus[
+                metric_surplus["distinctiveness"].apply(
+                    lambda d: distinctiveness_order.get(str(d), 0) >= 2
+                )
+            ]
+            if not eligible_surplus.empty and eligible_surplus["units_surplus"].sum() > 0:
+                has_suo_surplus = True
+        
         # Rename columns to match optimizer expectations for area habitats
         if not area_df.empty:
             area_df = area_df.rename(columns={'habitat': 'habitat_name', 'units': 'units_required'})
@@ -451,6 +487,56 @@ if submitted:
         
         progress_bar.progress(70)
         
+        # ===== STEP 6.5: Compute SUO (Surplus Uplift Offset) Discount =====
+        suo_discount_fraction = 0.0
+        suo_applicable = False
+        suo_results = None
+        
+        if has_suo_surplus and not allocation_df.empty:
+            try:
+                # Filter to Medium+ distinctiveness only
+                distinctiveness_order = {"Very Low": 0, "Low": 1, "Medium": 2, "High": 3, "Very High": 4}
+                eligible_surplus = metric_surplus[
+                    metric_surplus["distinctiveness"].apply(
+                        lambda d: distinctiveness_order.get(str(d), 0) >= 2
+                    )
+                ].copy()
+                
+                if not eligible_surplus.empty:
+                    # Calculate total eligible surplus
+                    total_eligible = eligible_surplus["units_surplus"].sum()
+                    
+                    # Apply 50% headroom
+                    usable_surplus = total_eligible * 0.5
+                    
+                    # Calculate total units purchased
+                    total_units = allocation_df["units_supplied"].sum()
+                    
+                    # Calculate discount fraction
+                    discount_fraction = min(usable_surplus / total_units, 1.0) if total_units > 0 else 0.0
+                    
+                    if discount_fraction > 0:
+                        suo_applicable = True
+                        suo_discount_fraction = discount_fraction
+                        suo_results = {
+                            "applicable": True,
+                            "discount_fraction": discount_fraction,
+                            "eligible_surplus": total_eligible,
+                            "usable_surplus": usable_surplus,
+                            "total_units_purchased": total_units
+                        }
+                        
+                        # Apply discount to quote total
+                        original_quote_total = quote_total
+                        quote_total = quote_total * (1 - suo_discount_fraction)
+                        
+                        print(f"[SUO] Discount applied: {discount_fraction*100:.1f}%")
+                        print(f"[SUO] Original cost: £{original_quote_total:,.2f}")
+                        print(f"[SUO] Discounted cost: £{quote_total:,.2f}")
+            except Exception as e:
+                print(f"[SUO] Error computing discount: {e}")
+                # Continue without SUO if there's an error
+        
         # ===== STEP 7: Generate PDF (if < £20k) =====
         show_loading_message(LOADING_MESSAGES[message_index % len(LOADING_MESSAGES)])
         message_index += 1
@@ -479,7 +565,8 @@ if submitted:
                     backend=backend,
                     promoter_name=promoter_name,
                     promoter_discount_type=discount_type,
-                    promoter_discount_value=discount_value
+                    promoter_discount_value=discount_value,
+                    suo_discount_fraction=suo_discount_fraction
                 )
                 
                 print(f"DEBUG: Report table generated successfully, generating PDF...")
@@ -587,7 +674,9 @@ if submitted:
             'allocation_df': allocation_df,
             'debug_info': debug_info,
             'pdf_content': pdf_content,
-            'pdf_debug_message': pdf_debug_message
+            'pdf_debug_message': pdf_debug_message,
+            'suo_applicable': suo_applicable,
+            'suo_results': suo_results
         }
         
         # Rerun to show confirmation screen
