@@ -6223,17 +6223,18 @@ Wild Capital Team"""
             )
             
             if csv_data:
+                # Display CSV in a code block with copy button
+                st.code(csv_data, language=None, line_numbers=False)
+                st.caption("👆 Click the copy button in the top-right corner of the code block above to copy the CSV data to your clipboard, then paste into the Sales & Quotes Excel workbook.")
+                
+                # Also provide download option as backup
                 st.download_button(
-                    "📥 Download Sales & Quotes CSV",
+                    "💾 Download as CSV file (backup option)",
                     data=csv_data,
                     file_name=f"Sales_Quotes_{ref_number}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv",
                     mime="text/csv",
-                    help="Download CSV data to paste into Sales & Quotes Excel workbook (no headers)"
+                    help="Download CSV file if copy-to-clipboard doesn't work"
                 )
-                
-                # Show preview
-                with st.expander("Preview CSV Data", expanded=False):
-                    st.text(csv_data[:500] + "..." if len(csv_data) > 500 else csv_data)
             else:
                 st.info("No allocation data available for CSV export.")
         except Exception as e:

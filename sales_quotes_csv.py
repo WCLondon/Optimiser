@@ -13,6 +13,102 @@ import pandas as pd
 from optimizer_core import ADMIN_FEE_GBP, ADMIN_FEE_FRACTIONAL_GBP
 
 
+# Bank reference to bank name mapping
+BANK_NAME_MAPPING = {
+    "WC1P6": "Denchworth",
+    "WC1P5": "Bedford",
+    "WC1P2": "Nunthorpe",  # Default for WC1P2 (can also be Stokesley or Horden)
+    "WC1P3": "Cobham",
+    "WC1P4": "Barnsley",
+    "WC1P8": "Marbury",
+}
+
+# Alternative names for specific bank refs (when there are multiple locations)
+BANK_NAME_ALTERNATIVES = {
+    "WC1P2": ["Stokesley", "Nunthorpe", "Horden"],
+    "WC1P6": ["Denchworth", "Central Bedfordshire"],
+}
+
+
+def get_standardized_bank_name(bank_ref: str, bank_name: str) -> tuple[str, str, str]:
+    """
+    Get standardized bank name from mapping, or return 'Other' with notes.
+    
+    Args:
+        bank_ref: Bank reference (e.g., "WC1P2")
+        bank_name: Bank name from optimizer (e.g., "Nunthorpe")
+    
+    Returns:
+        Tuple of (standardized_bank_ref_name, notes_for_column_T, source_display)
+        - standardized_bank_ref_name: Either the mapped name or 'Other'
+        - notes_for_column_T: Empty string or the actual bank name if using 'Other'
+        - source_display: The full "ref - name" string for column AC
+    """
+    bank_ref = bank_ref.strip()
+    bank_name = bank_name.strip()
+    
+    # Check if bank_ref exists in mapping
+    if bank_ref in BANK_NAME_MAPPING:
+        mapped_name = BANK_NAME_MAPPING[bank_ref]
+        
+        # Check if the provided bank_name is in alternatives
+        if bank_ref in BANK_NAME_ALTERNATIVES:
+            alternatives = BANK_NAME_ALTERNATIVES[bank_ref]
+            # If bank_name matches one of the alternatives, use it
+            if bank_name in alternatives:
+                return bank_name, "", f"{bank_ref} - {bank_name}"
+        
+        # Use the mapped name
+        return mapped_name, "", f"{bank_ref} - {mapped_name}"
+    
+    # Bank not in mapping - use 'Other' and add to notes
+    return "Other", bank_name, f"{bank_ref} - Other"
+
+
+def split_paired_habitat(habitat_type: str, units_supplied: float, effective_units: float, 
+                         avg_effective_unit_price: float) -> List[Dict[str, Any]]:
+    """
+    Split a paired habitat (e.g., "Habitat A + Habitat B") into separate habitats.
+    
+    Args:
+        habitat_type: Habitat type string (may contain " + ")
+        units_supplied: Total units supplied
+        effective_units: Total effective units
+        avg_effective_unit_price: Average effective unit price
+    
+    Returns:
+        List of habitat dictionaries (1 if not paired, 2+ if paired with "+")
+    """
+    # Check if habitat contains " + " indicating it's paired
+    if " + " in habitat_type:
+        # Split by " + "
+        parts = [p.strip() for p in habitat_type.split(" + ")]
+        
+        # Split units evenly (or could use more sophisticated logic if available)
+        num_parts = len(parts)
+        units_per_part = units_supplied / num_parts
+        effective_units_per_part = effective_units / num_parts
+        
+        # Create separate habitat entries
+        result = []
+        for part_name in parts:
+            result.append({
+                "type": part_name,
+                "units_supplied": units_per_part,
+                "effective_units": effective_units_per_part,
+                "avg_effective_unit_price": avg_effective_unit_price
+            })
+        return result
+    else:
+        # Not paired, return as-is
+        return [{
+            "type": habitat_type,
+            "units_supplied": units_supplied,
+            "effective_units": effective_units,
+            "avg_effective_unit_price": avg_effective_unit_price
+        }]
+
+
 def get_admin_fee_for_contract_size(contract_size: str) -> float:
     """
     Get the admin fee based on contract size.
@@ -90,6 +186,26 @@ def generate_sales_quotes_csv(
         contract_value_gbp = allocation.get("contract_value_gbp", 0.0)
         habitats = allocation.get("habitats", [])
         
+        # Get standardized bank name and check if we need to use 'Other'
+        standardized_bank_name, bank_fallback_note, source_display = get_standardized_bank_name(bank_ref, bank_name)
+        
+        # Split paired habitats (e.g., "Habitat A + Habitat B" becomes separate entries)
+        expanded_habitats = []
+        for habitat in habitats:
+            habitat_type = habitat.get("type", "")
+            units_supplied = habitat.get("units_supplied", 0.0)
+            effective_units = habitat.get("effective_units", 0.0)
+            avg_effective_unit_price = habitat.get("avg_effective_unit_price", 0.0)
+            
+            # Split if habitat contains " + "
+            split_habitats = split_paired_habitat(
+                habitat_type, units_supplied, effective_units, avg_effective_unit_price
+            )
+            expanded_habitats.extend(split_habitats)
+        
+        # Limit to 8 habitats (as per spec)
+        expanded_habitats = expanded_habitats[:8]
+        
         # Create CSV row with all columns A-CY
         # We need to create a list representing each column
         # A-BB (0-53) = 54 columns for basic fields
@@ -114,8 +230,12 @@ def generate_sales_quotes_csv(
         # Columns E-S (indices 4-18): blank (ignore)
         
         # Column T (index 19): Notes
-        # SRM logic based on pairing and spatial_relation
-        if is_paired:
+        # Priority 1: Bank fallback note (if using 'Other')
+        # Priority 2: SRM logic based on pairing and spatial_relation
+        if bank_fallback_note:
+            # If bank is not in mapping, put the actual bank name here
+            row[19] = bank_fallback_note
+        elif is_paired:
             if spatial_relation == "far":
                 row[19] = "SRM manual (0.5)"
             elif spatial_relation == "adjacent":
@@ -126,8 +246,8 @@ def generate_sales_quotes_csv(
         # Columns U-AB (indices 20-27): blank (ignore)
         
         # Column AC (index 28): Habitat Bank / Source of Mitigation
-        # Format: "{bank_ref} - {bank_name}"
-        row[28] = f"{bank_ref} - {bank_name}"
+        # Use the standardized display format
+        row[28] = source_display
         
         # Column AD (index 29): Spatial Multiplier
         if is_paired:
@@ -180,9 +300,9 @@ def generate_sales_quotes_csv(
         # Habitat 7: CL-CR (indices 89-95)
         # Habitat 8: CS-CY (indices 96-102)
         
-        # Process all habitats (up to 8)
-        for hab_idx in range(min(len(habitats), 8)):
-            habitat = habitats[hab_idx]
+        # Process all habitats (up to 8) - use expanded_habitats which has paired habitats split
+        for hab_idx in range(min(len(expanded_habitats), 8)):
+            habitat = expanded_habitats[hab_idx]
             
             # Calculate starting column index for this habitat
             # Habitat 1 starts at 47, each habitat takes 7 columns

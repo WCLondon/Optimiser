@@ -367,7 +367,7 @@ def test_habitat_units_paired_vs_non_paired():
 def test_csv_escaping():
     """Test that CSV fields with commas/quotes are properly escaped."""
     allocations = [{
-        "bank_ref": "WC1P2",
+        "bank_ref": "WC1P99",  # Use unknown bank so name is preserved
         "bank_name": "Test, Bank",  # Contains comma
         "is_paired": False,
         "spatial_relation": "far",
@@ -397,8 +397,9 @@ def test_csv_escaping():
     
     # Check that fields with commas are quoted
     assert '"Test, Client"' in csv_output
-    assert '"WC1P2 - Test, Bank"' in csv_output
+    assert 'WC1P99 - Other' in csv_output  # Bank shows as "Other" (no commas, so not quoted)
     assert 'Grassland ""Special""' in csv_output  # Quotes escaped
+    assert '"Test, Bank"' in csv_output  # Bank name in notes (column T) - has comma so quoted
 
 
 def test_generate_from_dataframe():
@@ -604,6 +605,165 @@ def test_habitat_limit_8():
     # Check that habitat 9 and 10 are not included (we only go to column 102)
     # All fields after column 102 should not exist
     assert len(fields) == 103  # Exactly 103 columns (A to CY)
+
+
+def test_bank_name_mapping():
+    """Test that bank names are mapped correctly."""
+    from sales_quotes_csv import get_standardized_bank_name
+    
+    # Test known banks
+    name, note, display = get_standardized_bank_name("WC1P2", "Nunthorpe")
+    assert name == "Nunthorpe"
+    assert note == ""
+    assert display == "WC1P2 - Nunthorpe"
+    
+    name, note, display = get_standardized_bank_name("WC1P2", "Stokesley")
+    assert name == "Stokesley"
+    assert note == ""
+    assert display == "WC1P2 - Stokesley"
+    
+    name, note, display = get_standardized_bank_name("WC1P4", "Barnsley")
+    assert name == "Barnsley"
+    assert note == ""
+    assert display == "WC1P4 - Barnsley"
+    
+    # Test unknown bank (should use 'Other' and add note)
+    name, note, display = get_standardized_bank_name("WC1P9", "UnknownBank")
+    assert name == "Other"
+    assert note == "UnknownBank"
+    assert display == "WC1P9 - Other"
+
+
+def test_paired_habitat_splitting():
+    """Test that paired habitats (with +) are split correctly."""
+    allocations = [{
+        "bank_ref": "WC1P2",
+        "bank_name": "Nunthorpe",
+        "is_paired": False,
+        "spatial_relation": "far",
+        "spatial_multiplier_numeric": 2.0,
+        "allocation_total_credits": 10.0,
+        "contract_value_gbp": 10000.0,
+        "habitats": [{
+            "type": "Grassland - Traditional orchards + Heathland and shrub - Mixed scrub",
+            "units_supplied": 10.0,
+            "effective_units": 20.0,
+            "avg_effective_unit_price": 500.0
+        }]
+    }]
+    
+    csv_output = generate_sales_quotes_csv(
+        quote_number="1937",
+        client_name="Test Client",
+        development_address="Test Address",
+        base_ref="BNG01654",
+        introducer=None,
+        today_date=datetime(2025, 11, 10),
+        local_planning_authority="Test LPA",
+        national_character_area="Test NCA",
+        allocations=allocations,
+        contract_size="small"
+    )
+    
+    # The paired habitat should be split into 2 separate habitat entries
+    # Habitat 1: Grassland - Traditional orchards
+    # Habitat 2: Heathland and shrub - Mixed scrub
+    import csv
+    import io
+    reader = csv.reader(io.StringIO(csv_output))
+    fields = next(reader)
+    
+    # Check Habitat 1 (indices 47-53)
+    assert fields[47] == "Grassland - Traditional orchards"
+    assert fields[48] == "5.0"  # Split evenly: 10.0 / 2 = 5.0
+    
+    # Check Habitat 2 (indices 54-60)
+    assert fields[54] == "Heathland and shrub - Mixed scrub"
+    assert fields[55] == "5.0"  # Split evenly: 10.0 / 2 = 5.0
+
+
+def test_bank_fallback_to_other():
+    """Test that unknown banks use 'Other' with bank name in notes."""
+    allocations = [{
+        "bank_ref": "WC1P99",  # Unknown bank
+        "bank_name": "Mystery Bank",
+        "is_paired": False,
+        "spatial_relation": "far",
+        "spatial_multiplier_numeric": 2.0,
+        "allocation_total_credits": 10.0,
+        "contract_value_gbp": 10000.0,
+        "habitats": [{
+            "type": "Grassland",
+            "units_supplied": 10.0,
+            "effective_units": 20.0,
+            "avg_effective_unit_price": 500.0
+        }]
+    }]
+    
+    csv_output = generate_sales_quotes_csv(
+        quote_number="1938",
+        client_name="Test",
+        development_address="Test",
+        base_ref="BNG01655",
+        introducer=None,
+        today_date=datetime(2025, 11, 10),
+        local_planning_authority="Test",
+        national_character_area="Test",
+        allocations=allocations,
+        contract_size="small"
+    )
+    
+    import csv
+    import io
+    reader = csv.reader(io.StringIO(csv_output))
+    fields = next(reader)
+    
+    # Column T (index 19): Notes should have the actual bank name
+    assert fields[19] == "Mystery Bank"
+    
+    # Column AC (index 28): Should show "WC1P99 - Other"
+    assert fields[28] == "WC1P99 - Other"
+
+
+def test_bank_fallback_priority_over_srm():
+    """Test that bank fallback note takes priority over SRM notes."""
+    allocations = [{
+        "bank_ref": "WC1P99",  # Unknown bank
+        "bank_name": "Mystery Bank",
+        "is_paired": True,  # Would normally trigger SRM note
+        "spatial_relation": "far",  # Would normally trigger "SRM manual (0.5)"
+        "spatial_multiplier_numeric": 1.0,
+        "allocation_total_credits": 10.0,
+        "contract_value_gbp": 10000.0,
+        "habitats": [{
+            "type": "Grassland",
+            "units_supplied": 10.0,
+            "effective_units": 10.0,
+            "avg_effective_unit_price": 1000.0
+        }]
+    }]
+    
+    csv_output = generate_sales_quotes_csv(
+        quote_number="1939",
+        client_name="Test",
+        development_address="Test",
+        base_ref="BNG01656",
+        introducer=None,
+        today_date=datetime(2025, 11, 10),
+        local_planning_authority="Test",
+        national_character_area="Test",
+        allocations=allocations,
+        contract_size="small"
+    )
+    
+    import csv
+    import io
+    reader = csv.reader(io.StringIO(csv_output))
+    fields = next(reader)
+    
+    # Column T (index 19): Should have bank name, not SRM note
+    assert fields[19] == "Mystery Bank"
+    assert fields[19] != "SRM manual (0.5)"
 
 
 if __name__ == "__main__":
