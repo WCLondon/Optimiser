@@ -2225,14 +2225,50 @@ def optimise(demand_df: pd.DataFrame,
         names = [sstr(demand_df.iloc[di]["habitat_name"]) for di in bad]
         error_msg = "No legal options for: " + ", ".join(names)
         
-        # Add debug info if available from prepare_hedgerow_options or prepare_watercourse_options
+        # Add detailed debug info for troubleshooting catalog mismatches
         debug_info = []
+        
+        # Check for hedgerow/watercourse debug info from preparation functions
         if hasattr(prepare_hedgerow_options, '_debug_info') and prepare_hedgerow_options._debug_info:
             debug_info.extend(prepare_hedgerow_options._debug_info)
             prepare_hedgerow_options._debug_info = []
         if hasattr(prepare_watercourse_options, '_debug_info') and prepare_watercourse_options._debug_info:
             debug_info.extend(prepare_watercourse_options._debug_info)
             prepare_watercourse_options._debug_info = []
+        
+        # Also add catalog lookup info directly here
+        if not debug_info:  # Only if we didn't get info from prepare functions
+            Catalog = backend["HabitatCatalog"].copy()
+            for name in names:
+                debug_msg = f"\n[DEBUG] Habitat '{name}' has no legal options\n"
+                debug_msg += f"Repr: {repr(name)}\n"
+                debug_msg += f"Catalog has {len(Catalog)} total habitats\n"
+                
+                # Check if it's a hedgerow or watercourse
+                if is_hedgerow(name):
+                    debug_msg += "This is a HEDGEROW habitat\n"
+                    # Look for similar names
+                    if "ornamental" in name.lower():
+                        similar = Catalog[Catalog["habitat_name"].str.contains("ornamental", case=False, na=False)]
+                        if not similar.empty:
+                            debug_msg += f"Found {len(similar)} habitat(s) with 'ornamental':\n"
+                            for _, row in similar.head(5).iterrows():
+                                debug_msg += f"  - {repr(row['habitat_name'])}\n"
+                    
+                    # Show sample hedgerow habitats
+                    hedgerow_habs = Catalog[Catalog["habitat_name"].map(is_hedgerow)]
+                    debug_msg += f"\nSample of {len(hedgerow_habs)} hedgerow habitats in catalog:\n"
+                    for _, row in hedgerow_habs.head(10).iterrows():
+                        debug_msg += f"  - {repr(row['habitat_name'])}\n"
+                
+                elif is_watercourse(name):
+                    debug_msg += "This is a WATERCOURSE habitat\n"
+                    watercourse_habs = Catalog[Catalog["habitat_name"].map(is_watercourse)]
+                    debug_msg += f"\nSample of {len(watercourse_habs)} watercourse habitats in catalog:\n"
+                    for _, row in watercourse_habs.head(10).iterrows():
+                        debug_msg += f"  - {repr(row['habitat_name'])}\n"
+                
+                debug_info.append(debug_msg)
         
         if debug_info:
             error_msg += "\n\n" + "\n".join(debug_info)
