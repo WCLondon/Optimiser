@@ -1968,16 +1968,31 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
         else:
             cat_match = Catalog[Catalog["habitat_name"] == dem_hab]
             if cat_match.empty:
-                # Debug: print what's in the catalog vs what we're looking for
-                print(f"[DEBUG] Habitat '{dem_hab}' not found in catalog")
-                print(f"[DEBUG] Habitat repr: {repr(dem_hab)}")
-                print(f"[DEBUG] Catalog has {len(Catalog)} habitats")
+                # Debug: habitat not found in catalog
+                import sys
+                error_msg = f"\n[HEDGEROW CATALOG DEBUG]\n"
+                error_msg += f"Habitat not found: '{dem_hab}'\n"
+                error_msg += f"Habitat repr: {repr(dem_hab)}\n"
+                error_msg += f"Catalog has {len(Catalog)} total habitats\n"
+                
                 # Check for similar names
                 similar = Catalog[Catalog["habitat_name"].str.contains("ornamental", case=False, na=False)]
                 if not similar.empty:
-                    print(f"[DEBUG] Found similar habitats:")
+                    error_msg += f"Found {len(similar)} habitat(s) containing 'ornamental':\n"
                     for _, row in similar.iterrows():
-                        print(f"  - {repr(row['habitat_name'])}")
+                        error_msg += f"  - {repr(row['habitat_name'])}\n"
+                else:
+                    error_msg += "No habitats found containing 'ornamental'\n"
+                
+                # Show all hedgerow habitats in catalog
+                hedgerow_habs = Catalog[Catalog["habitat_name"].map(is_hedgerow)]
+                error_msg += f"\nAll {len(hedgerow_habs)} hedgerow habitats in catalog:\n"
+                for _, row in hedgerow_habs.head(20).iterrows():
+                    error_msg += f"  - {repr(row['habitat_name'])}\n"
+                if len(hedgerow_habs) > 20:
+                    error_msg += f"  ... and {len(hedgerow_habs) - 20} more\n"
+                
+                print(error_msg, file=sys.stderr)
                 continue
             demand_dist = sstr(cat_match.iloc[0]["distinctiveness_name"])
             demand_broader = sstr(cat_match.iloc[0]["broader_type"])
