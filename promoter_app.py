@@ -683,7 +683,14 @@ if submitted:
         st.rerun()
         
     except Exception as e:
-        st.error(f"❌ Error processing quote request: {str(e)}")
+        error_msg = str(e)
+        st.error(f"❌ Error processing quote request: {error_msg}")
+        
         import traceback
         with st.expander("Show error details"):
             st.code(traceback.format_exc())
+        
+        # Show catalog debug info if present in error message
+        if "[DEBUG]" in error_msg:
+            with st.expander("🔍 Catalog Debug Information", expanded=True):
+                st.text(error_msg)
