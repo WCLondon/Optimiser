@@ -3746,8 +3746,10 @@ def optimise(demand_df: pd.DataFrame,
                 obj += -eps2 * pulp.lpSum([bank_capacity_total[b] * y[b] for b in bank_keys])
             prob += obj
 
-            # Hard limit: <= 2 banks
-            prob += pulp.lpSum([y[b] for b in bank_keys]) <= 2
+            # Dynamic bank limit: <= 2 banks normally, <= 5 banks if total demand > 5 units
+            total_demand_units = sum(dem_need.values())
+            max_banks = 5 if total_demand_units > 5 else 2
+            prob += pulp.lpSum([y[b] for b in bank_keys]) <= max_banks
 
             # Link option selection to bank usage
             for i, opt in enumerate(options):
@@ -3874,10 +3876,14 @@ def optimise(demand_df: pd.DataFrame,
         # ---- Greedy fallback (unchanged) ----
         caps = stock_caps.copy()
         used_banks: List[str] = []
+        
+        # Calculate total demand units to determine bank limit
+        total_demand_units = demand_df["units_required"].sum()
+        max_banks_greedy = 5 if total_demand_units > 5 else 2
 
         def bank_ok(b):
             cand = set(used_banks); cand.add(b)
-            return len(cand) <= 2
+            return len(cand) <= max_banks_greedy
 
         rows = []
         total_cost = 0.0
