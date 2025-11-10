@@ -4203,8 +4203,8 @@ def compute_suo_discount(alloc_df: pd.DataFrame, backend: Dict[str, pd.DataFrame
         total_units = alloc_df["units_supplied"].sum()
         
         # Calculate discount fraction: usable_surplus / total_units_to_mitigate
-        # Note: We do NOT adjust for SRM here - the discount is simply based on surplus vs units needed
-        discount_fraction = min(usable_surplus / total_units, 1.0) if total_units > 0 else 0.0
+        # Maximum discount capped at 60%
+        discount_fraction = min(usable_surplus / total_units, 0.60) if total_units > 0 else 0.0
         
         if discount_fraction > 0:
             return {

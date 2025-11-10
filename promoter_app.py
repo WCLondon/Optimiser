@@ -512,8 +512,8 @@ if submitted:
                     # Calculate total units purchased
                     total_units = allocation_df["units_supplied"].sum()
                     
-                    # Calculate discount fraction
-                    discount_fraction = min(usable_surplus / total_units, 1.0) if total_units > 0 else 0.0
+                    # Calculate discount fraction with 60% maximum cap
+                    discount_fraction = min(usable_surplus / total_units, 0.60) if total_units > 0 else 0.0
                     
                     if discount_fraction > 0:
                         suo_applicable = True
