@@ -1601,6 +1601,10 @@ def prepare_options(demand_df: pd.DataFrame,
     Stock = backend["Stock"].copy()
     Trading = backend.get("TradingRules", pd.DataFrame())
     
+    # Initialize debug info storage
+    if not hasattr(prepare_options, '_debug_info'):
+        prepare_options._debug_info = []
+    
     # Build dist_levels_map from backend
     dist_levels_map = build_dist_levels_map(backend)
 
@@ -1738,28 +1742,28 @@ def prepare_options(demand_df: pd.DataFrame,
         dem_hab = sstr(drow["habitat_name"])
         
         # DEBUG: Log all demands being processed
-        print(f"[prepare_options] Processing demand #{di}: '{dem_hab}'")
+        prepare_options._debug_info.append(f"[Area Ledger] Processing demand #{di}: '{dem_hab}'")
         
         # Skip hedgerow and watercourse demands using UmbrellaType ONLY
         if "UmbrellaType" in Catalog.columns:
             cat_match = Catalog[Catalog["habitat_name"].astype(str).str.strip() == dem_hab.strip()]
-            print(f"[prepare_options]   Catalog lookup: {len(cat_match)} matches for '{dem_hab.strip()}'")
+            prepare_options._debug_info.append(f"[Area Ledger]   Catalog lookup: {len(cat_match)} matches for '{dem_hab.strip()}'")
             if not cat_match.empty:
                 umb = sstr(cat_match.iloc[0]["UmbrellaType"]).strip().lower()
-                print(f"[prepare_options]   UmbrellaType: '{umb}'")
+                prepare_options._debug_info.append(f"[Area Ledger]   UmbrellaType: '{umb}'")
                 # Skip if this is a Hedgerow or Watercourse habitat
                 if umb == "hedgerow" or umb == "watercourse":
-                    print(f"[prepare_options]   ✓ SKIPPING {umb} demand")
+                    prepare_options._debug_info.append(f"[Area Ledger]   ✓ SKIPPING {umb} demand")
                     continue
                 else:
-                    print(f"[prepare_options]   → Processing as area habitat")
+                    prepare_options._debug_info.append(f"[Area Ledger]   → Processing as area habitat")
             else:
-                print(f"[prepare_options]   ⚠ Not found in Catalog - processing as area habitat")
+                prepare_options._debug_info.append(f"[Area Ledger]   ⚠ Not found in Catalog - processing as area habitat")
         else:
-            print(f"[prepare_options]   ⚠ UmbrellaType column missing - using keyword fallback")
+            prepare_options._debug_info.append(f"[Area Ledger]   ⚠ UmbrellaType column missing - using keyword fallback")
             # Fallback to keyword-based detection only if UmbrellaType column doesn't exist
             if is_hedgerow(dem_hab) or is_watercourse(dem_hab):
-                print(f"[prepare_options]   ✓ SKIPPING via keyword detection")
+                prepare_options._debug_info.append(f"[Area Ledger]   ✓ SKIPPING via keyword detection")
                 continue
 
         if dem_hab == NET_GAIN_LABEL:
@@ -1867,10 +1871,10 @@ def prepare_options(demand_df: pd.DataFrame,
                     dem_umb_type = sstr(dem_cat_check.iloc[0]["UmbrellaType"]).strip().lower()
                     if dem_umb_type == "hedgerow" or dem_umb_type == "watercourse":
                         # Skip this option - demand is not an area habitat
-                        print(f"[prepare_options]   ✓ SKIPPING NORMAL OPTION for {dem_umb_type} demand '{dem_hab}'")
+                        prepare_options._debug_info.append(f"[Area Ledger]   ✓ SKIPPING NORMAL OPTION for {dem_umb_type} demand '{dem_hab}'")
                         continue
             
-            print(f"[prepare_options]   → CREATING NORMAL OPTION for demand '{dem_hab}' supply '{srow['habitat_name']}'")
+            prepare_options._debug_info.append(f"[Area Ledger]   → CREATING NORMAL OPTION for demand '{dem_hab}' supply '{srow['habitat_name']}'")
             options.append({
                 "type": "normal",
                 "demand_idx": di,
@@ -2006,11 +2010,11 @@ def prepare_options(demand_df: pd.DataFrame,
                             dem_umb_type = sstr(dem_cat_check.iloc[0]["UmbrellaType"]).strip().lower()
                             if dem_umb_type == "hedgerow" or dem_umb_type == "watercourse":
                                 # Skip this paired option - demand is not an area habitat
-                                print(f"[prepare_options]   ✓ SKIPPING PAIRED OPTION for {dem_umb_type} demand '{dem_hab}'")
+                                prepare_options._debug_info.append(f"[Area Ledger]   ✓ SKIPPING PAIRED OPTION for {dem_umb_type} demand '{dem_hab}'")
                                 continue
                     
                     # Always add paired option and let optimizer choose the best allocation
-                    print(f"[prepare_options]   → CREATING PAIRED OPTION for demand '{dem_hab}' (di={di})")
+                    prepare_options._debug_info.append(f"[Area Ledger]   → CREATING PAIRED OPTION for demand '{dem_hab}' (di={di})")
                     options.append({
                         "type": "paired",
                         "demand_idx": di,
@@ -2335,6 +2339,28 @@ def optimise(demand_df: pd.DataFrame,
     stock_bankkey.update(bk_area)
     stock_bankkey.update(bk_hedge)
     stock_bankkey.update(bk_water)
+    
+    # Collect debug info from prepare functions and add to diagnostics
+    if hasattr(prepare_options, '_debug_info') and prepare_options._debug_info:
+        debug_lines.append("")
+        debug_lines.append("🔍 Area Ledger Demand Processing:")
+        debug_lines.append("-" * 80)
+        debug_lines.extend(prepare_options._debug_info)
+        prepare_options._debug_info = []
+    
+    if hasattr(prepare_hedgerow_options, '_debug_info') and prepare_hedgerow_options._debug_info:
+        debug_lines.append("")
+        debug_lines.append("🔍 Hedgerow Ledger Demand Processing:")
+        debug_lines.append("-" * 80)
+        debug_lines.extend(prepare_hedgerow_options._debug_info)
+        prepare_hedgerow_options._debug_info = []
+    
+    if hasattr(prepare_watercourse_options, '_debug_info') and prepare_watercourse_options._debug_info:
+        debug_lines.append("")
+        debug_lines.append("🔍 Watercourse Ledger Demand Processing:")
+        debug_lines.append("-" * 80)
+        debug_lines.extend(prepare_watercourse_options._debug_info)
+        prepare_watercourse_options._debug_info = []
 
     if not options:
         raise RuntimeError("No feasible options. Check prices/stock/rules or location tiers.")
