@@ -1707,15 +1707,17 @@ def prepare_options(demand_df: pd.DataFrame,
         if is_hedgerow(dem_hab):
             continue
         
-        # Use UmbrellaType to identify watercourse demands (same logic as prepare_watercourse_options)
+        # Skip watercourse demands - use UmbrellaType if available, fallback to keyword detection
+        is_wc_by_umbrella = False
         if "UmbrellaType" in Catalog.columns:
             cat_match = Catalog[Catalog["habitat_name"].astype(str).str.strip() == dem_hab]
             if not cat_match.empty:
                 umb = sstr(cat_match.iloc[0]["UmbrellaType"]).lower()
                 if umb == "watercourse":
-                    continue
-        # Fallback to keyword detection if UmbrellaType not available
-        elif is_watercourse(dem_hab):
+                    is_wc_by_umbrella = True
+        
+        # Skip if identified as watercourse by UmbrellaType OR by keyword detection
+        if is_wc_by_umbrella or is_watercourse(dem_hab):
             continue
 
         if dem_hab == NET_GAIN_LABEL:
@@ -2021,16 +2023,17 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
         if not is_hedgerow(dem_hab):
             continue
         
-        # Skip watercourse demand (should not be in hedgerow ledger)
-        # Use UmbrellaType for consistency with watercourse ledger logic
+        # Skip watercourse demands - use UmbrellaType if available, fallback to keyword detection
+        is_wc_by_umbrella = False
         if "UmbrellaType" in Catalog.columns:
             cat_match = Catalog[Catalog["habitat_name"].astype(str).str.strip() == dem_hab]
             if not cat_match.empty:
                 umb = sstr(cat_match.iloc[0]["UmbrellaType"]).lower()
                 if umb == "watercourse":
-                    continue
-        # Fallback to keyword detection if UmbrellaType not available
-        elif is_watercourse(dem_hab):
+                    is_wc_by_umbrella = True
+        
+        # Skip if identified as watercourse by UmbrellaType OR by keyword detection
+        if is_wc_by_umbrella or is_watercourse(dem_hab):
             continue
         
         demand_units = float(demand_row.get("units_required", 0.0))
