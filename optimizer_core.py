@@ -984,12 +984,29 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame,
                 "Offset Cost": f"£{offset_cost_display:,.0f}"
             }
             
-            # Categorize by habitat type
-            if demand_habitat == "Net Gain (Hedgerows)" or "hedgerow" in demand_habitat.lower() or "hedgerow" in supply_habitat.lower():
+            # Categorize by habitat type using UmbrellaType from catalog
+            demand_umbrella_type = None
+            supply_umbrella_type = None
+            
+            # Get UmbrellaType for demand habitat
+            if "UmbrellaType" in backend["HabitatCatalog"].columns:
+                demand_cat = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"].astype(str).str.strip() == demand_habitat.strip()]
+                if not demand_cat.empty:
+                    demand_umbrella_type = sstr(demand_cat.iloc[0]["UmbrellaType"]).strip().lower()
+            
+            # Get UmbrellaType for supply habitat (for paired allocations, use the displayed habitat)
+            if "UmbrellaType" in backend["HabitatCatalog"].columns:
+                supply_cat = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"].astype(str).str.strip() == supply_habitat.strip()]
+                if not supply_cat.empty:
+                    supply_umbrella_type = sstr(supply_cat.iloc[0]["UmbrellaType"]).strip().lower()
+            
+            # Categorize based on UmbrellaType (prefer demand habitat's type)
+            if demand_umbrella_type == "hedgerow" or demand_habitat == "Net Gain (Hedgerows)":
                 hedgerow_habitats.append(row_data)
-            elif "watercourse" in demand_habitat.lower() or "water" in supply_habitat.lower():
+            elif demand_umbrella_type == "watercourse" or demand_habitat == "Net Gain (Watercourses)":
                 watercourse_habitats.append(row_data)
             else:
+                # Area habitat (or unknown - treat as area for backwards compatibility)
                 area_habitats.append(row_data)
     
     # Process manual hedgerow entries
