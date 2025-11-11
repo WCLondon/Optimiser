@@ -2980,7 +2980,7 @@ def prepare_options(demand_df: pd.DataFrame,
 
     for df, cols in [
         (Banks, ["bank_id","bank_name","BANK_KEY","lpa_name","nca_name","lat","lon","postcode","address"]),
-        (Catalog, ["habitat_name","broader_type","distinctiveness_name"]),
+        (Catalog, ["habitat_name","broader_type","distinctiveness_name","UmbrellaType"]),
         (Stock, ["habitat_name","stock_id","bank_id","quantity_available","bank_name","BANK_KEY"]),
         (Pricing, ["habitat_name","contract_size","tier","bank_id","BANK_KEY","price","broader_type","distinctiveness_name","bank_name"]),
         (Trading, ["demand_habitat","allowed_supply_habitat","min_distinctiveness_name","companion_habitat"])
@@ -2996,7 +2996,14 @@ def prepare_options(demand_df: pd.DataFrame,
         Banks[["bank_id","bank_name","lpa_name","nca_name"]],
         on="bank_id", how="left"
     ).merge(Catalog, on="habitat_name", how="left")
+    
+    # Filter stock to exclude hedgerows and watercourses (area ledger only)
     stock_full = stock_full[~stock_full["habitat_name"].map(is_hedgerow)].copy()
+    if "UmbrellaType" in stock_full.columns:
+        stock_full = stock_full[
+            (stock_full["UmbrellaType"].astype(str).str.strip().str.lower() != "hedgerow") &
+            (stock_full["UmbrellaType"].astype(str).str.strip().str.lower() != "watercourse")
+        ].copy()
 
     # Get active promoter discount settings
     promoter_discount_type, promoter_discount_value = get_active_promoter_discount()
@@ -3020,7 +3027,19 @@ def prepare_options(demand_df: pd.DataFrame,
     for c in ["broader_type_eff", "distinctiveness_name_eff", "tier", "bank_id", "habitat_name", "BANK_KEY", "bank_name"]:
         if c in pc_join.columns:
             pc_join[c] = pc_join[c].map(sstr)
+    
+    # Filter pricing to exclude hedgerows and watercourses (area ledger only)
     pricing_enriched = pc_join[~pc_join["habitat_name"].map(is_hedgerow)].copy()
+    if "UmbrellaType" in Catalog.columns:
+        pricing_enriched = pricing_enriched.merge(
+            Catalog[["habitat_name", "UmbrellaType"]], 
+            on="habitat_name", 
+            how="left"
+        )
+        pricing_enriched = pricing_enriched[
+            (pricing_enriched["UmbrellaType"].astype(str).str.strip().str.lower() != "hedgerow") &
+            (pricing_enriched["UmbrellaType"].astype(str).str.strip().str.lower() != "watercourse")
+        ].copy()
 
     def dval(name: Optional[str]) -> float:
         key = sstr(name)
@@ -3091,8 +3110,15 @@ def prepare_options(demand_df: pd.DataFrame,
     for di, drow in demand_df.iterrows():
         dem_hab = sstr(drow["habitat_name"])
         
-        # Skip hedgerow demand in area habitat options (hedgerows handled separately)
-        if is_hedgerow(dem_hab):
+        # Skip hedgerow and watercourse demands using UmbrellaType (area ledger only)
+        if "UmbrellaType" in Catalog.columns:
+            cat_match = Catalog[Catalog["habitat_name"].astype(str).str.strip() == dem_hab.strip()]
+            if not cat_match.empty:
+                umb = sstr(cat_match.iloc[0]["UmbrellaType"]).strip().lower()
+                if umb == "hedgerow" or umb == "watercourse":
+                    continue
+        # Fallback to keyword detection if UmbrellaType column doesn't exist
+        elif is_hedgerow(dem_hab) or is_watercourse(dem_hab):
             continue
 
         if dem_hab == NET_GAIN_LABEL:
@@ -3110,7 +3136,8 @@ def prepare_options(demand_df: pd.DataFrame,
             explicit = True
             for _, rule in backend["TradingRules"][backend["TradingRules"]["demand_habitat"] == dem_hab].iterrows():
                 sh = sstr(rule["allowed_supply_habitat"])
-                if is_hedgerow(sh):
+                # Skip hedgerows and watercourses in trading rules for area ledger
+                if is_hedgerow(sh) or is_watercourse(sh):
                     continue
                 s_min = sstr(rule.get("min_distinctiveness_name"))
                 df_s = stock_full[stock_full["habitat_name"] == sh].copy()
@@ -3211,6 +3238,7 @@ def prepare_options(demand_df: pd.DataFrame,
                     (stock_full["BANK_KEY"] == bk) &
                     (stock_full["habitat_name"] != supply_hab) &
                     (~stock_full["habitat_name"].map(is_hedgerow)) &
+                    (~stock_full["habitat_name"].map(is_watercourse)) &
                     (stock_full["quantity_available"].astype(float) > 0)
                 ].copy()
                 
@@ -4660,12 +4688,20 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
                 "Offset Cost": f"£{offset_cost_display:,.0f}"
             }
             
-            # Categorize by habitat type
-            if demand_habitat == "Net Gain (Hedgerows)" or "hedgerow" in demand_habitat.lower() or "hedgerow" in supply_habitat.lower():
+            # Categorize by habitat type using UmbrellaType from Catalog
+            demand_umbrella_type = ""
+            if "UmbrellaType" in backend["HabitatCatalog"].columns:
+                demand_cat = backend["HabitatCatalog"][backend["HabitatCatalog"]["habitat_name"].astype(str).str.strip() == demand_habitat.strip()]
+                if not demand_cat.empty:
+                    demand_umbrella_type = sstr(demand_cat.iloc[0]["UmbrellaType"]).strip().lower()
+            
+            # Use UmbrellaType for categorization
+            if demand_habitat == "Net Gain (Hedgerows)" or demand_umbrella_type == "hedgerow":
                 hedgerow_habitats.append(row_data)
-            elif "watercourse" in demand_habitat.lower() or "water" in supply_habitat.lower():
+            elif demand_habitat in ["Net Gain (Watercourses)", "Net Gain (watercourse)"] or demand_umbrella_type == "watercourse":
                 watercourse_habitats.append(row_data)
             else:
+                # Default to area habitats (includes Net Gain label and area habitats)
                 area_habitats.append(row_data)
     
     # Process manual hedgerow entries
