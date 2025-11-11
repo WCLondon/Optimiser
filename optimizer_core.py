@@ -1589,7 +1589,7 @@ def prepare_options(demand_df: pd.DataFrame,
 
     for df, cols in [
         (Banks, ["bank_id","bank_name","BANK_KEY","lpa_name","nca_name","lat","lon","postcode","address"]),
-        (Catalog, ["habitat_name","broader_type","distinctiveness_name"]),
+        (Catalog, ["habitat_name","broader_type","distinctiveness_name","UmbrellaType"]),
         (Stock, ["habitat_name","stock_id","bank_id","quantity_available","bank_name","BANK_KEY"]),
         (Pricing, ["habitat_name","contract_size","tier","bank_id","BANK_KEY","price","broader_type","distinctiveness_name","bank_name"]),
         (Trading, ["demand_habitat","allowed_supply_habitat","min_distinctiveness_name","companion_habitat"])
@@ -1722,7 +1722,7 @@ def prepare_options(demand_df: pd.DataFrame,
         
         # Skip hedgerow and watercourse demands using UmbrellaType ONLY
         if "UmbrellaType" in Catalog.columns:
-            cat_match = Catalog[Catalog["habitat_name"].astype(str).str.strip() == dem_hab]
+            cat_match = Catalog[Catalog["habitat_name"].astype(str).str.strip() == dem_hab.strip()]
             if not cat_match.empty:
                 umb = sstr(cat_match.iloc[0]["UmbrellaType"]).strip().lower()
                 # Skip if this is a Hedgerow or Watercourse habitat
@@ -1999,7 +1999,7 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
     
     for df, cols in [
         (Banks, ["bank_id","bank_name","BANK_KEY","lpa_name","nca_name"]),
-        (Catalog, ["habitat_name","broader_type","distinctiveness_name"]),
+        (Catalog, ["habitat_name","broader_type","distinctiveness_name","UmbrellaType"]),
         (Stock, ["habitat_name","stock_id","bank_id","quantity_available"]),
         (Pricing, ["habitat_name","contract_size","tier","bank_id","BANK_KEY","price"])
     ]:
