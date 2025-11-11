@@ -1867,8 +1867,10 @@ def prepare_options(demand_df: pd.DataFrame,
                     dem_umb_type = sstr(dem_cat_check.iloc[0]["UmbrellaType"]).strip().lower()
                     if dem_umb_type == "hedgerow" or dem_umb_type == "watercourse":
                         # Skip this option - demand is not an area habitat
+                        print(f"[prepare_options]   ✓ SKIPPING NORMAL OPTION for {dem_umb_type} demand '{dem_hab}'")
                         continue
             
+            print(f"[prepare_options]   → CREATING NORMAL OPTION for demand '{dem_hab}' supply '{srow['habitat_name']}'")
             options.append({
                 "type": "normal",
                 "demand_idx": di,
@@ -2004,9 +2006,11 @@ def prepare_options(demand_df: pd.DataFrame,
                             dem_umb_type = sstr(dem_cat_check.iloc[0]["UmbrellaType"]).strip().lower()
                             if dem_umb_type == "hedgerow" or dem_umb_type == "watercourse":
                                 # Skip this paired option - demand is not an area habitat
+                                print(f"[prepare_options]   ✓ SKIPPING PAIRED OPTION for {dem_umb_type} demand '{dem_hab}'")
                                 continue
                     
                     # Always add paired option and let optimizer choose the best allocation
+                    print(f"[prepare_options]   → CREATING PAIRED OPTION for demand '{dem_hab}' (di={di})")
                     options.append({
                         "type": "paired",
                         "demand_idx": di,
