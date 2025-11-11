@@ -1829,6 +1829,17 @@ def prepare_options(demand_df: pd.DataFrame,
             cap = float(srow.get("quantity_available", 0) or 0.0)
             if cap <= 0:
                 continue
+            
+            # DEFENSIVE CHECK: Never create options for watercourse or hedgerow demands
+            # This should never happen if demand filtering works, but add as extra safety
+            if "UmbrellaType" in Catalog.columns:
+                dem_cat_check = Catalog[Catalog["habitat_name"].astype(str).str.strip() == dem_hab.strip()]
+                if not dem_cat_check.empty:
+                    dem_umb_type = sstr(dem_cat_check.iloc[0]["UmbrellaType"]).strip().lower()
+                    if dem_umb_type == "hedgerow" or dem_umb_type == "watercourse":
+                        # Skip this option - demand is not an area habitat
+                        continue
+            
             options.append({
                 "type": "normal",
                 "demand_idx": di,
@@ -1955,6 +1966,16 @@ def prepare_options(demand_df: pd.DataFrame,
                     # Apply percentage discount if active (to blended price)
                     if promoter_discount_type == "percentage" and promoter_discount_value:
                         blended_price = apply_percentage_discount(blended_price, promoter_discount_value)
+                    
+                    # DEFENSIVE CHECK: Never create paired options for watercourse or hedgerow demands
+                    # This should never happen if demand filtering works, but add as extra safety
+                    if "UmbrellaType" in Catalog.columns:
+                        dem_cat_check = Catalog[Catalog["habitat_name"].astype(str).str.strip() == dem_hab.strip()]
+                        if not dem_cat_check.empty:
+                            dem_umb_type = sstr(dem_cat_check.iloc[0]["UmbrellaType"]).strip().lower()
+                            if dem_umb_type == "hedgerow" or dem_umb_type == "watercourse":
+                                # Skip this paired option - demand is not an area habitat
+                                continue
                     
                     # Always add paired option and let optimizer choose the best allocation
                     options.append({
