@@ -1706,7 +1706,16 @@ def prepare_options(demand_df: pd.DataFrame,
         # Skip hedgerow and watercourse demand in area habitat options (handled separately)
         if is_hedgerow(dem_hab):
             continue
-        if is_watercourse(dem_hab):
+        
+        # Use UmbrellaType to identify watercourse demands (same logic as prepare_watercourse_options)
+        if "UmbrellaType" in Catalog.columns:
+            cat_match = Catalog[Catalog["habitat_name"].astype(str).str.strip() == dem_hab]
+            if not cat_match.empty:
+                umb = sstr(cat_match.iloc[0]["UmbrellaType"]).lower()
+                if umb == "watercourse":
+                    continue
+        # Fallback to keyword detection if UmbrellaType not available
+        elif is_watercourse(dem_hab):
             continue
 
         if dem_hab == NET_GAIN_LABEL:
@@ -1724,7 +1733,10 @@ def prepare_options(demand_df: pd.DataFrame,
             explicit = True
             for _, rule in backend["TradingRules"][backend["TradingRules"]["demand_habitat"] == dem_hab].iterrows():
                 sh = sstr(rule["allowed_supply_habitat"])
+                # Skip hedgerow and watercourse supply (area ledger only)
                 if is_hedgerow(sh):
+                    continue
+                if is_watercourse(sh):
                     continue
                 s_min = sstr(rule.get("min_distinctiveness_name"))
                 df_s = stock_full[stock_full["habitat_name"] == sh].copy()
@@ -1823,10 +1835,12 @@ def prepare_options(demand_df: pd.DataFrame,
                 
                 # Get "companion" candidates: any area habitat with positive stock
                 # excluding the supply habitat itself to avoid self-pairing
+                # Must exclude both hedgerows AND watercourses to prevent cross-ledger pairing
                 companion_candidates = stock_full[
                     (stock_full["BANK_KEY"] == bk) &
                     (stock_full["habitat_name"] != supply_hab) &
                     (~stock_full["habitat_name"].map(is_hedgerow)) &
+                    (~stock_full["habitat_name"].map(is_watercourse)) &
                     (stock_full["quantity_available"].astype(float) > 0)
                 ].copy()
                 
@@ -2006,8 +2020,17 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
         # Skip non-hedgerow demand (but include hedgerow net gain)
         if not is_hedgerow(dem_hab):
             continue
+        
         # Skip watercourse demand (should not be in hedgerow ledger)
-        if is_watercourse(dem_hab):
+        # Use UmbrellaType for consistency with watercourse ledger logic
+        if "UmbrellaType" in Catalog.columns:
+            cat_match = Catalog[Catalog["habitat_name"].astype(str).str.strip() == dem_hab]
+            if not cat_match.empty:
+                umb = sstr(cat_match.iloc[0]["UmbrellaType"]).lower()
+                if umb == "watercourse":
+                    continue
+        # Fallback to keyword detection if UmbrellaType not available
+        elif is_watercourse(dem_hab):
             continue
         
         demand_units = float(demand_row.get("units_required", 0.0))
