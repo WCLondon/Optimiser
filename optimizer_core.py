@@ -1737,17 +1737,29 @@ def prepare_options(demand_df: pd.DataFrame,
     for di, drow in demand_df.iterrows():
         dem_hab = sstr(drow["habitat_name"])
         
+        # DEBUG: Log all demands being processed
+        print(f"[prepare_options] Processing demand #{di}: '{dem_hab}'")
+        
         # Skip hedgerow and watercourse demands using UmbrellaType ONLY
         if "UmbrellaType" in Catalog.columns:
             cat_match = Catalog[Catalog["habitat_name"].astype(str).str.strip() == dem_hab.strip()]
+            print(f"[prepare_options]   Catalog lookup: {len(cat_match)} matches for '{dem_hab.strip()}'")
             if not cat_match.empty:
                 umb = sstr(cat_match.iloc[0]["UmbrellaType"]).strip().lower()
+                print(f"[prepare_options]   UmbrellaType: '{umb}'")
                 # Skip if this is a Hedgerow or Watercourse habitat
                 if umb == "hedgerow" or umb == "watercourse":
+                    print(f"[prepare_options]   ✓ SKIPPING {umb} demand")
                     continue
+                else:
+                    print(f"[prepare_options]   → Processing as area habitat")
+            else:
+                print(f"[prepare_options]   ⚠ Not found in Catalog - processing as area habitat")
         else:
+            print(f"[prepare_options]   ⚠ UmbrellaType column missing - using keyword fallback")
             # Fallback to keyword-based detection only if UmbrellaType column doesn't exist
             if is_hedgerow(dem_hab) or is_watercourse(dem_hab):
+                print(f"[prepare_options]   ✓ SKIPPING via keyword detection")
                 continue
 
         if dem_hab == NET_GAIN_LABEL:
