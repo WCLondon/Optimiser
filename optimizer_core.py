@@ -594,6 +594,9 @@ def prepare_watercourse_options(demand_df: pd.DataFrame,
         .merge(Catalog[["habitat_name","broader_type","distinctiveness_name","UmbrellaType"]],
                on="habitat_name", how="left")
     )
+    # Additional safety: exclude area habitats and hedgerows from watercourse ledger
+    stock_full = stock_full[~stock_full["habitat_name"].map(is_hedgerow)].copy()
+    # Note: watercourse filtering already done via wc_habs, but be extra safe
 
     # Apply tier_up discount to contract size if active
     pricing_contract_size = chosen_size
@@ -606,6 +609,8 @@ def prepare_watercourse_options(demand_df: pd.DataFrame,
         .merge(Catalog[["habitat_name","broader_type","distinctiveness_name","UmbrellaType"]],
                on="habitat_name", how="left")
     )
+    # Additional safety: exclude hedgerows from watercourse ledger pricing
+    pricing_enriched = pricing_enriched[~pricing_enriched["habitat_name"].map(is_hedgerow)].copy()
 
     options: List[dict] = []
     stock_caps: Dict[str, float] = {}
@@ -614,6 +619,10 @@ def prepare_watercourse_options(demand_df: pd.DataFrame,
     for demand_idx, demand_row in demand_df.iterrows():
         dem_hab = sstr(demand_row.get("habitat_name"))
 
+        # Skip area habitat and hedgerow demand (should not be in watercourse ledger)
+        if is_hedgerow(dem_hab):
+            continue
+        
         # Only handle watercourse demands (including NG watercourses)
         # Uses UmbrellaType to decide ledger
         if "UmbrellaType" in Catalog.columns:
@@ -1596,7 +1605,9 @@ def prepare_options(demand_df: pd.DataFrame,
         Banks[["bank_id","bank_name","lpa_name","nca_name"]],
         on="bank_id", how="left"
     ).merge(Catalog, on="habitat_name", how="left")
+    # Filter out hedgerows AND watercourses (area habitats only)
     stock_full = stock_full[~stock_full["habitat_name"].map(is_hedgerow)].copy()
+    stock_full = stock_full[~stock_full["habitat_name"].map(is_watercourse)].copy()
 
     # Use promoter discount settings from parameters (already in function signature)
     
@@ -1619,7 +1630,9 @@ def prepare_options(demand_df: pd.DataFrame,
     for c in ["broader_type_eff", "distinctiveness_name_eff", "tier", "bank_id", "habitat_name", "BANK_KEY", "bank_name"]:
         if c in pc_join.columns:
             pc_join[c] = pc_join[c].map(sstr)
+    # Filter out hedgerows AND watercourses (area habitats only)
     pricing_enriched = pc_join[~pc_join["habitat_name"].map(is_hedgerow)].copy()
+    pricing_enriched = pricing_enriched[~pricing_enriched["habitat_name"].map(is_watercourse)].copy()
 
     def dval(name: Optional[str]) -> float:
         key = sstr(name)
@@ -1690,8 +1703,10 @@ def prepare_options(demand_df: pd.DataFrame,
     for di, drow in demand_df.iterrows():
         dem_hab = sstr(drow["habitat_name"])
         
-        # Skip hedgerow demand in area habitat options (hedgerows handled separately)
+        # Skip hedgerow and watercourse demand in area habitat options (handled separately)
         if is_hedgerow(dem_hab):
+            continue
+        if is_watercourse(dem_hab):
             continue
 
         if dem_hab == NET_GAIN_LABEL:
@@ -1735,7 +1750,9 @@ def prepare_options(demand_df: pd.DataFrame,
             continue
 
         candidates = pd.concat(cand_parts, ignore_index=True)
+        # Filter out hedgerows AND watercourses (area habitats only)
         candidates = candidates[~candidates["habitat_name"].map(is_hedgerow)].copy()
+        candidates = candidates[~candidates["habitat_name"].map(is_watercourse)].copy()
 
         # Single-habitat options
         for _, srow in candidates.iterrows():
@@ -1958,7 +1975,9 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
         else:
             stock_full["bank_name"] = stock_full["bank_id"]
     
+    # Filter for ONLY hedgerow habitats (exclude area and watercourse)
     stock_full = stock_full[stock_full["habitat_name"].map(is_hedgerow)].copy()
+    stock_full = stock_full[~stock_full["habitat_name"].map(is_watercourse)].copy()
     
     # Use promoter discount settings from parameters (already in function signature)
     
@@ -1973,7 +1992,9 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
         Catalog[["habitat_name","broader_type","distinctiveness_name"]],
         on="habitat_name", how="left"
     )
+    # Filter for ONLY hedgerow habitats (exclude area and watercourse)
     pricing_enriched = pricing_enriched[pricing_enriched["habitat_name"].map(is_hedgerow)].copy()
+    pricing_enriched = pricing_enriched[~pricing_enriched["habitat_name"].map(is_watercourse)].copy()
     
     options = []
     stock_caps = {}
@@ -1984,6 +2005,9 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
         
         # Skip non-hedgerow demand (but include hedgerow net gain)
         if not is_hedgerow(dem_hab):
+            continue
+        # Skip watercourse demand (should not be in hedgerow ledger)
+        if is_watercourse(dem_hab):
             continue
         
         demand_units = float(demand_row.get("units_required", 0.0))
