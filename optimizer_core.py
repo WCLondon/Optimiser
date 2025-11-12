@@ -497,7 +497,19 @@ def enforce_hedgerow_rules(demand_row, supply_row, dist_levels_map_local) -> boo
 
 
 def enforce_watercourse_rules(demand_row, supply_row, dist_levels_map_local) -> bool:
-    """Enforce watercourse trading rules"""
+    """
+    Enforce watercourse trading rules according to BNG requirements.
+    
+    Trading rules for watercourses:
+    - Very High: Not eligible for normal trading (bespoke compensation required)
+    - High: Same habitat required (like-for-like)
+    - Medium: Same habitat required (like-for-like)
+    - Low: Must trade to better distinctiveness habitat (cannot offset Low with Low)
+    
+    "Same habitat" means the same watercourse habitat type (e.g., rivers/streams with rivers/streams,
+    canals with canals, ditches with ditches). Different Medium distinctiveness watercourse habitats
+    like canals and ditches CANNOT offset each other.
+    """
     dh = sstr(demand_row.get("habitat_name"))
     sh = sstr(supply_row.get("habitat_name"))
     
@@ -520,11 +532,58 @@ def enforce_watercourse_rules(demand_row, supply_row, dist_levels_map_local) -> 
     d_level = dist_levels_map_local[d_key]
     s_level = dist_levels_map_local[s_key]
     
-    # Supply distinctiveness must be >= demand distinctiveness
-    if s_level < d_level:
+    # Normalize habitat names to canonical forms for watercourse matching
+    # This helps match "Other rivers and streams" with "rivers and streams", etc.
+    def normalize_watercourse_habitat(hab: str) -> str:
+        hab_lower = hab.lower()
+        # Map common variations to canonical forms
+        if "river" in hab_lower or "stream" in hab_lower:
+            return "rivers_streams"
+        elif "canal" in hab_lower:
+            return "canals"
+        elif "ditch" in hab_lower:
+            return "ditches"
+        elif "culvert" in hab_lower:
+            return "culvert"
+        elif "priority habitat" in hab_lower:
+            return "priority_habitat"
+        return hab_lower.replace(" ", "_")
+    
+    d_hab_norm = normalize_watercourse_habitat(dh)
+    s_hab_norm = normalize_watercourse_habitat(sh)
+    
+    # Map distinctiveness keys to standard names for comparison
+    dist_key_map = {
+        "very high": "Very High",
+        "v.high": "Very High",
+        "high": "High",
+        "medium": "Medium",
+        "low": "Low",
+        "very low": "Very Low",
+        "v.low": "Very Low"
+    }
+    
+    d_band = dist_key_map.get(d_key, "")
+    
+    if d_band == "Very High":
+        # Very High watercourses require bespoke compensation - not eligible for normal trading
         return False
     
-    return True
+    if d_band == "High":
+        # High: same habitat required (like-for-like), same or better distinctiveness
+        return d_hab_norm == s_hab_norm and s_level >= d_level
+    
+    if d_band == "Medium":
+        # Medium: same habitat required (like-for-like), same or better distinctiveness
+        return d_hab_norm == s_hab_norm and s_level >= d_level
+    
+    if d_band == "Low":
+        # Low: must trade to better distinctiveness habitat (cannot offset Low with Low)
+        # Surplus must be higher distinctiveness AND same habitat type
+        return s_level > d_level and d_hab_norm == s_hab_norm
+    
+    # For other distinctiveness levels (Very Low), allow if supply >= demand
+    return s_level >= d_level
 
 
 # ================= Load Backend =================
