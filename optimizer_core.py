@@ -2128,18 +2128,19 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
         
         # Process ONLY hedgerow demands using UmbrellaType
         if "UmbrellaType" in Catalog.columns:
-            cat_match = Catalog[Catalog["habitat_name"].astype(str).str.strip() == dem_hab]
-            if not cat_match.empty:
-                umb = sstr(cat_match.iloc[0]["UmbrellaType"]).strip().lower()
-                # Skip if not a hedgerow habitat
-                if umb != "hedgerow":
+            if dem_hab != NET_GAIN_HEDGEROW_LABEL:
+                cat_match = Catalog[Catalog["habitat_name"].astype(str).str.strip() == dem_hab]
+                if not cat_match.empty:
+                    umb = sstr(cat_match.iloc[0]["UmbrellaType"]).strip().lower()
+                    # Skip if not a hedgerow habitat
+                    if umb != "hedgerow":
+                        continue
+                else:
+                    # Habitat not in catalog, skip it
                     continue
-            else:
-                # Habitat not in catalog, skip it
-                continue
         else:
             # Fallback to keyword-based if UmbrellaType doesn't exist
-            if not is_hedgerow(dem_hab):
+            if dem_hab != NET_GAIN_HEDGEROW_LABEL and not is_hedgerow(dem_hab):
                 continue
         
         demand_units = float(demand_row.get("units_required", 0.0))
