@@ -1360,9 +1360,117 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame,
         bundled.extend(other_rows)
         return bundled
     
+    # Smart bundling for hedgerows: Bundle Net Gain with Very Low if it exists, otherwise with Low
+    def bundle_smart_net_gain_hedgerows(habitats_list):
+        """Bundle Net Gain with Very Low if it exists, otherwise with Low for hedgerows"""
+        bundled = []
+        very_low_rows = {}
+        low_rows = {}
+        net_gain_rows = {}
+        other_rows = []
+        
+        # First pass: Check if Very Low exists
+        has_very_low = any(row["Distinctiveness"] in ["Very Low", "V.Low"] for row in habitats_list)
+        
+        # Separate rows by distinctiveness
+        for row in habitats_list:
+            dist = row["Distinctiveness"]
+            supply_hab = row["Habitats Supplied"]
+            
+            if dist in ["Very Low", "V.Low"]:
+                if supply_hab not in very_low_rows:
+                    very_low_rows[supply_hab] = []
+                very_low_rows[supply_hab].append(row)
+            elif dist == "Low":
+                if supply_hab not in low_rows:
+                    low_rows[supply_hab] = []
+                low_rows[supply_hab].append(row)
+            elif dist == "10% Net Gain":
+                if supply_hab not in net_gain_rows:
+                    net_gain_rows[supply_hab] = []
+                net_gain_rows[supply_hab].append(row)
+            else:
+                other_rows.append(row)
+        
+        # Bundle Net Gain with Very Low if it exists, otherwise with Low
+        if has_very_low:
+            # Bundle Very Low + Net Gain
+            all_supply_habitats = set(list(very_low_rows.keys()) + list(net_gain_rows.keys()))
+            for supply_hab in sorted(all_supply_habitats):
+                vl_list = very_low_rows.get(supply_hab, [])
+                ng_list = net_gain_rows.get(supply_hab, [])
+                
+                if vl_list and ng_list:
+                    # Bundle them together
+                    total_units = sum(float(r["# Units"].replace(",", "")) for r in vl_list + ng_list)
+                    total_supply_units = sum(float(r["# Units_Supply"].replace(",", "")) for r in vl_list + ng_list)
+                    total_cost = sum(float(r["Offset Cost"].replace("£", "").replace(",", "")) for r in vl_list + ng_list)
+                    
+                    # Use weighted average for price per unit
+                    avg_price = total_cost / total_supply_units if total_supply_units > 0 else 0
+                    
+                    bundled_row = {
+                        "Distinctiveness": "Very Low + 10% Net Gain",
+                        "Habitats Lost": vl_list[0]["Habitats Lost"] if vl_list else ng_list[0]["Habitats Lost"],
+                        "# Units": format_units_dynamic(total_units),
+                        "Distinctiveness_Supply": vl_list[0]["Distinctiveness_Supply"] if vl_list else ng_list[0]["Distinctiveness_Supply"],
+                        "Habitats Supplied": supply_hab,
+                        "# Units_Supply": format_units_dynamic(total_supply_units),
+                        "Price Per Unit": f"£{round_to_50(avg_price):,.0f}",
+                        "Offset Cost": f"£{round(total_cost):,.0f}"
+                    }
+                    bundled.append(bundled_row)
+                elif vl_list:
+                    # Only Very Low rows, add them as is
+                    bundled.extend(vl_list)
+                elif ng_list:
+                    # Only Net Gain rows, add them as is
+                    bundled.extend(ng_list)
+            
+            # Add Low rows separately (not bundled with Net Gain)
+            for low_list in low_rows.values():
+                bundled.extend(low_list)
+        else:
+            # No Very Low, bundle Low + Net Gain
+            all_supply_habitats = set(list(low_rows.keys()) + list(net_gain_rows.keys()))
+            for supply_hab in sorted(all_supply_habitats):
+                low_list = low_rows.get(supply_hab, [])
+                ng_list = net_gain_rows.get(supply_hab, [])
+                
+                if low_list and ng_list:
+                    # Bundle them together
+                    total_units = sum(float(r["# Units"].replace(",", "")) for r in low_list + ng_list)
+                    total_supply_units = sum(float(r["# Units_Supply"].replace(",", "")) for r in low_list + ng_list)
+                    total_cost = sum(float(r["Offset Cost"].replace("£", "").replace(",", "")) for r in low_list + ng_list)
+                    
+                    # Use weighted average for price per unit
+                    avg_price = total_cost / total_supply_units if total_supply_units > 0 else 0
+                    
+                    bundled_row = {
+                        "Distinctiveness": "Low + 10% Net Gain",
+                        "Habitats Lost": low_list[0]["Habitats Lost"] if low_list else ng_list[0]["Habitats Lost"],
+                        "# Units": format_units_dynamic(total_units),
+                        "Distinctiveness_Supply": low_list[0]["Distinctiveness_Supply"] if low_list else ng_list[0]["Distinctiveness_Supply"],
+                        "Habitats Supplied": supply_hab,
+                        "# Units_Supply": format_units_dynamic(total_supply_units),
+                        "Price Per Unit": f"£{round_to_50(avg_price):,.0f}",
+                        "Offset Cost": f"£{round(total_cost):,.0f}"
+                    }
+                    bundled.append(bundled_row)
+                elif low_list:
+                    # Only Low rows, add them as is
+                    bundled.extend(low_list)
+                elif ng_list:
+                    # Only Net Gain rows, add them as is
+                    bundled.extend(ng_list)
+        
+        # Add other rows
+        bundled.extend(other_rows)
+        return bundled
+    
     # Apply bundling to each habitat type
     area_habitats = bundle_low_and_net_gain(area_habitats)
-    hedgerow_habitats = bundle_low_and_net_gain(hedgerow_habitats)
+    hedgerow_habitats = bundle_smart_net_gain_hedgerows(hedgerow_habitats)
     watercourse_habitats = bundle_low_and_net_gain(watercourse_habitats)
     
     # Sort habitats by distinctiveness priority (High > Medium > Low + Net Gain > Very Low)
@@ -1375,9 +1483,10 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame,
             "Medium": 2,
             "Low + 10% Net Gain": 3,
             "Low": 4,
-            "10% Net Gain": 5,
-            "Very Low": 6,
-            "V.Low": 6
+            "Very Low + 10% Net Gain": 5,
+            "10% Net Gain": 6,
+            "Very Low": 7,
+            "V.Low": 7
         }
         
         def get_sort_key(row):
@@ -2128,18 +2237,19 @@ def prepare_hedgerow_options(demand_df: pd.DataFrame,
         
         # Process ONLY hedgerow demands using UmbrellaType
         if "UmbrellaType" in Catalog.columns:
-            cat_match = Catalog[Catalog["habitat_name"].astype(str).str.strip() == dem_hab]
-            if not cat_match.empty:
-                umb = sstr(cat_match.iloc[0]["UmbrellaType"]).strip().lower()
-                # Skip if not a hedgerow habitat
-                if umb != "hedgerow":
+            if dem_hab != NET_GAIN_HEDGEROW_LABEL:
+                cat_match = Catalog[Catalog["habitat_name"].astype(str).str.strip() == dem_hab]
+                if not cat_match.empty:
+                    umb = sstr(cat_match.iloc[0]["UmbrellaType"]).strip().lower()
+                    # Skip if not a hedgerow habitat
+                    if umb != "hedgerow":
+                        continue
+                else:
+                    # Habitat not in catalog, skip it
                     continue
-            else:
-                # Habitat not in catalog, skip it
-                continue
         else:
             # Fallback to keyword-based if UmbrellaType doesn't exist
-            if not is_hedgerow(dem_hab):
+            if dem_hab != NET_GAIN_HEDGEROW_LABEL and not is_hedgerow(dem_hab):
                 continue
         
         demand_units = float(demand_row.get("units_required", 0.0))
