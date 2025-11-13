@@ -143,6 +143,7 @@ def init_session_state():
         "suo_results": None,  # SUO computation results
         "suo_applicable": False,  # Whether SUO can be applied
         "metric_surplus": None,  # Surplus from metric file
+        "felled_woodland_price_per_unit": {},  # Prices for Felled Woodland manual entries
     }
     
     for key, value in defaults.items():
@@ -194,6 +195,8 @@ def reset_quote():
         st.session_state["email_ref_number"] = "BNG00XXX"
         st.session_state["email_location"] = "INSERT LOCATION"
         st.session_state["map_version"] = st.session_state.get("map_version", 0) + 1
+        # Clear felled woodland pricing state
+        st.session_state["felled_woodland_price_per_unit"] = {}
         # Clear location input fields by deleting them (widget-bound variables)
         if "postcode_input" in st.session_state:
             del st.session_state["postcode_input"]
@@ -4325,72 +4328,69 @@ if run:
             st.stop()
 
         # Special handling for 'Woodland and forest - Felled/Replacement for felled woodland'
-        # Check if this habitat is in demand and if there's no stock available for it
+        # This habitat ALWAYS requires manual pricing and should NOT go through the optimizer
         FELLED_WOODLAND_NAME = "Woodland and forest - Felled/Replacement for felled woodland"
         felled_woodland_demands = demand_df[demand_df["habitat_name"] == FELLED_WOODLAND_NAME].copy()
         
         if not felled_woodland_demands.empty:
-            # Check if there's stock available for this habitat
-            stock_df = backend.get("Stock", pd.DataFrame())
-            has_stock = not stock_df[stock_df["habitat_name"] == FELLED_WOODLAND_NAME].empty
+            # Always handle as manual entry with user-provided price
+            # (Don't let optimizer match with other habitats like Lowland mixed deciduous)
+            st.warning(f"⚠️ '{FELLED_WOODLAND_NAME}' requires off-site mitigation with manual pricing.")
             
-            if not has_stock:
-                # No stock available - need to handle as manual entry with user-provided price
-                st.warning(f"⚠️ '{FELLED_WOODLAND_NAME}' requires off-site mitigation with manual pricing.")
+            # Initialize session state for felled woodland price if not exists
+            if "felled_woodland_price_per_unit" not in st.session_state:
+                st.session_state["felled_woodland_price_per_unit"] = {}
+            
+            # For each felled woodland demand, ask for price
+            all_prices_provided = True
+            for idx, fw_row in felled_woodland_demands.iterrows():
+                fw_units = float(fw_row["units_required"])
+                fw_key = f"fw_{idx}"
                 
-                # Initialize session state for felled woodland price if not exists
-                if "felled_woodland_price_per_unit" not in st.session_state:
-                    st.session_state["felled_woodland_price_per_unit"] = {}
-                
-                # For each felled woodland demand, ask for price
-                all_prices_provided = True
-                for idx, fw_row in felled_woodland_demands.iterrows():
-                    fw_units = float(fw_row["units_required"])
-                    fw_key = f"fw_{idx}"
+                if fw_key not in st.session_state["felled_woodland_price_per_unit"]:
+                    all_prices_provided = False
+                    st.info(f"📝 Please provide unit price for {fw_units:.2f} units of '{FELLED_WOODLAND_NAME}'")
                     
-                    if fw_key not in st.session_state["felled_woodland_price_per_unit"]:
-                        all_prices_provided = False
-                        st.info(f"📝 Please provide unit price for {fw_units:.2f} units of '{FELLED_WOODLAND_NAME}'")
+                    with st.form(key=f"felled_woodland_price_form_{idx}"):
+                        price_input = st.number_input(
+                            f"Price per unit (£) for {fw_units:.2f} units:",
+                            min_value=0.0,
+                            value=15000.0,
+                            step=100.0,
+                            key=f"price_input_{idx}"
+                        )
+                        submitted = st.form_submit_button("Set Price and Continue")
                         
-                        with st.form(key=f"felled_woodland_price_form_{idx}"):
-                            price_input = st.number_input(
-                                f"Price per unit (£) for {fw_units:.2f} units:",
-                                min_value=0.0,
-                                value=15000.0,
-                                step=100.0,
-                                key=f"price_input_{idx}"
-                            )
-                            submitted = st.form_submit_button("Set Price and Continue")
-                            
-                            if submitted:
-                                st.session_state["felled_woodland_price_per_unit"][fw_key] = price_input
-                                st.rerun()
+                        if submitted:
+                            st.session_state["felled_woodland_price_per_unit"][fw_key] = price_input
+                            st.rerun()
+            
+            if not all_prices_provided:
+                st.stop()
+            
+            # All prices provided - add as manual entries and remove from demand_df
+            for idx, fw_row in felled_woodland_demands.iterrows():
+                fw_units = float(fw_row["units_required"])
+                fw_key = f"fw_{idx}"
+                fw_price = st.session_state["felled_woodland_price_per_unit"][fw_key]
                 
-                if not all_prices_provided:
-                    st.stop()
-                
-                # All prices provided - add as manual entries and remove from demand_df
-                for idx, fw_row in felled_woodland_demands.iterrows():
-                    fw_units = float(fw_row["units_required"])
-                    fw_key = f"fw_{idx}"
-                    fw_price = st.session_state["felled_woodland_price_per_unit"][fw_key]
-                    
-                    # Add to manual area rows
-                    manual_entry = {
-                        "id": st.session_state["_next_manual_area_id"],
-                        "habitat_lost": FELLED_WOODLAND_NAME,
-                        "habitat_name": FELLED_WOODLAND_NAME,
-                        "units": fw_units,
-                        "price_per_unit": fw_price,
-                        "paired": False
-                    }
-                    st.session_state["manual_area_rows"].append(manual_entry)
-                    st.session_state["_next_manual_area_id"] += 1
-                
-                # Remove felled woodland from demand_df for optimization
-                demand_df = demand_df[demand_df["habitat_name"] != FELLED_WOODLAND_NAME].copy()
-                
-                st.success(f"✅ Added {len(felled_woodland_demands)} Felled Woodland entries as manual allocations")
+                # Add to manual area rows
+                manual_entry = {
+                    "id": st.session_state["_next_manual_area_id"],
+                    "habitat_lost": FELLED_WOODLAND_NAME,
+                    "habitat_name": FELLED_WOODLAND_NAME,
+                    "units": fw_units,
+                    "price_per_unit": fw_price,
+                    "paired": False
+                }
+                st.session_state["manual_area_rows"].append(manual_entry)
+                st.session_state["_next_manual_area_id"] += 1
+            
+            # Remove felled woodland from demand_df for optimization
+            # This prevents optimizer from matching it with Lowland mixed deciduous or any other habitat
+            demand_df = demand_df[demand_df["habitat_name"] != FELLED_WOODLAND_NAME].copy()
+            
+            st.success(f"✅ Added {len(felled_woodland_demands)} Felled Woodland entries as manual allocations")
 
         # Use session state values
         target_lpa = st.session_state["target_lpa_name"]
