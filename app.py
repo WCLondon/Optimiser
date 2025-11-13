@@ -144,6 +144,7 @@ def init_session_state():
         "suo_applicable": False,  # Whether SUO can be applied
         "metric_surplus": None,  # Surplus from metric file
         "felled_woodland_price_per_unit": {},  # Prices for Felled Woodland manual entries
+        "pending_optimization": False,  # Flag to continue optimization after felled woodland price entry
     }
     
     for key, value in defaults.items():
@@ -197,6 +198,7 @@ def reset_quote():
         st.session_state["map_version"] = st.session_state.get("map_version", 0) + 1
         # Clear felled woodland pricing state
         st.session_state["felled_woodland_price_per_unit"] = {}
+        st.session_state["pending_optimization"] = False
         # Clear location input fields by deleting them (widget-bound variables)
         if "postcode_input" in st.session_state:
             del st.session_state["postcode_input"]
@@ -4306,6 +4308,11 @@ def compute_suo_discount(alloc_df: pd.DataFrame, backend: Dict[str, pd.DataFrame
 
 # ================= Run optimiser & compute results =================
 # ================= Run optimiser & compute results =================
+# Handle continuation after felled woodland price entry
+if "pending_optimization" in st.session_state and st.session_state["pending_optimization"]:
+    run = True
+    st.session_state["pending_optimization"] = False
+
 if run:
     try:
         if demand_df.empty:
@@ -4363,6 +4370,7 @@ if run:
                         
                         if submitted:
                             st.session_state["felled_woodland_price_per_unit"][fw_key] = price_input
+                            st.session_state["pending_optimization"] = True
                             st.rerun()
             
             if not all_prices_provided:
