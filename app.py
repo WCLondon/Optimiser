@@ -4035,49 +4035,50 @@ def optimise(demand_df: pd.DataFrame,
 # ================= Special handling for Felled Woodland =================
 # This must be BEFORE the "Run optimiser" button to avoid rerun issues
 # Handle 'Woodland and forest - Felled/Replacement for felled woodland' specially
-FELLED_WOODLAND_NAME = "Woodland and forest - Felled/Replacement for felled woodland"
-felled_woodland_demands = demand_df[demand_df["habitat_name"] == FELLED_WOODLAND_NAME].copy()
-
-if not felled_woodland_demands.empty:
-    st.markdown("---")
-    st.warning(f"⚠️ **Special Habitat Detected**: '{FELLED_WOODLAND_NAME}' requires off-site mitigation with manual pricing.")
+if not demand_df.empty:
+    FELLED_WOODLAND_NAME = "Woodland and forest - Felled/Replacement for felled woodland"
+    felled_woodland_demands = demand_df[demand_df["habitat_name"] == FELLED_WOODLAND_NAME].copy()
     
-    # Initialize session state for felled woodland price if not exists
-    if "felled_woodland_price_per_unit" not in st.session_state:
-        st.session_state["felled_woodland_price_per_unit"] = {}
-    
-    # For each felled woodland demand, ask for price
-    all_prices_provided = True
-    for idx, fw_row in felled_woodland_demands.iterrows():
-        fw_units = float(fw_row["units_required"])
-        fw_key = f"fw_{idx}"
+    if not felled_woodland_demands.empty:
+        st.markdown("---")
+        st.warning(f"⚠️ **Special Habitat Detected**: '{FELLED_WOODLAND_NAME}' requires off-site mitigation with manual pricing.")
         
-        if fw_key not in st.session_state["felled_woodland_price_per_unit"]:
-            all_prices_provided = False
-            st.info(f"📝 Please provide unit price for **{fw_units:.2f} units** of '{FELLED_WOODLAND_NAME}'")
-            
-            with st.form(key=f"felled_woodland_price_form_{idx}"):
-                price_input = st.number_input(
-                    f"Price per unit (£) for {fw_units:.2f} units:",
-                    min_value=0.0,
-                    value=15000.0,
-                    step=100.0,
-                    key=f"price_input_{idx}"
-                )
-                submitted = st.form_submit_button("Set Price and Continue")
-                
-                if submitted:
-                    st.session_state["felled_woodland_price_per_unit"][fw_key] = price_input
-                    st.rerun()
-    
-    if all_prices_provided:
-        st.success(f"✅ Price set for {len(felled_woodland_demands)} Felled Woodland entry/entries. You can now proceed with optimization.")
-        # Display the prices that were set
+        # Initialize session state for felled woodland price if not exists
+        if "felled_woodland_price_per_unit" not in st.session_state:
+            st.session_state["felled_woodland_price_per_unit"] = {}
+        
+        # For each felled woodland demand, ask for price
+        all_prices_provided = True
         for idx, fw_row in felled_woodland_demands.iterrows():
             fw_units = float(fw_row["units_required"])
             fw_key = f"fw_{idx}"
-            fw_price = st.session_state["felled_woodland_price_per_unit"][fw_key]
-            st.caption(f"  • {fw_units:.2f} units @ £{fw_price:,.0f}/unit = £{fw_units * fw_price:,.2f}")
+            
+            if fw_key not in st.session_state["felled_woodland_price_per_unit"]:
+                all_prices_provided = False
+                st.info(f"📝 Please provide unit price for **{fw_units:.2f} units** of '{FELLED_WOODLAND_NAME}'")
+                
+                with st.form(key=f"felled_woodland_price_form_{idx}"):
+                    price_input = st.number_input(
+                        f"Price per unit (£) for {fw_units:.2f} units:",
+                        min_value=0.0,
+                        value=15000.0,
+                        step=100.0,
+                        key=f"price_input_{idx}"
+                    )
+                    submitted = st.form_submit_button("Set Price and Continue")
+                    
+                    if submitted:
+                        st.session_state["felled_woodland_price_per_unit"][fw_key] = price_input
+                        st.rerun()
+        
+        if all_prices_provided:
+            st.success(f"✅ Price set for {len(felled_woodland_demands)} Felled Woodland entry/entries. You can now proceed with optimization.")
+            # Display the prices that were set
+            for idx, fw_row in felled_woodland_demands.iterrows():
+                fw_units = float(fw_row["units_required"])
+                fw_key = f"fw_{idx}"
+                fw_price = st.session_state["felled_woodland_price_per_unit"][fw_key]
+                st.caption(f"  • {fw_units:.2f} units @ £{fw_price:,.0f}/unit = £{fw_units * fw_price:,.2f}")
 
 # ================= Run optimiser UI =================
 st.subheader("3) Run optimiser")
