@@ -6376,6 +6376,49 @@ Wild Capital Team"""
             mime="message/rfc822",
             help="Download as .eml file - double-click to open in your email client with full HTML formatting"
         )
+        
+        # Generate Sales & Quotes CSV
+        st.markdown("---")
+        st.markdown("**📊 Sales & Quotes Database Export:**")
+        st.markdown("Generate CSV rows to paste into the Sales & Quotes Excel workbook.")
+        
+        try:
+            import sales_quotes_csv
+            
+            # Generate CSV from optimizer output
+            csv_data = sales_quotes_csv.generate_sales_quotes_csv_from_optimizer_output(
+                quote_number=ref_number,
+                client_name=client_name,
+                development_address=location,
+                base_ref=ref_number,
+                introducer=st.session_state.get("selected_promoter_name"),
+                today_date=datetime.now(),
+                local_planning_authority=st.session_state.get("target_lpa_name", ""),
+                national_character_area=st.session_state.get("target_nca_name", ""),
+                alloc_df=session_alloc_df,
+                contract_size=st.session_state.get("contract_size", "small")
+            )
+            
+            if csv_data:
+                # Display CSV in a code block with copy button
+                st.code(csv_data, language=None, line_numbers=False)
+                st.caption("👆 Click the copy button in the top-right corner of the code block above to copy the CSV data to your clipboard, then paste into the Sales & Quotes Excel workbook.")
+                
+                # Also provide download option as backup
+                st.download_button(
+                    "💾 Download as CSV file (backup option)",
+                    data=csv_data,
+                    file_name=f"Sales_Quotes_{ref_number}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv",
+                    mime="text/csv",
+                    help="Download CSV file if copy-to-clipboard doesn't work"
+                )
+            else:
+                st.info("No allocation data available for CSV export.")
+        except Exception as e:
+            st.error(f"Error generating Sales & Quotes CSV: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+
 
 # Debug section (temporary - can remove later)
 if st.checkbox("Show detailed debug info", value=False):
