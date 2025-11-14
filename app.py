@@ -5328,6 +5328,12 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
             total_demand_units += units
             total_supply_units += units
     
+    for row in manual_area_rows:
+        units = float(row.get("units", 0.0) or 0.0)
+        if units > 0:
+            total_demand_units += units
+            total_supply_units += units
+    
     # Add Planning Discharge Pack and Total
     html_table += f"""
         <tr>
