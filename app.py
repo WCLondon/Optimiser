@@ -5315,23 +5315,20 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
     total_demand_units = demand_df['units_required'].sum()
     total_supply_units = alloc_df['units_supplied'].sum()
     
-    # Add manual units
+    # Add manual units to SUPPLY only (they provide mitigation, not additional demand)
     for row in manual_hedgerow_rows:
         units = float(row.get("units", 0.0) or 0.0)
         if units > 0:
-            total_demand_units += units
             total_supply_units += units
     
     for row in manual_watercourse_rows:
         units = float(row.get("units", 0.0) or 0.0)
         if units > 0:
-            total_demand_units += units
             total_supply_units += units
     
     for row in manual_area_rows:
         units = float(row.get("units", 0.0) or 0.0)
         if units > 0:
-            total_demand_units += units
             total_supply_units += units
     
     # Add Planning Discharge Pack and Total
