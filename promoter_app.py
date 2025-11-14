@@ -422,6 +422,14 @@ if submitted:
             st.error("❌ No habitat requirements found in metric file")
             st.stop()
         
+        # Check for Felled Woodland - not supported in promoter app
+        FELLED_WOODLAND_NAME = "Woodland and forest - Felled/Replacement for felled woodland"
+        felled_woodland_in_demand = area_df[area_df["habitat_name"] == FELLED_WOODLAND_NAME]
+        if not felled_woodland_in_demand.empty:
+            st.error(f"❌ '{FELLED_WOODLAND_NAME}' is not supported in automated quote generation.")
+            st.info("This habitat requires manual pricing. Please use the main app (app.py) instead.")
+            st.stop()
+        
         # ===== STEP 3: Geocode Location =====
         show_loading_message(LOADING_MESSAGES[message_index % len(LOADING_MESSAGES)])
         message_index += 1

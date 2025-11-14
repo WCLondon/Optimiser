@@ -143,6 +143,7 @@ def init_session_state():
         "suo_results": None,  # SUO computation results
         "suo_applicable": False,  # Whether SUO can be applied
         "metric_surplus": None,  # Surplus from metric file
+        "felled_woodland_price_per_unit": {},  # Prices for Felled Woodland manual entries
     }
     
     for key, value in defaults.items():
@@ -194,6 +195,8 @@ def reset_quote():
         st.session_state["email_ref_number"] = "BNG00XXX"
         st.session_state["email_location"] = "INSERT LOCATION"
         st.session_state["map_version"] = st.session_state.get("map_version", 0) + 1
+        # Clear felled woodland pricing state
+        st.session_state["felled_woodland_price_per_unit"] = {}
         # Clear location input fields by deleting them (widget-bound variables)
         if "postcode_input" in st.session_state:
             del st.session_state["postcode_input"]
@@ -4029,6 +4032,54 @@ def optimise(demand_df: pd.DataFrame,
         alloc_df, total_cost = enforce_minimum_delivery(alloc_df)
         return alloc_df, float(total_cost), chosen_size
 
+# ================= Special handling for Felled Woodland =================
+# This must be BEFORE the "Run optimiser" button to avoid rerun issues
+# Handle 'Woodland and forest - Felled/Replacement for felled woodland' specially
+if not demand_df.empty:
+    FELLED_WOODLAND_NAME = "Woodland and forest - Felled/Replacement for felled woodland"
+    felled_woodland_demands = demand_df[demand_df["habitat_name"] == FELLED_WOODLAND_NAME].copy()
+    
+    if not felled_woodland_demands.empty:
+        st.markdown("---")
+        st.warning(f"⚠️ **Special Habitat Detected**: '{FELLED_WOODLAND_NAME}' requires off-site mitigation with manual pricing.")
+        
+        # Initialize session state for felled woodland price if not exists
+        if "felled_woodland_price_per_unit" not in st.session_state:
+            st.session_state["felled_woodland_price_per_unit"] = {}
+        
+        # For each felled woodland demand, ask for price
+        all_prices_provided = True
+        for idx, fw_row in felled_woodland_demands.iterrows():
+            fw_units = float(fw_row["units_required"])
+            fw_key = f"fw_{idx}"
+            
+            if fw_key not in st.session_state["felled_woodland_price_per_unit"]:
+                all_prices_provided = False
+                st.info(f"📝 Please provide unit price for **{fw_units:.2f} units** of '{FELLED_WOODLAND_NAME}'")
+                
+                with st.form(key=f"felled_woodland_price_form_{idx}"):
+                    price_input = st.number_input(
+                        f"Price per unit (£) for {fw_units:.2f} units:",
+                        min_value=0.0,
+                        value=15000.0,
+                        step=100.0,
+                        key=f"price_input_{idx}"
+                    )
+                    submitted = st.form_submit_button("Set Price and Continue")
+                    
+                    if submitted:
+                        st.session_state["felled_woodland_price_per_unit"][fw_key] = price_input
+                        st.rerun()
+        
+        if all_prices_provided:
+            st.success(f"✅ Price set for {len(felled_woodland_demands)} Felled Woodland entry/entries. You can now proceed with optimization.")
+            # Display the prices that were set
+            for idx, fw_row in felled_woodland_demands.iterrows():
+                fw_units = float(fw_row["units_required"])
+                fw_key = f"fw_{idx}"
+                fw_price = st.session_state["felled_woodland_price_per_unit"][fw_key]
+                st.caption(f"  • {fw_units:.2f} units @ £{fw_price:,.0f}/unit = £{fw_units * fw_price:,.2f}")
+
 # ================= Run optimiser UI =================
 st.subheader("3) Run optimiser")
 left, middle, right = st.columns([1,1,1])
@@ -4324,6 +4375,49 @@ if run:
             st.error(f"These demand habitats aren't in the catalog: {unknown}")
             st.stop()
 
+        # Handle Felled Woodland: Add as manual entries and remove from optimizer demand
+        FELLED_WOODLAND_NAME = "Woodland and forest - Felled/Replacement for felled woodland"
+        felled_woodland_demands = demand_df[demand_df["habitat_name"] == FELLED_WOODLAND_NAME].copy()
+        
+        if not felled_woodland_demands.empty:
+            # Prices should already be set (form shown earlier in the UI)
+            # Add as manual entries and remove from demand_df
+            for idx, fw_row in felled_woodland_demands.iterrows():
+                fw_units = float(fw_row["units_required"])
+                fw_key = f"fw_{idx}"
+                
+                # Check if price is set
+                if fw_key not in st.session_state.get("felled_woodland_price_per_unit", {}):
+                    st.error(f"❌ Price not set for Felled Woodland. Please set the price above before optimizing.")
+                    st.stop()
+                
+                fw_price = st.session_state["felled_woodland_price_per_unit"][fw_key]
+                
+                # Check if already added to avoid duplicates
+                already_added = any(
+                    r.get("habitat_name") == FELLED_WOODLAND_NAME and 
+                    r.get("units") == fw_units and 
+                    r.get("price_per_unit") == fw_price
+                    for r in st.session_state.get("manual_area_rows", [])
+                )
+                
+                if not already_added:
+                    # Add to manual area rows
+                    manual_entry = {
+                        "id": st.session_state["_next_manual_area_id"],
+                        "habitat_lost": FELLED_WOODLAND_NAME,
+                        "habitat_name": FELLED_WOODLAND_NAME,
+                        "units": fw_units,
+                        "price_per_unit": fw_price,
+                        "paired": False
+                    }
+                    st.session_state["manual_area_rows"].append(manual_entry)
+                    st.session_state["_next_manual_area_id"] += 1
+            
+            # Remove felled woodland from demand_df for optimization
+            # This prevents optimizer from matching it with Lowland mixed deciduous or any other habitat
+            demand_df = demand_df[demand_df["habitat_name"] != FELLED_WOODLAND_NAME].copy()
+
         # Use session state values
         target_lpa = st.session_state["target_lpa_name"]
         target_nca = st.session_state["target_nca_name"]
@@ -4332,7 +4426,7 @@ if run:
         lpa_neighbors_norm = st.session_state["lpa_neighbors_norm"]
         nca_neighbors_norm = st.session_state["nca_neighbors_norm"]
 
-        # Run optimization
+        # Run optimization (now without felled woodland if it was handled above)
         with st.spinner("Running optimization..."):
             alloc_df, total_cost, size = optimise(
                 demand_df,
@@ -5024,14 +5118,14 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
     
     # Calculate total cost from actual line items (which have SUO discount already applied)
     # Sum up all offset costs from the line items
-    optimizer_cost = 0.0
+    # Note: Manual entries are already included in area_habitats, hedgerow_habitats, and watercourse_habitats lists
+    # so we don't need to add manual_*_cost separately (that would be double-counting)
+    total_cost_with_manual = 0.0
     for habitat_list in [area_habitats, hedgerow_habitats, watercourse_habitats]:
         for row in habitat_list:
             cost_str = row["Offset Cost"].replace("£", "").replace(",", "")
-            optimizer_cost += float(cost_str)
+            total_cost_with_manual += float(cost_str)
     
-    # Add manual entries
-    total_cost_with_manual = optimizer_cost + manual_hedgerow_cost + manual_watercourse_cost + manual_area_cost
     total_with_admin = total_cost_with_manual + admin_fee
     
     # Bundle Low + 10% Net Gain rows together for each habitat type
@@ -5221,17 +5315,20 @@ def generate_client_report_table_fixed(alloc_df: pd.DataFrame, demand_df: pd.Dat
     total_demand_units = demand_df['units_required'].sum()
     total_supply_units = alloc_df['units_supplied'].sum()
     
-    # Add manual units
+    # Add manual units to SUPPLY only (they provide mitigation, not additional demand)
     for row in manual_hedgerow_rows:
         units = float(row.get("units", 0.0) or 0.0)
         if units > 0:
-            total_demand_units += units
             total_supply_units += units
     
     for row in manual_watercourse_rows:
         units = float(row.get("units", 0.0) or 0.0)
         if units > 0:
-            total_demand_units += units
+            total_supply_units += units
+    
+    for row in manual_area_rows:
+        units = float(row.get("units", 0.0) or 0.0)
+        if units > 0:
             total_supply_units += units
     
     # Add Planning Discharge Pack and Total
