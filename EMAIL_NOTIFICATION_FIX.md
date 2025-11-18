@@ -3,10 +3,13 @@
 ## Problem
 Despite having email settings configured in streamlit secrets, users submitting quotes via `promoter_app.py` did not receive feedback about whether email notifications were sent successfully. Email errors were silently swallowed by a try-except block with only console logging.
 
+Additionally, some users experienced "No reviewer emails configured" errors even when REVIEWER_EMAILS was properly set in secrets.toml.
+
 ## Root Cause
 1. **Silent Failure**: The email notification code caught all exceptions and used `pass`, meaning errors were invisible to users
 2. **No User Feedback**: The confirmation screen didn't show whether the email was sent or failed
 3. **Poor Debugging**: When emails failed, users and admins had no visibility into the cause
+4. **Secrets Access Issue**: Using `st.secrets.get()` for TOML arrays didn't always work reliably - needed direct key access with `st.secrets["KEY"]`
 
 ## Solution Implemented
 
@@ -36,13 +39,24 @@ def send_email_notification(...) -> tuple[bool, str]:
 **Captures and displays email status to users**
 
 ```python
-# Before - status was lost
+# Before - status was lost, used .get() for arrays
+reviewer_emails_raw = st.secrets.get("REVIEWER_EMAILS", [])
 send_email_notification(...)  # Result ignored
 
-# After - status captured and displayed
+# After - status captured and displayed, better secrets access
+try:
+    reviewer_emails_raw = st.secrets["REVIEWER_EMAILS"]  # Direct access for TOML arrays
+except (KeyError, AttributeError):
+    reviewer_emails_raw = st.secrets.get("REVIEWER_EMAILS", [])  # Fallback
+
 email_sent, email_status_message = send_email_notification(...)
 # Store in session state for display on confirmation screen
 ```
+
+**Key Improvement for REVIEWER_EMAILS:**
+- Changed from `.get()` to direct key access `st.secrets["REVIEWER_EMAILS"]`
+- This properly handles TOML array syntax: `REVIEWER_EMAILS = ["email@example.com"]`
+- Added debug logging to show raw and processed values for troubleshooting
 
 **User Experience Improvements:**
 
@@ -122,22 +136,36 @@ Or if it fails:
 
 If you see email failures after this fix, check:
 
-1. **SMTP Credentials**: Ensure `SMTP_USER` and `SMTP_PASSWORD` are correct
-2. **Google App Password**: Gmail requires app-specific passwords, not your regular password
-3. **2FA**: If using Gmail, ensure 2-factor authentication is enabled
-4. **Less Secure Apps**: Gmail may block access - use App Passwords instead
-5. **Firewall**: Ensure port 587 is not blocked
-6. **Reviewer Emails**: Verify `REVIEWER_EMAILS` contains valid email addresses
+1. **REVIEWER_EMAILS not found**: 
+   - Ensure REVIEWER_EMAILS is at the root level of secrets.toml (not in a section)
+   - Use array syntax: `REVIEWER_EMAILS = ["email@example.com"]` not `REVIEWER_EMAILS = "email@example.com"`
+   - Check console logs for debug output showing the raw value
+2. **SMTP Credentials**: Ensure `SMTP_USER` and `SMTP_PASSWORD` are correct
+3. **Google App Password**: Gmail requires app-specific passwords, not your regular password
+4. **2FA**: If using Gmail, ensure 2-factor authentication is enabled
+5. **Less Secure Apps**: Gmail may block access - use App Passwords instead
+6. **Firewall**: Ensure port 587 is not blocked
+7. **Reviewer Emails**: Verify `REVIEWER_EMAILS` contains valid email addresses
 
 ## Common Error Messages
 
 | Error Message | Likely Cause | Solution |
 |--------------|--------------|----------|
 | "SMTP credentials not configured" | Missing `SMTP_USER` or `SMTP_PASSWORD` | Add credentials to secrets.toml |
-| "No reviewer emails configured" | Missing or empty `REVIEWER_EMAILS` | Add reviewer emails to secrets.toml |
+| "No reviewer emails configured" | Missing, empty, or incorrectly formatted `REVIEWER_EMAILS` | Add as array: `REVIEWER_EMAILS = ["email@example.com"]` |
 | "Authentication failed" | Wrong password or not using App Password | Generate Google App Password |
 | "Connection refused" | Wrong host/port or firewall | Check SMTP_HOST and SMTP_PORT |
 | "Recipient address rejected" | Invalid email address | Verify REVIEWER_EMAILS addresses |
+
+**Important**: `REVIEWER_EMAILS` must be defined as a TOML array at the root level of secrets.toml:
+```toml
+REVIEWER_EMAILS = ["email1@example.com", "email2@example.com"]
+```
+
+NOT as a string:
+```toml
+REVIEWER_EMAILS = "email@example.com"  # Wrong!
+```
 
 ## Security Considerations
 - ✓ No security vulnerabilities introduced (CodeQL scan passed)
