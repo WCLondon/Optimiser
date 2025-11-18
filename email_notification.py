@@ -17,6 +17,9 @@ def send_email_notification(to_emails: List[str],
                            client_name: str,
                            quote_total: float,
                            metric_file_content: bytes,
+                           email_type: str = 'quote_notification',
+                           email_html_body: Optional[str] = None,
+                           admin_fee: Optional[float] = None,
                            **kwargs) -> tuple[bool, str]:
     """
     Send email notification about a new quote submission.
@@ -26,6 +29,9 @@ def send_email_notification(to_emails: List[str],
         client_name: Name of the client
         quote_total: Total quote amount in GBP
         metric_file_content: BNG metric file content
+        email_type: Type of email - 'quote_notification' (default) or 'full_quote'
+        email_html_body: HTML body for full quote email (required if email_type='full_quote')
+        admin_fee: Admin fee for full quote (required if email_type='full_quote')
         **kwargs: Additional parameters (reference_number, site_location, etc.)
     
     Returns:
@@ -56,39 +62,99 @@ def send_email_notification(to_emails: List[str],
         msg = MIMEMultipart()
         msg['From'] = f"{from_name} <{from_email}>"
         msg['To'] = ', '.join(to_emails)
-        msg['Subject'] = f"New BNG Quote Request - {reference_number} - {client_name}"
         
-        # Create email body
-        body = f"""
-New BNG Quote Request Submitted
+        # Different email content based on type
+        if email_type == 'full_quote':
+            # Full quote email for £50k+ (to be forwarded to customer)
+            msg['Subject'] = f"BNG Quote for Review - {client_name} - {site_location}"
+            
+            if not email_html_body:
+                return False, "email_html_body is required for full_quote email type"
+            
+            # Create email body with customer details at top
+            total_with_admin = quote_total + (admin_fee or 0.0)
+            
+            body_text = f"""
+BNG Quote for Review - Please Forward to Customer
+====================================================
 
-Client Details:
+CUSTOMER DETAILS:
+- Client Name: {client_name}
+- Contact Email: {contact_email}
+- Location: {site_location}
+- Quote Total: £{total_with_admin:,.2f} + VAT
+- Reference Number: [TO BE FILLED IN MANUALLY]
+
+PROMOTER DETAILS:
+- Promoter Name: {promoter_name}
+"""
+            
+            if notes:
+                body_text += f"""
+ADDITIONAL NOTES:
+{notes}
+"""
+            
+            body_text += """
+
+INSTRUCTIONS FOR REVIEWER:
+===========================
+This quote is £50,000 or over and requires review before sending to the customer.
+
+1. Review the quote details below
+2. Fill in the reference number manually
+3. Forward this email to the customer ({contact_email})
+4. The metric file is attached for your reference
+
+Please find the full quote details below and metric file attached.
+
+---
+[Full Quote Details Below - Forward to Customer]
+---
+""".format(contact_email=contact_email)
+            
+            # Create plain text version
+            msg.attach(MIMEText(body_text, 'plain'))
+            
+            # Attach the HTML email body (the actual quote for customer)
+            msg.attach(MIMEText(email_html_body, 'html'))
+            
+        else:
+            # Simple quote notification (under £50k)
+            msg['Subject'] = f"New BNG Quote Request - {reference_number} - {client_name}"
+            
+            # Create email body
+            body = f"""
+New BNG Quote Request Submitted
+================================
+
+CLIENT DETAILS:
 - Client Name: {client_name}
 - Reference: {reference_number}
 - Location: {site_location}
 - Contact Email: {contact_email}
 - Quote Total: £{quote_total:,.2f}
 
-Promoter Details:
+PROMOTER DETAILS:
 - Promoter Name: {promoter_name}
 
 """
-        
-        if notes:
-            body += f"""
-Additional Notes:
+            
+            if notes:
+                body += f"""
+ADDITIONAL NOTES:
 {notes}
 
 """
-        
-        body += """
+            
+            body += """
 Please find the BNG metric file attached.
 
 ---
 This is an automated notification from the Wild Capital BNG Quote System.
 """
-        
-        msg.attach(MIMEText(body, 'plain'))
+            
+            msg.attach(MIMEText(body, 'plain'))
         
         # Attach metric file
         if metric_file_content:
