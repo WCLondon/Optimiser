@@ -66,23 +66,26 @@ def send_email_notification(to_emails: List[str],
         # Different email content based on type
         if email_type == 'full_quote':
             # Full quote email for £50k+ (to be forwarded to customer)
-            msg['Subject'] = f"BNG Quote for Review - {client_name} - {site_location}"
+            # This creates a properly formatted email that reviewers can forward
             
             if not email_html_body:
                 return False, "email_html_body is required for full_quote email type"
             
-            # Create email body with customer details at top
             total_with_admin = quote_total + (admin_fee or 0.0)
             
-            body_text = f"""
-BNG Quote for Review - Please Forward to Customer
-====================================================
+            # Subject for the email to reviewer
+            msg['Subject'] = f"BNG Quote for Review & Forwarding - {client_name} - £{total_with_admin:,.0f}"
+            
+            # Create the wrapper email to reviewer (plain text)
+            reviewer_instructions = f"""
+QUOTE READY FOR REVIEW AND FORWARDING
+======================================
 
 CUSTOMER DETAILS:
 - Client Name: {client_name}
 - Contact Email: {contact_email}
 - Location: {site_location}
-- Quote Total: £{total_with_admin:,.2f} + VAT
+- Quote Total: £{total_with_admin:,.0f} + VAT
 - Reference Number: [TO BE FILLED IN MANUALLY]
 
 PROMOTER DETAILS:
@@ -90,33 +93,66 @@ PROMOTER DETAILS:
 """
             
             if notes:
-                body_text += f"""
+                reviewer_instructions += f"""
 ADDITIONAL NOTES:
 {notes}
 """
             
-            body_text += """
+            reviewer_instructions += f"""
 
 INSTRUCTIONS FOR REVIEWER:
 ===========================
 This quote is £50,000 or over and requires review before sending to the customer.
 
-1. Review the quote details below
-2. Fill in the reference number manually
-3. Forward this email to the customer ({contact_email})
-4. The metric file is attached for your reference
+ACTION REQUIRED:
+1. Review the customer-facing quote email below
+2. Fill in the reference number manually in the subject line
+3. Forward this email to the customer: {contact_email}
+4. The BNG metric file is attached for reference
 
-Please find the full quote details below and metric file attached.
+The customer-facing email content is included below with both plain text and HTML formatting.
 
----
-[Full Quote Details Below - Forward to Customer]
----
-""".format(contact_email=contact_email)
+================================================================================
+CUSTOMER-FACING EMAIL CONTENT (FORWARD THE SECTION BELOW)
+================================================================================
+
+Subject: RE: BNG Units for site at {site_location} - [REFERENCE NUMBER]
+
+"""
             
-            # Create plain text version
-            msg.attach(MIMEText(body_text, 'plain'))
+            # Create plain text version of customer email
+            customer_text = f"""Dear {client_name}
+
+Our Ref: [REFERENCE NUMBER TO BE FILLED IN]
+
+{promoter_name} has advised us that you need Biodiversity Net Gain units for your development in {site_location}, and we're here to help you discharge your BNG condition.
+
+About Us
+
+Wild Capital is a national supplier of BNG Units and environmental mitigation credits (Nutrient Neutrality, SANG), backed by institutional finance.
+
+Your Quote - £{total_with_admin:,.0f} + VAT
+
+[Please view the HTML version of this email for the detailed pricing breakdown table]
+
+Next Steps
+
+BNG is a pre-commencement, not a pre-planning, condition.
+
+To accept the quote, let us know—we'll request some basic details before sending the Allocation Agreement. The price is fixed for 30 days, but unit availability is only guaranteed once the agreement is signed.
+
+If you have any questions, please reply to this email or call 01962 436574.
+
+Best regards,
+Wild Capital Team
+"""
             
-            # Attach the HTML email body (the actual quote for customer)
+            # Combine reviewer instructions with customer content
+            full_body_text = reviewer_instructions + customer_text
+            
+            # Create multipart message with both text and HTML
+            # The HTML part contains the formatted quote table
+            msg.attach(MIMEText(full_body_text, 'plain'))
             msg.attach(MIMEText(email_html_body, 'html'))
             
         else:
