@@ -17,7 +17,7 @@ def send_email_notification(to_emails: List[str],
                            client_name: str,
                            quote_total: float,
                            metric_file_content: bytes,
-                           **kwargs) -> bool:
+                           **kwargs) -> tuple[bool, str]:
     """
     Send email notification about a new quote submission.
     
@@ -29,7 +29,7 @@ def send_email_notification(to_emails: List[str],
         **kwargs: Additional parameters (reference_number, site_location, etc.)
     
     Returns:
-        True if email sent successfully, False otherwise
+        Tuple of (success: bool, message: str)
     """
     try:
         # Get SMTP configuration from Streamlit secrets
@@ -41,8 +41,9 @@ def send_email_notification(to_emails: List[str],
         from_name = st.secrets.get("SMTP_FROM_NAME", "Wild Capital BNG Quotes")
         
         if not smtp_user or not smtp_password:
-            print("[EMAIL] SMTP credentials not configured in secrets")
-            return False
+            msg = "SMTP credentials not configured in secrets. Please add SMTP_USER and SMTP_PASSWORD to .streamlit/secrets.toml"
+            print(f"[EMAIL] {msg}")
+            return False, msg
         
         # Extract additional parameters
         reference_number = kwargs.get('reference_number', 'N/A')
@@ -111,11 +112,12 @@ This is an automated notification from the Wild Capital BNG Quote System.
         server.quit()
         
         print(f"[EMAIL] ✓ Email sent successfully to {to_emails}")
-        return True
+        return True, f"Email sent successfully to {len(to_emails)} recipient(s)"
         
     except Exception as e:
-        print(f"[EMAIL] ✗ Failed to send email: {e}")
+        error_msg = f"Failed to send email: {str(e)}"
+        print(f"[EMAIL] ✗ {error_msg}")
         import traceback
         traceback.print_exc()
-        return False
+        return False, error_msg
 

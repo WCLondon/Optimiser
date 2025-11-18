@@ -151,6 +151,18 @@ if st.session_state.get('submission_complete', False):
     st.markdown("---")
     st.subheader("📋 Submission Summary")
     
+    # Show email notification status prominently
+    email_sent = submission_data.get('email_sent', False)
+    email_status = submission_data.get('email_status_message', '')
+    
+    if email_sent:
+        st.success(f"✅ **Email Notification Sent:** {email_status}")
+    elif email_status:
+        st.warning(f"⚠️ **Email Notification Issue:** {email_status}")
+        st.info("💡 Your quote was saved successfully, but the email notification could not be sent. Please contact your administrator to check the email configuration.")
+    
+    st.markdown("---")
+    
     col1, col2 = st.columns(2)
     with col1:
         st.write(f"**Client:** {submission_data['client_name']}")
@@ -637,6 +649,9 @@ if submitted:
         
         # ===== STEP 9: Send Email Notification =====
         show_loading_message("Sending notifications...")
+        email_sent = False
+        email_status_message = ""
+        
         try:
             # Get reviewer emails from secrets - it's an array
             reviewer_emails_raw = st.secrets.get("REVIEWER_EMAILS", [])
@@ -650,7 +665,7 @@ if submitted:
                 reviewer_emails = []
             
             if reviewer_emails:
-                send_email_notification(
+                email_sent, email_status_message = send_email_notification(
                     to_emails=reviewer_emails,
                     client_name=client_name,
                     quote_total=quote_total,
@@ -661,9 +676,14 @@ if submitted:
                     contact_email=contact_email,
                     notes=notes
                 )
+            else:
+                email_status_message = "No reviewer emails configured in secrets (REVIEWER_EMAILS)"
+                print(f"[EMAIL] {email_status_message}")
         except Exception as e:
-            print(f"[EMAIL] Email notification failed: {e}")
-            pass  # Email send failed, but continue
+            email_status_message = f"Email notification error: {str(e)}"
+            print(f"[EMAIL] {email_status_message}")
+            import traceback
+            traceback.print_exc()
         
         progress_bar.progress(100)
         loading_placeholder.success("✓ Processing complete!")
@@ -684,7 +704,9 @@ if submitted:
             'pdf_content': pdf_content,
             'pdf_debug_message': pdf_debug_message,
             'suo_applicable': suo_applicable,
-            'suo_results': suo_results
+            'suo_results': suo_results,
+            'email_sent': email_sent,
+            'email_status_message': email_status_message
         }
         
         # Rerun to show confirmation screen
