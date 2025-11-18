@@ -5,7 +5,7 @@ This module converts optimiser allocation results into CSV data rows
 that align with the Sales & Quotes Excel workbook column structure (A-BB).
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 import pandas as pd
 
@@ -30,7 +30,7 @@ BANK_NAME_ALTERNATIVES = {
 }
 
 
-def get_standardized_bank_name(bank_ref: str, bank_name: str) -> tuple[str, str, str]:
+def get_standardized_bank_name(bank_ref: str, bank_name: str) -> Tuple[str, str, str]:
     """
     Get standardized bank name from mapping, or return 'Other' with notes.
     
