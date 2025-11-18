@@ -213,9 +213,13 @@ Wild Capital Team
             # Combine HTML reviewer instructions with the customer-facing HTML email body
             full_html_body = reviewer_instructions_html + email_html_body
             
-            # Create multipart message with both text and HTML
-            msg.attach(MIMEText(full_body_text, 'plain'))
-            msg.attach(MIMEText(full_html_body, 'html'))
+            # Create multipart/alternative for the email body (text and HTML)
+            msg_alternative = MIMEMultipart('alternative')
+            msg_alternative.attach(MIMEText(full_body_text, 'plain'))
+            msg_alternative.attach(MIMEText(full_html_body, 'html'))
+            
+            # Attach the alternative part to the main message
+            msg.attach(msg_alternative)
             
         else:
             # Simple quote notification (under £50k)

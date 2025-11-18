@@ -107,9 +107,12 @@ def test_full_quote_email_type():
             # Verify the message is multipart (has both text and HTML)
             assert sent_message.is_multipart(), "Message should be multipart (text + HTML)"
             
-            # Get the parts
+            # Get the parts - should be multipart/mixed with alternative + attachment
             parts = sent_message.get_payload()
-            assert len(parts) >= 2, "Should have at least 2 parts (text + HTML)"
+            assert len(parts) >= 1, "Should have at least 1 part (alternative content)"
+            
+            # First part should be multipart/alternative
+            assert parts[0].is_multipart(), "First part should be multipart/alternative"
             
             print("✓ Test passed: Full quote email type works correctly")
 
@@ -181,9 +184,15 @@ def test_full_quote_email_content():
             # Get the sent message
             sent_message = mock_server.send_message.call_args[0][0]
             
-            # Get the text part - need to decode if it's base64 encoded
+            # The structure is now multipart/mixed containing multipart/alternative
             parts = sent_message.get_payload()
-            text_part = parts[0]
+            
+            # First part should be the multipart/alternative (text + HTML)
+            alternative_part = parts[0]
+            
+            # Get the text part from the alternative
+            alternative_parts = alternative_part.get_payload()
+            text_part = alternative_parts[0]
             
             # Get payload and decode if necessary
             text_content = text_part.get_payload(decode=True)
