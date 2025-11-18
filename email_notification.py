@@ -135,11 +135,18 @@ Your Quote - £{total_with_admin:,.0f} + VAT
 
 [Please view the HTML version of this email for the detailed pricing breakdown table]
 
+Prices exclude VAT. Any legal costs for contract amendments will be charged to the client and must be paid before allocation.
+
 Next Steps
 
 BNG is a pre-commencement, not a pre-planning, condition.
 
 To accept the quote, let us know—we'll request some basic details before sending the Allocation Agreement. The price is fixed for 30 days, but unit availability is only guaranteed once the agreement is signed.
+
+We offer two contract options:
+
+1. Buy It Now: Pay in full on signing; units allocated immediately.
+2. Reservation & Purchase: Pay a reservation fee to hold units for up to 6 months, with the option to draw them down anytime in that period.
 
 If you have any questions, please reply to this email or call 01962 436574.
 

@@ -142,6 +142,67 @@ def test_full_quote_missing_html_body():
         print("✓ Test passed: Full quote email type fails without HTML body")
 
 
+def test_full_quote_email_content():
+    """Test that full quote email contains required content"""
+    with patch('email_notification.st.secrets') as mock_secrets:
+        mock_secrets.get = MagicMock(side_effect=lambda key, default: {
+            'SMTP_HOST': 'smtp.gmail.com',
+            'SMTP_PORT': 587,
+            'SMTP_USER': 'test@example.com',
+            'SMTP_PASSWORD': 'testpassword',
+            'SMTP_FROM_EMAIL': 'test@example.com',
+            'SMTP_FROM_NAME': 'Test Sender'
+        }.get(key, default))
+        
+        with patch('email_notification.smtplib.SMTP') as mock_smtp:
+            mock_server = MagicMock()
+            mock_smtp.return_value = mock_server
+            
+            # Mock HTML body for full quote
+            test_html = "<html><body><h1>Test Quote</h1></body></html>"
+            
+            success, message = send_email_notification(
+                to_emails=['reviewer@example.com'],
+                client_name='Test Client',
+                quote_total=60000.00,
+                metric_file_content=b'test content',
+                reference_number='',
+                site_location='Test Site',
+                promoter_name='Test Promoter',
+                contact_email='customer@example.com',
+                notes='',
+                email_type='full_quote',
+                email_html_body=test_html,
+                admin_fee=500.00
+            )
+            
+            assert success == True
+            
+            # Get the sent message
+            sent_message = mock_server.send_message.call_args[0][0]
+            
+            # Get the text part - need to decode if it's base64 encoded
+            parts = sent_message.get_payload()
+            text_part = parts[0]
+            
+            # Get payload and decode if necessary
+            text_content = text_part.get_payload(decode=True)
+            if isinstance(text_content, bytes):
+                text_content = text_content.decode('utf-8')
+            else:
+                text_content = str(text_content)
+            
+            # Verify required content in plain text version
+            assert "Prices exclude VAT" in text_content, "Should contain VAT disclaimer"
+            assert "legal costs for contract amendments" in text_content, "Should contain legal costs disclaimer"
+            assert "Next Steps" in text_content, "Should contain Next Steps section"
+            assert "Buy It Now" in text_content, "Should contain Buy It Now option"
+            assert "Reservation & Purchase" in text_content, "Should contain Reservation & Purchase option"
+            assert "pre-commencement, not a pre-planning" in text_content, "Should contain BNG condition info"
+            
+            print("✓ Test passed: Full quote email contains all required content")
+
+
 if __name__ == '__main__':
     print("Running email type tests...")
     print()
@@ -149,6 +210,7 @@ if __name__ == '__main__':
     test_quote_notification_email_type()
     test_full_quote_email_type()
     test_full_quote_missing_html_body()
+    test_full_quote_email_content()
     
     print()
     print("=" * 60)
