@@ -12,6 +12,45 @@ import pandas as pd
 # Import constants from optimizer_core
 from optimizer_core import ADMIN_FEE_GBP, ADMIN_FEE_FRACTIONAL_GBP
 
+# Import database functions
+from repo import fetch_banks
+
+
+# Cache for bank names to avoid repeated database queries
+_bank_name_cache = None
+
+
+def get_bank_name_from_database(bank_id: str) -> Optional[str]:
+    """
+    Get bank name from the Banks table in the database.
+    Uses first 5 characters of bank_id to match against database.
+    
+    Args:
+        bank_id: Bank ID (e.g., "WC1P2" or "WC1P2-001")
+    
+    Returns:
+        Bank name from database, or None if not found
+    """
+    global _bank_name_cache
+    
+    # Load banks data from database (cached)
+    if _bank_name_cache is None:
+        try:
+            banks_df = fetch_banks()
+            if banks_df is not None and not banks_df.empty:
+                _bank_name_cache = dict(zip(banks_df['bank_id'], banks_df['bank_name']))
+            else:
+                _bank_name_cache = {}
+        except Exception:
+            # Database not available (e.g., in tests) - use empty cache
+            _bank_name_cache = {}
+    
+    # Take first 5 characters of bank_id
+    bank_id_short = bank_id[:5] if len(bank_id) >= 5 else bank_id
+    
+    # Look up in cache
+    return _bank_name_cache.get(bank_id_short)
+
 
 # Bank reference to bank name mapping - Updated list from user
 # Format: first 5 chars of bank_id + " - " + bank_name
@@ -29,34 +68,35 @@ VALID_BANK_COMBINATIONS = [
 ]
 
 
-def get_standardized_bank_name(bank_ref: str, bank_name: str) -> Tuple[str, str, str]:
+def get_standardized_bank_name(bank_ref: str, bank_name_from_alloc: str) -> Tuple[str, str, str]:
     """
-    Get standardized bank name from valid combinations.
+    Get standardized bank name from Banks table in database.
     Uses format: first 5 chars of bank_id + " - " + bank_name
     
     Args:
         bank_ref: Bank reference/ID (e.g., "WC1P2" or "WC1P2-001")
-        bank_name: Bank name from optimizer (e.g., "Nunthorpe")
+        bank_name_from_alloc: Bank name from optimizer allocation (NOT USED - fetched from DB instead)
     
     Returns:
-        Tuple of (standardized_bank_ref_name, notes_for_column_S, source_display)
-        - standardized_bank_ref_name: Either the matched name or 'Other'
+        Tuple of (standardized_bank_name, notes_for_column_S, source_display)
+        - standardized_bank_name: Bank name from database or 'Other'
         - notes_for_column_S: Empty string or the actual bank name if using 'Other'
         - source_display: The full "ref - name" string for column AB
     """
     bank_ref = bank_ref.strip()
-    bank_name = bank_name.strip()
     
-    # Take first 5 characters of bank_ref (this handles both "WC1P2" and "WC1P2-001" formats)
+    # Take first 5 characters of bank_ref (handles both "WC1P2" and "WC1P2-001" formats)
     bank_ref_short = bank_ref[:5] if len(bank_ref) >= 5 else bank_ref
     
-    # Check if this combination is in the valid list
-    for valid_ref, valid_name in VALID_BANK_COMBINATIONS:
-        if bank_ref_short == valid_ref and bank_name == valid_name:
-            return valid_name, "", f"{bank_ref_short} - {valid_name}"
+    # Get bank name from database
+    bank_name = get_bank_name_from_database(bank_ref_short)
     
-    # Bank not in valid combinations - use 'Other' and add to notes
-    return "Other", bank_name, f"{bank_ref_short} - Other"
+    if bank_name:
+        # Found in database - use it
+        return bank_name, "", f"{bank_ref_short} - {bank_name}"
+    else:
+        # Not found in database - use 'Other' and put actual name in notes
+        return "Other", bank_name_from_alloc, f"{bank_ref_short} - Other"
 
 
 def split_paired_habitat(habitat_type: str, units_supplied: float, effective_units: float, 
@@ -206,9 +246,9 @@ def generate_sales_quotes_csv(
             for h in habitats
         )
         
-        # Create CSV row with all columns A-CY
-        # Total: 103 columns (A=0 to CY=102)
-        row = [""] * 103  # 103 columns from A to CY
+        # Create CSV row with all columns A-CX
+        # Total: 102 columns (A=0 to CX=101) - UPDATED after moving habitats left
+        row = [""] * 102  # 102 columns from A to CX
         
         # Column A (index 0): blank
         
@@ -293,42 +333,51 @@ def generate_sales_quotes_csv(
         # Column AL (index 37): Quote Period (MOVED LEFT from 38, always "30")
         row[37] = "30"
         
-        # Column AM (index 38): Quote Expiry (MOVED LEFT from 39, auto calculated by Excel)
-        # Leave blank - Excel will calculate
+        # Column AM (index 38): Quote Expiry (Formula: Quote Date + Quote Period)
+        # Excel formula: =AK{row}+AL{row}
+        # We need to calculate the actual row number (data rows start at row 1 in Excel if no headers)
+        # Since we're generating multiple rows, we'll use a row-independent formula
+        # Actually, we need the actual Excel row number. For now, we'll leave a placeholder formula
+        # that assumes the CSV will be pasted starting at row 2 (row 1 would be headers)
+        row_number = alloc_idx + 2  # Assuming paste starts at row 2
+        row[38] = f"=AK{row_number}+AL{row_number}"
         
-        # Columns AN-AQ (indices 39-42): blank (MOVED LEFT from 40-42)
+        # Columns AN-AP (indices 39-41): blank
         
-        # Column AR (index 43): Admin Fee (only on first row if multi-row)
+        # Column AQ (index 42): Admin Fee (MOVED LEFT from 43, only on first row if multi-row)
         if alloc_idx == 0:
-            row[43] = str(admin_fee)
+            row[42] = str(admin_fee)
         # else: blank for subsequent rows
         
+        # Column AR (index 43): blank (Admin Fee was here, now moved to 42)
+        
         # Column AS (index 44): Total Credit Price (CORRECT POSITION per user)
+        row[44] = str(total_credit_price)
         row[44] = str(total_credit_price)
         
         # Column AT (index 45): Total Units (CORRECT POSITION per user)
         row[45] = str(total_units)
         
-        # Column AU (index 46): blank
+        # Note: Column AU (index 46) is now the start of habitats, NOT blank
         
-        # Habitats 1-8 start at column AV (index 47)
+        # Habitats 1-8 start at column AU (index 46) - MOVED LEFT from AV (47)
         # Each habitat has 7 columns: Type, # credits, blank, blank, Quoted Price, blank, Total Cost
-        # Habitat 1: AV-BB (indices 47-53)
-        # Habitat 2: BC-BI (indices 54-60)
-        # Habitat 3: BJ-BP (indices 61-67)
-        # Habitat 4: BQ-BW (indices 68-74)
-        # Habitat 5: BX-CD (indices 75-81)
-        # Habitat 6: CE-CK (indices 82-88)
-        # Habitat 7: CL-CR (indices 89-95)
-        # Habitat 8: CS-CY (indices 96-102)
+        # Habitat 1: AU-BA (indices 46-52)
+        # Habitat 2: BB-BH (indices 53-59)
+        # Habitat 3: BI-BO (indices 60-66)
+        # Habitat 4: BP-BV (indices 67-73)
+        # Habitat 5: BW-CC (indices 74-80)
+        # Habitat 6: CD-CJ (indices 81-87)
+        # Habitat 7: CK-CQ (indices 88-94)
+        # Habitat 8: CR-CX (indices 95-101)
         
         # Process all habitats (up to 8) - each habitat represents exact allocation data
         for hab_idx in range(min(len(habitats), 8)):
             habitat = habitats[hab_idx]
             
             # Calculate starting column index for this habitat
-            # Habitat 1 starts at 47, each habitat takes 7 columns
-            base_idx = 47 + (hab_idx * 7)
+            # Habitat 1 starts at 46 (MOVED LEFT from 47), each habitat takes 7 columns
+            base_idx = 46 + (hab_idx * 7)
             
             # Column 0: Type
             row[base_idx] = str(habitat.get("type", "")).strip()
