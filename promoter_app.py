@@ -653,8 +653,17 @@ if submitted:
         email_status_message = ""
         
         try:
-            # Get reviewer emails from secrets - it's an array
-            reviewer_emails_raw = st.secrets.get("REVIEWER_EMAILS", [])
+            # Get reviewer emails from secrets - try multiple access methods
+            reviewer_emails = []
+            
+            try:
+                # Try direct key access first (works for TOML arrays)
+                reviewer_emails_raw = st.secrets["REVIEWER_EMAILS"]
+            except (KeyError, AttributeError):
+                # Fallback to .get() method
+                reviewer_emails_raw = st.secrets.get("REVIEWER_EMAILS", [])
+            
+            print(f"[EMAIL] DEBUG: reviewer_emails_raw = {reviewer_emails_raw}, type = {type(reviewer_emails_raw)}")
             
             # Handle both array and string formats
             if isinstance(reviewer_emails_raw, list):
@@ -663,6 +672,8 @@ if submitted:
                 reviewer_emails = [e.strip() for e in reviewer_emails_raw.split(",") if e.strip()]
             else:
                 reviewer_emails = []
+            
+            print(f"[EMAIL] DEBUG: Processed reviewer_emails = {reviewer_emails}")
             
             if reviewer_emails:
                 email_sent, email_status_message = send_email_notification(
@@ -677,7 +688,7 @@ if submitted:
                     notes=notes
                 )
             else:
-                email_status_message = "No reviewer emails configured in secrets (REVIEWER_EMAILS)"
+                email_status_message = "No reviewer emails configured in secrets (REVIEWER_EMAILS). Please add REVIEWER_EMAILS to .streamlit/secrets.toml as an array: REVIEWER_EMAILS = [\"email@example.com\"]"
                 print(f"[EMAIL] {email_status_message}")
         except Exception as e:
             email_status_message = f"Email notification error: {str(e)}"
