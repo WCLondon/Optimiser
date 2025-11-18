@@ -655,15 +655,34 @@ if submitted:
         try:
             # Get reviewer emails from secrets - try multiple access methods
             reviewer_emails = []
+            reviewer_emails_raw = None
             
+            # Debug: Show what keys are available in secrets
+            try:
+                available_keys = list(st.secrets.keys()) if hasattr(st.secrets, 'keys') else []
+                print(f"[EMAIL] DEBUG: Available secret keys: {available_keys}")
+            except Exception as e:
+                print(f"[EMAIL] DEBUG: Could not list secret keys: {e}")
+            
+            # Try to access REVIEWER_EMAILS
             try:
                 # Try direct key access first (works for TOML arrays)
                 reviewer_emails_raw = st.secrets["REVIEWER_EMAILS"]
-            except (KeyError, AttributeError):
+                print(f"[EMAIL] DEBUG: Got REVIEWER_EMAILS via direct access")
+            except KeyError as e:
+                print(f"[EMAIL] DEBUG: KeyError accessing REVIEWER_EMAILS: {e}")
                 # Fallback to .get() method
-                reviewer_emails_raw = st.secrets.get("REVIEWER_EMAILS", [])
+                try:
+                    reviewer_emails_raw = st.secrets.get("REVIEWER_EMAILS", [])
+                    print(f"[EMAIL] DEBUG: Got REVIEWER_EMAILS via .get() method")
+                except Exception as e2:
+                    print(f"[EMAIL] DEBUG: Error with .get() method: {e2}")
+                    reviewer_emails_raw = []
+            except Exception as e:
+                print(f"[EMAIL] DEBUG: Unexpected error accessing REVIEWER_EMAILS: {type(e).__name__}: {e}")
+                reviewer_emails_raw = []
             
-            print(f"[EMAIL] DEBUG: reviewer_emails_raw = {reviewer_emails_raw}, type = {type(reviewer_emails_raw)}")
+            print(f"[EMAIL] DEBUG: reviewer_emails_raw = {repr(reviewer_emails_raw)}, type = {type(reviewer_emails_raw)}")
             
             # Handle both array and string formats
             if isinstance(reviewer_emails_raw, list):
@@ -692,7 +711,7 @@ if submitted:
                 print(f"[EMAIL] {email_status_message}")
         except Exception as e:
             email_status_message = f"Email notification error: {str(e)}"
-            print(f"[EMAIL] {email_status_message}")
+            print(f"[EMAIL] ERROR in notification block: {email_status_message}")
             import traceback
             traceback.print_exc()
         
