@@ -29,6 +29,12 @@ def test_bank_name_mapping():
     assert note == ""
     assert display == "WC1P2 - Nunthorpe"
     
+    # Test with longer bank_id (takes first 5 chars)
+    name, note, display = get_standardized_bank_name("WC1P2-001", "Nunthorpe")
+    assert name == "Nunthorpe"
+    assert note == ""
+    assert display == "WC1P2 - Nunthorpe"
+    
     # Unknown bank
     name, note, display = get_standardized_bank_name("WC1P99", "Unknown")
     assert name == "Other"
@@ -37,7 +43,7 @@ def test_bank_name_mapping():
 
 
 def test_single_allocation():
-    """Test single allocation with new column structure."""
+    """Test single allocation with corrected column structure."""
     allocations = [{
         "bank_ref": "WC1P2",
         "bank_name": "Nunthorpe",
@@ -70,17 +76,23 @@ def test_single_allocation():
     reader = csv.reader(io.StringIO(csv_output))
     fields = list(reader)[0]
     
-    # New column structure
+    # Corrected column structure
     assert fields[1] == "Test Client"  # B: Client
     assert fields[3] == "BNG00001"  # D: Ref (no suffix)
-    assert fields[17] == ""  # R: Notes (blank for non-paired)
-    assert fields[28] == "WC1P2 - Nunthorpe"  # AC: Bank
-    assert fields[29] == "10.0"  # AD: Total Units
-    assert fields[30] == "10500.0"  # AE: Contract Value (10000 + 500)
-    assert fields[38] == "30"  # AM: Quote Period
+    assert fields[17] == ""  # R: blank
+    assert fields[18] == ""  # S: Notes (blank for non-paired)
+    assert fields[27] == "WC1P2 - Nunthorpe"  # AB: Bank (CORRECTED - was at 28)
+    assert fields[28] == "=4/3"  # AC: Spatial Multiplier (RESTORED)
+    assert fields[29] == "10.0"  # AD: Total Units (CORRECT)
+    assert fields[30] == "10500.0"  # AE: Contract Value (10000 + 500) (CORRECT)
+    assert fields[32] == "Test LPA"  # AG: LPA (CORRECTED - moved from 33)
+    assert fields[33] == "Test NCA"  # AH: NCA (CORRECTED - moved from 34)
+    assert fields[35] == "Test"  # AJ: Introducer (CORRECTED - moved from 36)
+    assert fields[36] == "10/11/2025"  # AK: Quote Date (CORRECTED - moved from 37)
+    assert fields[37] == "30"  # AL: Quote Period (CORRECTED - moved from 38)
     assert fields[43] == "500.0"  # AR: Admin Fee
-    assert fields[44] == "10000.0"  # AS: Total Credit Price
-    assert fields[45] == "10.0"  # AT: Total Units
+    assert fields[44] == "10000.0"  # AS: Total Credit Price (CORRECT)
+    assert fields[45] == "10.0"  # AT: Total Units (CORRECT)
     assert fields[47] == "Grassland"  # AV: Habitat Type
     assert fields[48] == "10.0"  # AW: Units
     assert fields[51] == "1000.0"  # AZ: Quoted Price
@@ -155,7 +167,8 @@ def test_paired_allocation_srm_notes():
     reader = csv.reader(io.StringIO(csv_output))
     fields = list(reader)[0]
     
-    assert fields[17] == "SRM manual (0.5)"  # R: Notes
+    assert fields[18] == "SRM manual (0.5)"  # S: Notes (CORRECTED from 17)
+    assert fields[28] == "1"  # AC: Spatial Multiplier = 1 for paired
 
 
 def test_exact_allocation_data():
