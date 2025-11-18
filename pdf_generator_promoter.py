@@ -105,35 +105,35 @@ def generate_quote_pdf(client_name: str,
             '', '', '', ''
         ])
         table_data.append([
-            Paragraph('<b>Distinctiveness</b>', styles['Normal']),
+            Paragraph('<b>Distinct-<br/>iveness</b>', styles['Normal']),
             Paragraph('<b>Habitats Lost</b>', styles['Normal']),
             Paragraph('<b># Units</b>', styles['Normal']),
-            Paragraph('<b>Distinctiveness</b>', styles['Normal']),
+            Paragraph('<b>Distinct-<br/>iveness</b>', styles['Normal']),
             Paragraph('<b>Habitats Supplied</b>', styles['Normal']),
             Paragraph('<b># Units</b>', styles['Normal']),
             Paragraph('<b>Price Per Unit</b>', styles['Normal']),
             Paragraph('<b>Offset Cost</b>', styles['Normal'])
         ])
         
-        # Data rows
+        # Data rows - use Paragraphs for wrapping
         if not report_df.empty:
             for _, row in report_df.iterrows():
                 table_data.append([
-                    str(row.get("Distinctiveness", "")),
-                    str(row.get("Habitats Lost", "")),
-                    str(row.get("# Units", "")),
-                    str(row.get("Distinctiveness_Supply", "")),
-                    str(row.get("Habitats Supplied", "")),
-                    str(row.get("# Units_Supply", "")),
-                    str(row.get("Price Per Unit", "")),
-                    str(row.get("Offset Cost", ""))
+                    Paragraph(str(row.get("Distinctiveness", "")), styles['Normal']),
+                    Paragraph(str(row.get("Habitats Lost", "")), styles['Normal']),
+                    Paragraph(str(row.get("# Units", "")), styles['Normal']),
+                    Paragraph(str(row.get("Distinctiveness_Supply", "")), styles['Normal']),
+                    Paragraph(str(row.get("Habitats Supplied", "")), styles['Normal']),
+                    Paragraph(str(row.get("# Units_Supply", "")), styles['Normal']),
+                    Paragraph(str(row.get("Price Per Unit", "")), styles['Normal']),
+                    Paragraph(str(row.get("Offset Cost", "")), styles['Normal'])
                 ])
         
         # Admin fee row
         table_data.append([
             '', '', '', '', '', '',
             Paragraph('<b>Planning Discharge Pack</b>', styles['Normal']),
-            f"£{admin_fee:,.0f}"
+            Paragraph(f"£{admin_fee:,.0f}", styles['Normal'])
         ])
         
         # Total row - convert string values to float before summing
@@ -174,15 +174,15 @@ def generate_quote_pdf(client_name: str,
         table_data.append([
             Paragraph('<b>Total</b>', styles['Normal']),
             '',
-            format_units_total(total_demand_units),
+            Paragraph(format_units_total(total_demand_units), styles['Normal']),
             '', '',
-            format_units_total(total_supply_units),
+            Paragraph(format_units_total(total_supply_units), styles['Normal']),
             '',
-            f"£{total_with_admin:,.0f}"
+            Paragraph(f"£{total_with_admin:,.0f}", styles['Normal'])
         ])
         
-        # Create table
-        col_widths = [2.2*cm, 3*cm, 1.5*cm, 2.2*cm, 3*cm, 1.5*cm, 2*cm, 1.8*cm]
+        # Create table with better column widths for wrapping
+        col_widths = [2.0*cm, 3.2*cm, 1.4*cm, 2.0*cm, 3.2*cm, 1.4*cm, 2.0*cm, 1.8*cm]
         data_table = Table(table_data, colWidths=col_widths)
         
         # Table styling
@@ -216,14 +216,15 @@ def generate_quote_pdf(client_name: str,
             ('ALIGN', (5,-1), (5,-1), 'RIGHT'),
             ('ALIGN', (7,-1), (7,-1), 'RIGHT'),
             
-            # All cells
+            # All cells - ensure proper padding and wrapping
             ('BOX', (0,0), (-1,-1), 1, colors.black),
             ('INNERGRID', (0,0), (-1,-1), 0.5, colors.black),
-            ('LEFTPADDING', (0,0), (-1,-1), 6),
-            ('RIGHTPADDING', (0,0), (-1,-1), 6),
-            ('TOPPADDING', (0,0), (-1,-1), 4),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ('LEFTPADDING', (0,0), (-1,-1), 4),
+            ('RIGHTPADDING', (0,0), (-1,-1), 4),
+            ('TOPPADDING', (0,0), (-1,-1), 3),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 3),
             ('VALIGN', (0,0), (-1,-1), 'TOP'),
+            ('WORDWRAP', (0,0), (-1,-1), True),  # Enable word wrapping
         ]
         
         data_table.setStyle(TableStyle(table_style))

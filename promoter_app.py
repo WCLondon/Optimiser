@@ -125,11 +125,6 @@ discount_value = promoter_info.get('discount_value', 0)
 # Logout button in sidebar
 with st.sidebar:
     st.markdown(f"### {promoter_name}")
-    st.markdown(f"**Discount:** {discount_type}")
-    if discount_type == 'tier_up':
-        st.markdown("*Upgrades contract size (fractional→small→medium→large)*")
-    elif discount_type == 'percentage':
-        st.markdown(f"**Value:** {discount_value}%")
     st.markdown("---")
     if st.button("🚪 Logout"):
         st.session_state.logged_in = False
@@ -178,8 +173,14 @@ if st.session_state.get('submission_complete', False):
         st.write(f"**Location:** {submission_data['location']}")
         st.write(f"**Contact:** {submission_data['contact_email']}")
     with col2:
-        st.write(f"**Total Cost:** £{round(submission_data['quote_total']):,.0f}")
-        st.write(f"**Admin Fee:** £{submission_data['admin_fee']:,.0f}")
+        # Only show quote total for quotes under £50,000
+        quote_total_val = submission_data.get('quote_total', 0)
+        if quote_total_val < 50000:
+            st.write(f"**Total Cost:** £{round(submission_data['quote_total']):,.0f}")
+            st.write(f"**Admin Fee:** £{submission_data['admin_fee']:,.0f}")
+        else:
+            st.write(f"**Status:** Under Review")
+            st.info("This quote is £50,000 or over and is under review. You will be contacted with pricing details.")
         st.write(f"**Contract Size:** {submission_data['contract_size']}")
         st.write(f"**Habitats:** {submission_data['num_habitats']}")
     
@@ -205,9 +206,9 @@ if st.session_state.get('submission_complete', False):
             st.metric("Discount Applied", f"{discount_pct:.1f}%",
                      help="Percentage discount on allocation costs")
     
-    # PDF download button - show prominently for quotes under £20,000
+    # PDF download button - show prominently for quotes under £50,000
     quote_total_val = submission_data.get('quote_total', 0)
-    if quote_total_val < 20000:
+    if quote_total_val < 50000:
         st.markdown("---")
         
         pdf_data = submission_data.get('pdf_content')
@@ -557,31 +558,27 @@ if submitted:
                         # Apply discount to quote total
                         original_quote_total = quote_total
                         quote_total = quote_total * (1 - suo_discount_fraction)
-                        
-                        print(f"[SUO] Discount applied: {discount_fraction*100:.1f}%")
-                        print(f"[SUO] Original cost: £{original_quote_total:,.2f}")
-                        print(f"[SUO] Discounted cost: £{quote_total:,.2f}")
             except Exception as e:
-                print(f"[SUO] Error computing discount: {e}")
                 # Continue without SUO if there's an error
+                pass
         
-        # ===== STEP 7: Generate PDF (if < £20k) =====
+        # ===== STEP 7: Generate PDF and email content (threshold £50k) =====
         show_loading_message(LOADING_MESSAGES[message_index % len(LOADING_MESSAGES)])
         message_index += 1
         progress_bar.progress(80)
         
         pdf_content = None
         pdf_debug_message = ""
+        email_html_content = None  # For £50k+ quotes
         reference_number = f"PROM-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         
         # Calculate admin fee
         from optimizer_core import get_admin_fee_for_contract_size
         admin_fee = get_admin_fee_for_contract_size(contract_size)
         
-        # Generate PDF for quotes under £20,000
-        if quote_total < 20000:
+        # Generate PDF for quotes under £50,000
+        if quote_total < 50000:
             try:
-                print(f"DEBUG: Generating PDF for quote total £{quote_total:.2f}")
                 report_df, _ = generate_client_report_table_fixed(
                     alloc_df=allocation_df,
                     demand_df=area_df,
@@ -597,7 +594,6 @@ if submitted:
                     suo_discount_fraction=suo_discount_fraction
                 )
                 
-                print(f"DEBUG: Report table generated successfully, generating PDF...")
                 pdf_content, pdf_debug_message = generate_quote_pdf(
                     client_name=client_name,
                     reference_number=reference_number,
@@ -607,21 +603,37 @@ if submitted:
                     admin_fee=admin_fee
                 )
                 
-                if pdf_content:
-                    print(f"DEBUG: PDF generated successfully, size: {len(pdf_content)} bytes")
-                else:
-                    print("DEBUG: PDF generation returned None")
-                    print(f"DEBUG MESSAGE: {pdf_debug_message}")
-                
             except Exception as e:
                 # Log the error for debugging but continue with submission
                 import traceback
                 pdf_debug_message = f"PDF generation failed: {str(e)}\n{traceback.format_exc()}"
-                print(f"ERROR: {pdf_debug_message}")
                 pdf_content = None
         else:
-            print(f"DEBUG: Quote total £{quote_total:.2f} is >= £20,000, skipping PDF generation")
-            pdf_debug_message = f"PDF not generated because quote total (£{quote_total:.2f}) is >= £20,000"
+            # For £50k+ quotes, generate full email HTML using app.py logic
+            try:
+                # Import the email generation function from optimizer_core
+                from optimizer_core import generate_client_report_table_fixed
+                
+                # Generate the full client report table and email HTML
+                report_df, email_html_content = generate_client_report_table_fixed(
+                    alloc_df=allocation_df,
+                    demand_df=area_df,
+                    total_cost=quote_total,
+                    admin_fee=admin_fee,
+                    client_name=client_name,
+                    ref_number="",  # Leave blank for manual filling
+                    location=postcode or site_address,
+                    backend=backend,
+                    promoter_name=promoter_name,
+                    promoter_discount_type=discount_type,
+                    promoter_discount_value=discount_value,
+                    suo_discount_fraction=suo_discount_fraction
+                )
+                pdf_debug_message = f"Quote total (£{quote_total:.2f}) is >= £50,000 - full email generated for reviewer"
+            except Exception as e:
+                import traceback
+                pdf_debug_message = f"Email generation failed: {str(e)}\n{traceback.format_exc()}"
+                email_html_content = None
         
         progress_bar.progress(90)
         
@@ -706,18 +718,39 @@ if submitted:
             email_debug_info.append(f"Email count: {len(reviewer_emails)}")
             
             if reviewer_emails:
-                email_sent, email_status_message = send_email_notification(
-                    to_emails=reviewer_emails,
-                    client_name=client_name,
-                    quote_total=quote_total,
-                    metric_file_content=metric_file.getvalue(),
-                    reference_number=reference_number,
-                    site_location=postcode or site_address,
-                    promoter_name=promoter_name,
-                    contact_email=contact_email,
-                    notes=notes
-                )
-                email_debug_info.append(f"Email send attempted: {email_sent}")
+                # Choose email type based on quote total
+                if quote_total < 50000:
+                    # Send simple quote notification with metric attachment
+                    email_sent, email_status_message = send_email_notification(
+                        to_emails=reviewer_emails,
+                        client_name=client_name,
+                        quote_total=quote_total,
+                        metric_file_content=metric_file.getvalue(),
+                        reference_number=reference_number,
+                        site_location=postcode or site_address,
+                        promoter_name=promoter_name,
+                        contact_email=contact_email,
+                        notes=notes,
+                        email_type='quote_notification'
+                    )
+                    email_debug_info.append(f"Quote notification email sent (< £50k): {email_sent}")
+                else:
+                    # Send full quote email for reviewer to forward
+                    email_sent, email_status_message = send_email_notification(
+                        to_emails=reviewer_emails,
+                        client_name=client_name,
+                        quote_total=quote_total,
+                        metric_file_content=metric_file.getvalue(),
+                        reference_number="",  # Leave blank for manual filling
+                        site_location=postcode or site_address,
+                        promoter_name=promoter_name,
+                        contact_email=contact_email,
+                        notes=notes,
+                        email_type='full_quote',
+                        email_html_body=email_html_content,
+                        admin_fee=admin_fee
+                    )
+                    email_debug_info.append(f"Full quote email sent (>= £50k): {email_sent}")
             else:
                 email_status_message = "No reviewer emails configured in secrets (REVIEWER_EMAILS). Please add REVIEWER_EMAILS to .streamlit/secrets.toml as an array: REVIEWER_EMAILS = [\"email@example.com\"]"
                 email_debug_info.append("✗ No reviewer emails found after processing")
