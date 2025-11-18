@@ -151,6 +151,26 @@ if st.session_state.get('submission_complete', False):
     st.markdown("---")
     st.subheader("📋 Submission Summary")
     
+    # Show email notification status prominently
+    email_sent = submission_data.get('email_sent', False)
+    email_status = submission_data.get('email_status_message', '')
+    email_debug_info = submission_data.get('email_debug_info', [])
+    
+    if email_sent:
+        st.success(f"✅ **Email Notification Sent:** {email_status}")
+    elif email_status:
+        st.warning(f"⚠️ **Email Notification Issue:** {email_status}")
+        st.info("💡 Your quote was saved successfully, but the email notification could not be sent. Please contact your administrator to check the email configuration.")
+        
+        # Show debug information in an expander
+        if email_debug_info:
+            with st.expander("🔍 Email Debug Information", expanded=True):
+                st.markdown("**Diagnostic Information:**")
+                for info in email_debug_info:
+                    st.text(info)
+    
+    st.markdown("---")
+    
     col1, col2 = st.columns(2)
     with col1:
         st.write(f"**Client:** {submission_data['client_name']}")
@@ -637,9 +657,42 @@ if submitted:
         
         # ===== STEP 9: Send Email Notification =====
         show_loading_message("Sending notifications...")
+        email_sent = False
+        email_status_message = ""
+        email_debug_info = []  # Collect debug info to display in UI
+        
         try:
-            # Get reviewer emails from secrets - it's an array
-            reviewer_emails_raw = st.secrets.get("REVIEWER_EMAILS", [])
+            # Get reviewer emails from secrets - try multiple access methods
+            reviewer_emails = []
+            reviewer_emails_raw = None
+            
+            # Debug: Show what keys are available in secrets
+            try:
+                available_keys = list(st.secrets.keys()) if hasattr(st.secrets, 'keys') else []
+                email_debug_info.append(f"Available secret keys: {available_keys}")
+            except Exception as e:
+                email_debug_info.append(f"Could not list secret keys: {e}")
+            
+            # Try to access REVIEWER_EMAILS
+            try:
+                # Try direct key access first (works for TOML arrays)
+                reviewer_emails_raw = st.secrets["REVIEWER_EMAILS"]
+                email_debug_info.append("✓ Got REVIEWER_EMAILS via direct key access")
+            except KeyError as e:
+                email_debug_info.append(f"✗ KeyError accessing REVIEWER_EMAILS: {e}")
+                # Fallback to .get() method
+                try:
+                    reviewer_emails_raw = st.secrets.get("REVIEWER_EMAILS", [])
+                    email_debug_info.append("✓ Got REVIEWER_EMAILS via .get() method")
+                except Exception as e2:
+                    email_debug_info.append(f"✗ Error with .get() method: {e2}")
+                    reviewer_emails_raw = []
+            except Exception as e:
+                email_debug_info.append(f"✗ Unexpected error accessing REVIEWER_EMAILS: {type(e).__name__}: {e}")
+                reviewer_emails_raw = []
+            
+            email_debug_info.append(f"Raw value: {repr(reviewer_emails_raw)}")
+            email_debug_info.append(f"Type: {type(reviewer_emails_raw)}")
             
             # Handle both array and string formats
             if isinstance(reviewer_emails_raw, list):
@@ -649,8 +702,11 @@ if submitted:
             else:
                 reviewer_emails = []
             
+            email_debug_info.append(f"Processed emails: {reviewer_emails}")
+            email_debug_info.append(f"Email count: {len(reviewer_emails)}")
+            
             if reviewer_emails:
-                send_email_notification(
+                email_sent, email_status_message = send_email_notification(
                     to_emails=reviewer_emails,
                     client_name=client_name,
                     quote_total=quote_total,
@@ -661,9 +717,15 @@ if submitted:
                     contact_email=contact_email,
                     notes=notes
                 )
+                email_debug_info.append(f"Email send attempted: {email_sent}")
+            else:
+                email_status_message = "No reviewer emails configured in secrets (REVIEWER_EMAILS). Please add REVIEWER_EMAILS to .streamlit/secrets.toml as an array: REVIEWER_EMAILS = [\"email@example.com\"]"
+                email_debug_info.append("✗ No reviewer emails found after processing")
         except Exception as e:
-            print(f"[EMAIL] Email notification failed: {e}")
-            pass  # Email send failed, but continue
+            email_status_message = f"Email notification error: {str(e)}"
+            email_debug_info.append(f"✗ Exception in email block: {type(e).__name__}: {e}")
+            import traceback
+            email_debug_info.append(f"Traceback: {traceback.format_exc()}")
         
         progress_bar.progress(100)
         loading_placeholder.success("✓ Processing complete!")
@@ -684,7 +746,10 @@ if submitted:
             'pdf_content': pdf_content,
             'pdf_debug_message': pdf_debug_message,
             'suo_applicable': suo_applicable,
-            'suo_results': suo_results
+            'suo_results': suo_results,
+            'email_sent': email_sent,
+            'email_status_message': email_status_message,
+            'email_debug_info': email_debug_info
         }
         
         # Rerun to show confirmation screen
