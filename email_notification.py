@@ -153,13 +153,69 @@ Best regards,
 Wild Capital Team
 """
             
-            # Combine reviewer instructions with customer content
+            # Combine reviewer instructions with customer content for plain text
             full_body_text = reviewer_instructions + customer_text
             
+            # Create HTML version with reviewer instructions and formatted table
+            reviewer_instructions_html = f"""
+<div style="font-family: Arial, sans-serif; font-size: 12px; line-height: 1.6; background-color: #f9f9f9; padding: 20px; margin-bottom: 20px; border: 2px solid #2A514A; border-radius: 5px;">
+    <h2 style="color: #2A514A; margin-top: 0;">📋 QUOTE READY FOR REVIEW AND FORWARDING</h2>
+    
+    <div style="background-color: white; padding: 15px; border-radius: 5px; margin-bottom: 15px;">
+        <h3 style="color: #2A514A; margin-top: 0;">Customer Details:</h3>
+        <ul style="list-style: none; padding-left: 0;">
+            <li><strong>Client Name:</strong> {client_name}</li>
+            <li><strong>Contact Email:</strong> {contact_email}</li>
+            <li><strong>Location:</strong> {site_location}</li>
+            <li><strong>Quote Total:</strong> £{total_with_admin:,.0f} + VAT</li>
+            <li><strong>Reference Number:</strong> <span style="background-color: #FFFF00; padding: 2px 8px;">[TO BE FILLED IN MANUALLY]</span></li>
+        </ul>
+    </div>
+    
+    <div style="background-color: white; padding: 15px; border-radius: 5px; margin-bottom: 15px;">
+        <h3 style="color: #2A514A; margin-top: 0;">Promoter Details:</h3>
+        <ul style="list-style: none; padding-left: 0;">
+            <li><strong>Promoter Name:</strong> {promoter_name}</li>
+        </ul>"""
+            
+            if notes:
+                reviewer_instructions_html += f"""
+        <h3 style="color: #2A514A;">Additional Notes:</h3>
+        <p style="background-color: #FFF9E6; padding: 10px; border-left: 3px solid #F8C237;">{notes}</p>"""
+            
+            reviewer_instructions_html += f"""
+    </div>
+    
+    <div style="background-color: #2A514A; color: white; padding: 15px; border-radius: 5px;">
+        <h3 style="margin-top: 0; color: white;">⚠️ INSTRUCTIONS FOR REVIEWER:</h3>
+        <p style="margin: 10px 0;">This quote is £50,000 or over and requires review before sending to the customer.</p>
+        <p style="margin: 10px 0;"><strong>ACTION REQUIRED:</strong></p>
+        <ol style="margin: 10px 0; padding-left: 20px;">
+            <li>Review the customer-facing quote email below</li>
+            <li>Fill in the reference number manually</li>
+            <li>Forward this email to the customer: <strong>{contact_email}</strong></li>
+            <li>The BNG metric file is attached for reference</li>
+        </ol>
+    </div>
+</div>
+
+<hr style="border: none; border-top: 3px solid #2A514A; margin: 30px 0;">
+
+<div style="font-family: Arial, sans-serif; font-size: 12px;">
+    <h2 style="color: #2A514A; text-align: center;">📧 CUSTOMER-FACING EMAIL CONTENT</h2>
+    <p style="text-align: center; color: #666; font-style: italic;">(Forward the section below to the customer)</p>
+</div>
+
+<hr style="border: none; border-top: 1px solid #ccc; margin: 20px 0;">
+
+"""
+            
+            # Combine HTML reviewer instructions with the customer-facing HTML email body
+            full_html_body = reviewer_instructions_html + email_html_body
+            
             # Create multipart message with both text and HTML
-            # The HTML part contains the formatted quote table
             msg.attach(MIMEText(full_body_text, 'plain'))
-            msg.attach(MIMEText(email_html_body, 'html'))
+            msg.attach(MIMEText(full_html_body, 'html'))
             
         else:
             # Simple quote notification (under £50k)
