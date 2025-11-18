@@ -13,26 +13,26 @@ import pandas as pd
 from optimizer_core import ADMIN_FEE_GBP, ADMIN_FEE_FRACTIONAL_GBP
 
 
-# Bank reference to bank name mapping
-BANK_NAME_MAPPING = {
-    "WC1P6": "Denchworth",
-    "WC1P5": "Bedford",
-    "WC1P2": "Nunthorpe",  # Default for WC1P2 (can also be Stokesley or Horden)
-    "WC1P3": "Cobham",
-    "WC1P4": "Barnsley",
-    "WC1P8": "Marbury",
-}
-
-# Alternative names for specific bank refs (when there are multiple locations)
-BANK_NAME_ALTERNATIVES = {
-    "WC1P2": ["Stokesley", "Nunthorpe", "Horden"],
-    "WC1P6": ["Denchworth", "Central Bedfordshire"],
-}
+# Bank reference to bank name mapping - Updated list from user
+# Format: first 5 chars of bank_id + " - " + bank_name
+VALID_BANK_COMBINATIONS = [
+    ("WC1P6", "Central Bedfordshire"),
+    ("WC1P4", "Barnsley"),
+    ("WC1P6", "Denchworth"),
+    ("WC1P2", "Horden"),
+    ("WC1P2", "Stokesley"),
+    ("WC1P5", "Bedford"),
+    ("WC1P8", "Marbury"),
+    ("WC1P2", "Nunthorpe"),
+    ("WC1P7", "Fareham"),
+    ("WC1P3", "Cobham"),
+]
 
 
 def get_standardized_bank_name(bank_ref: str, bank_name: str) -> Tuple[str, str, str]:
     """
-    Get standardized bank name from mapping, or return 'Other' with notes.
+    Get standardized bank name from valid combinations.
+    Uses format: first 5 chars of bank_id + " - " + bank_name
     
     Args:
         bank_ref: Bank reference (e.g., "WC1P2")
@@ -40,35 +40,36 @@ def get_standardized_bank_name(bank_ref: str, bank_name: str) -> Tuple[str, str,
     
     Returns:
         Tuple of (standardized_bank_ref_name, notes_for_column_T, source_display)
-        - standardized_bank_ref_name: Either the mapped name or 'Other'
+        - standardized_bank_ref_name: Either the matched name or 'Other'
         - notes_for_column_T: Empty string or the actual bank name if using 'Other'
         - source_display: The full "ref - name" string for column AC
     """
     bank_ref = bank_ref.strip()
     bank_name = bank_name.strip()
     
-    # Check if bank_ref exists in mapping
-    if bank_ref in BANK_NAME_MAPPING:
-        mapped_name = BANK_NAME_MAPPING[bank_ref]
-        
-        # Check if the provided bank_name is in alternatives
-        if bank_ref in BANK_NAME_ALTERNATIVES:
-            alternatives = BANK_NAME_ALTERNATIVES[bank_ref]
-            # If bank_name matches one of the alternatives, use it
-            if bank_name in alternatives:
-                return bank_name, "", f"{bank_ref} - {bank_name}"
-        
-        # Use the mapped name
-        return mapped_name, "", f"{bank_ref} - {mapped_name}"
+    # Take first 5 characters of bank_ref
+    bank_ref_short = bank_ref[:5] if len(bank_ref) >= 5 else bank_ref
     
-    # Bank not in mapping - use 'Other' and add to notes
-    return "Other", bank_name, f"{bank_ref} - Other"
+    # Check if this combination is in the valid list
+    for valid_ref, valid_name in VALID_BANK_COMBINATIONS:
+        if bank_ref_short == valid_ref and bank_name == valid_name:
+            return valid_name, "", f"{bank_ref_short} - {valid_name}"
+    
+    # Bank not in valid combinations - use 'Other' and add to notes
+    return "Other", bank_name, f"{bank_ref_short} - Other"
 
 
 def split_paired_habitat(habitat_type: str, units_supplied: float, effective_units: float, 
                          avg_effective_unit_price: float) -> List[Dict[str, Any]]:
     """
-    Split a paired habitat (e.g., "Habitat A + Habitat B") into separate habitats.
+    DEPRECATED: Split a paired habitat (e.g., "Habitat A + Habitat B") into separate habitats.
+    
+    NOTE: This function is no longer used in the main CSV generation flow.
+    The optimizer's split_paired_rows() function already splits paired allocations
+    with accurate units, prices, and totals for each component based on stock_use ratios.
+    
+    This function does a simple 50/50 split which is NOT accurate for legal contracts.
+    Use the optimizer's split data instead.
     
     Args:
         habitat_type: Habitat type string (may contain " + ")
@@ -84,7 +85,8 @@ def split_paired_habitat(habitat_type: str, units_supplied: float, effective_uni
         # Split by " + "
         parts = [p.strip() for p in habitat_type.split(" + ")]
         
-        # Split units evenly (or could use more sophisticated logic if available)
+        # WARNING: This splits evenly which may NOT match actual allocation!
+        # The optimizer uses stock_use ratios and individual unit prices.
         num_parts = len(parts)
         units_per_part = units_supplied / num_parts
         effective_units_per_part = effective_units / num_parts
@@ -186,32 +188,29 @@ def generate_sales_quotes_csv(
         contract_value_gbp = allocation.get("contract_value_gbp", 0.0)
         habitats = allocation.get("habitats", [])
         
+        # NOTE: Habitats should already be split if they were paired allocations.
+        # The optimizer's split_paired_rows() function handles this.
+        # Each habitat in the list should represent one actual allocation with
+        # accurate units, prices, and totals for legal contracts.
+        
+        # Limit to 8 habitats (as per spec)
+        habitats = habitats[:8]
+        
         # Get standardized bank name and check if we need to use 'Other'
         standardized_bank_name, bank_fallback_note, source_display = get_standardized_bank_name(bank_ref, bank_name)
         
-        # Split paired habitats (e.g., "Habitat A + Habitat B" becomes separate entries)
-        expanded_habitats = []
-        for habitat in habitats:
-            habitat_type = habitat.get("type", "")
-            units_supplied = habitat.get("units_supplied", 0.0)
-            effective_units = habitat.get("effective_units", 0.0)
-            avg_effective_unit_price = habitat.get("avg_effective_unit_price", 0.0)
-            
-            # Split if habitat contains " + "
-            split_habitats = split_paired_habitat(
-                habitat_type, units_supplied, effective_units, avg_effective_unit_price
-            )
-            expanded_habitats.extend(split_habitats)
-        
-        # Limit to 8 habitats (as per spec)
-        expanded_habitats = expanded_habitats[:8]
+        # Calculate totals for this row
+        total_units = sum(h.get("effective_units" if is_paired else "units_supplied", 0.0) for h in habitats)
+        total_credit_price = sum(
+            h.get("effective_units" if is_paired else "units_supplied", 0.0) * h.get("avg_effective_unit_price", 0.0)
+            for h in habitats
+        )
         
         # Create CSV row with all columns A-CY
-        # We need to create a list representing each column
-        # A-BB (0-53) = 54 columns for basic fields
-        # BC-CY (54-102) = 49 columns for habitats 2-8 (7 columns each)
         # Total: 103 columns (A=0 to CY=102)
         row = [""] * 103  # 103 columns from A to CY
+        
+        # Column A (index 0): blank
         
         # Column B (index 1): Client
         row[1] = client_name.strip()
@@ -227,43 +226,39 @@ def generate_sales_quotes_csv(
         else:
             row[3] = base_ref
         
-        # Columns E-S (indices 4-18): blank (ignore)
+        # Columns E-Q (indices 4-16): blank
         
-        # Column T (index 19): Notes
+        # Column R (index 17): Notes (SHIFTED from T)
         # Priority 1: Bank fallback note (if using 'Other')
         # Priority 2: SRM logic based on pairing and spatial_relation
         if bank_fallback_note:
-            # If bank is not in mapping, put the actual bank name here
-            row[19] = bank_fallback_note
+            # If bank is not in valid combinations, put the actual bank name here
+            row[17] = bank_fallback_note
         elif is_paired:
             if spatial_relation == "far":
-                row[19] = "SRM manual (0.5)"
+                row[17] = "SRM manual (0.5)"
             elif spatial_relation == "adjacent":
-                row[19] = "SRM manual (0.75)"
+                row[17] = "SRM manual (0.75)"
             # else: blank
         # else: blank for non-paired
         
-        # Columns U-AB (indices 20-27): blank (ignore)
+        # Columns S-AB (indices 18-27): blank
         
         # Column AC (index 28): Habitat Bank / Source of Mitigation
-        # Use the standardized display format
+        # Use the standardized display format (first 5 chars + " - " + name)
         row[28] = source_display
         
-        # Column AD (index 29): Spatial Multiplier
-        if is_paired:
-            # For paired allocations, use numeric 1
-            row[29] = "1"
-        else:
-            # For non-paired, use formula
-            if spatial_relation == "adjacent":
-                row[29] = "=4/3"
-            elif spatial_relation == "far":
-                row[29] = "=2/1"
-            else:
-                # Default to 1 if relation not specified
-                row[29] = "1"
+        # Column AD (index 29): Total Units (same as AT)
+        row[29] = str(total_units)
         
-        # Columns AE, AF, AG (indices 30-32): blank (ignore)
+        # Column AE (index 30): Contract Value (total credit price + admin fee if first row)
+        if alloc_idx == 0:
+            contract_value = total_credit_price + admin_fee
+        else:
+            contract_value = total_credit_price
+        row[30] = str(contract_value)
+        
+        # Columns AF-AG (indices 31-32): blank
         
         # Column AH (index 33): Local Planning Authority
         row[33] = local_planning_authority.strip()
@@ -271,7 +266,7 @@ def generate_sales_quotes_csv(
         # Column AI (index 34): National Character Area
         row[34] = national_character_area.strip()
         
-        # Column AJ (index 35): blank (ignore)
+        # Column AJ (index 35): blank
         
         # Column AK (index 36): Introducer
         row[36] = introducer.strip() if introducer else "Direct"
@@ -279,18 +274,29 @@ def generate_sales_quotes_csv(
         # Column AL (index 37): Quote Date
         row[37] = quote_date_str
         
-        # Columns AM-AQ (indices 38-42): blank (ignore)
+        # Column AM (index 38): Quote Period (always "30")
+        row[38] = "30"
         
-        # Column AR (index 43): Admin Fee
-        row[43] = str(admin_fee)
+        # Column AN (index 39): Quote Expiry (auto calculated by Excel)
+        # Leave blank - Excel will calculate
         
-        # Column AS (index 44): blank (ignore)
+        # Columns AO-AQ (indices 40-42): blank
         
-        # Columns AT-AU (indices 45-46): blank (ignore)
+        # Column AR (index 43): Admin Fee (only on first row if multi-row)
+        if alloc_idx == 0:
+            row[43] = str(admin_fee)
+        # else: blank for subsequent rows
+        
+        # Column AS (index 44): Total Credit Price (sum of all habitat costs)
+        row[44] = str(total_credit_price)
+        
+        # Column AT (index 45): Total Units (sum of all habitat units)
+        row[45] = str(total_units)
+        
+        # Column AU (index 46): blank
         
         # Habitats 1-8 start at column AV (index 47)
-        # Each habitat has 7 columns: Type, # credits, ST, Standard Price, Quoted Price, Minimum, Price inc SM
-        # We only populate: Type, # credits, and Quoted Price
+        # Each habitat has 7 columns: Type, # credits, blank, blank, Quoted Price, blank, Total Cost
         # Habitat 1: AV-BB (indices 47-53)
         # Habitat 2: BC-BI (indices 54-60)
         # Habitat 3: BJ-BP (indices 61-67)
@@ -300,9 +306,9 @@ def generate_sales_quotes_csv(
         # Habitat 7: CL-CR (indices 89-95)
         # Habitat 8: CS-CY (indices 96-102)
         
-        # Process all habitats (up to 8) - use expanded_habitats which has paired habitats split
-        for hab_idx in range(min(len(expanded_habitats), 8)):
-            habitat = expanded_habitats[hab_idx]
+        # Process all habitats (up to 8) - each habitat represents exact allocation data
+        for hab_idx in range(min(len(habitats), 8)):
+            habitat = habitats[hab_idx]
             
             # Calculate starting column index for this habitat
             # Habitat 1 starts at 47, each habitat takes 7 columns
@@ -319,16 +325,19 @@ def generate_sales_quotes_csv(
                 units_value = habitat.get("units_supplied", 0.0)
             row[base_idx + 1] = str(units_value)
             
-            # Column 2: ST - leave blank (managed by Excel)
+            # Column 2: blank (was ST)
             
-            # Column 3: Standard Price - leave blank (managed by Excel)
+            # Column 3: blank (was Standard Price)
             
             # Column 4: Quoted Price (avg_effective_unit_price)
-            row[base_idx + 4] = str(habitat.get("avg_effective_unit_price", 0.0))
+            quoted_price = habitat.get("avg_effective_unit_price", 0.0)
+            row[base_idx + 4] = str(quoted_price)
             
-            # Column 5: Minimum - leave blank (managed by Excel)
+            # Column 5: blank (was Minimum)
             
-            # Column 6: Price inc SM - leave blank (managed by Excel)
+            # Column 6: Total Cost (2 cells to the right of Quoted Price = units * quoted_price)
+            habitat_total_cost = units_value * quoted_price
+            row[base_idx + 6] = str(habitat_total_cost)
         
         # Convert row to CSV format
         # Escape fields that contain commas or quotes
