@@ -48,7 +48,6 @@ def send_email_notification(to_emails: List[str],
         
         if not smtp_user or not smtp_password:
             msg = "SMTP credentials not configured in secrets. Please add SMTP_USER and SMTP_PASSWORD to .streamlit/secrets.toml"
-            print(f"[EMAIL] {msg}")
             return False, msg
         
         # Extract additional parameters
@@ -211,22 +210,16 @@ This is an automated notification from the Wild Capital BNG Quote System.
             msg.attach(attachment)
         
         # Send email
-        print(f"[EMAIL] Connecting to {smtp_host}:{smtp_port}")
         server = smtplib.SMTP(smtp_host, smtp_port)
         server.starttls()
         server.login(smtp_user, smtp_password)
         
-        print(f"[EMAIL] Sending to {to_emails}")
         server.send_message(msg)
         server.quit()
         
-        print(f"[EMAIL] ✓ Email sent successfully to {to_emails}")
         return True, f"Email sent successfully to {len(to_emails)} recipient(s)"
         
     except Exception as e:
         error_msg = f"Failed to send email: {str(e)}"
-        print(f"[EMAIL] ✗ {error_msg}")
-        import traceback
-        traceback.print_exc()
         return False, error_msg
 
