@@ -20,36 +20,40 @@ from repo import fetch_banks
 _bank_name_cache = None
 
 
-def get_bank_name_from_database(bank_id: str) -> Optional[str]:
+def get_bank_id_from_database(bank_name: str) -> Optional[str]:
     """
-    Get bank name from the Banks table in the database.
-    Uses first 5 characters of bank_id to match against database.
+    Get bank_id from the Banks table in the database by looking up BANK_KEY or bank_name.
     
     Args:
-        bank_id: Bank ID (e.g., "WC1P2" or "WC1P2-001")
+        bank_name: Bank name (e.g., "Nunthorpe", "Cobham")
     
     Returns:
-        Bank name from database, or None if not found
+        bank_id from database (e.g., "WC1P2B"), or None if not found
     """
     global _bank_name_cache
     
     # Load banks data from database (cached)
+    # Cache maps bank_name -> bank_id
     if _bank_name_cache is None:
         try:
             banks_df = fetch_banks()
             if banks_df is not None and not banks_df.empty:
-                _bank_name_cache = dict(zip(banks_df['bank_id'], banks_df['bank_name']))
+                # Create reverse mapping: bank_name/BANK_KEY -> bank_id
+                _bank_name_cache = {}
+                for _, row in banks_df.iterrows():
+                    bank_id = row.get('bank_id', '')
+                    # Try BANK_KEY first (preferred), then bank_name
+                    key = row.get('BANK_KEY', '') or row.get('bank_name', '')
+                    if key:
+                        _bank_name_cache[str(key).strip()] = str(bank_id).strip()
             else:
                 _bank_name_cache = {}
         except Exception:
             # Database not available (e.g., in tests) - use empty cache
             _bank_name_cache = {}
     
-    # Take first 5 characters of bank_id
-    bank_id_short = bank_id[:5] if len(bank_id) >= 5 else bank_id
-    
-    # Look up in cache
-    return _bank_name_cache.get(bank_id_short)
+    # Look up bank_id by bank_name
+    return _bank_name_cache.get(bank_name.strip())
 
 
 # Bank reference to bank name mapping - Updated list from user
@@ -70,12 +74,12 @@ VALID_BANK_COMBINATIONS = [
 
 def get_standardized_bank_name(bank_ref: str, bank_name_from_alloc: str) -> Tuple[str, str, str]:
     """
-    Get standardized bank name from Banks table in database.
+    Get standardized bank name format from Banks table in database.
     Uses format: first 5 chars of bank_id + " - " + bank_name
     
     Args:
-        bank_ref: Bank reference/ID (e.g., "WC1P2" or "WC1P2-001")
-        bank_name_from_alloc: Bank name from optimizer allocation (NOT USED - fetched from DB instead)
+        bank_ref: Bank reference/ID or bank name from BANK_KEY column
+        bank_name_from_alloc: Bank name from optimizer allocation (used to look up bank_id)
     
     Returns:
         Tuple of (standardized_bank_name, notes_for_column_S, source_display)
@@ -83,19 +87,19 @@ def get_standardized_bank_name(bank_ref: str, bank_name_from_alloc: str) -> Tupl
         - notes_for_column_S: Empty string or the actual bank name if using 'Other'
         - source_display: The full "ref - name" string for column AB
     """
-    bank_ref = bank_ref.strip()
+    bank_name_from_alloc = bank_name_from_alloc.strip()
     
-    # Take first 5 characters of bank_ref (handles both "WC1P2" and "WC1P2-001" formats)
-    bank_ref_short = bank_ref[:5] if len(bank_ref) >= 5 else bank_ref
+    # Get bank_id from database by looking up the bank name
+    bank_id = get_bank_id_from_database(bank_name_from_alloc)
     
-    # Get bank name from database
-    bank_name = get_bank_name_from_database(bank_ref_short)
-    
-    if bank_name:
-        # Found in database - use it
-        return bank_name, "", f"{bank_ref_short} - {bank_name}"
+    if bank_id:
+        # Found in database - use first 5 chars of bank_id
+        bank_id_short = bank_id[:5] if len(bank_id) >= 5 else bank_id
+        return bank_name_from_alloc, "", f"{bank_id_short} - {bank_name_from_alloc}"
     else:
         # Not found in database - use 'Other' and put actual name in notes
+        # Try to extract bank_id from bank_ref if available
+        bank_ref_short = bank_ref[:5] if len(bank_ref) >= 5 else bank_ref
         return "Other", bank_name_from_alloc, f"{bank_ref_short} - Other"
 
 
