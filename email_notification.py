@@ -20,6 +20,7 @@ def send_email_notification(to_emails: List[str],
                            email_type: str = 'quote_notification',
                            email_html_body: Optional[str] = None,
                            admin_fee: Optional[float] = None,
+                           csv_allocation_content: Optional[str] = None,
                            **kwargs) -> tuple[bool, str]:
     """
     Send email notification about a new quote submission.
@@ -32,6 +33,7 @@ def send_email_notification(to_emails: List[str],
         email_type: Type of email - 'quote_notification' (default) or 'full_quote'
         email_html_body: HTML body for full quote email (required if email_type='full_quote')
         admin_fee: Admin fee for full quote (required if email_type='full_quote')
+        csv_allocation_content: CSV allocation data to attach (optional)
         **kwargs: Additional parameters (reference_number, site_location, etc.)
     
     Returns:
@@ -268,6 +270,17 @@ This is an automated notification from the Wild Capital BNG Quote System.
                 f'attachment; filename="{reference_number}_metric.xlsx"'
             )
             msg.attach(attachment)
+        
+        # Attach CSV allocation file if provided
+        if csv_allocation_content:
+            csv_attachment = MIMEBase('text', 'csv')
+            csv_attachment.set_payload(csv_allocation_content.encode('utf-8'))
+            encoders.encode_base64(csv_attachment)
+            csv_attachment.add_header(
+                'Content-Disposition',
+                f'attachment; filename="{reference_number}_allocation.csv"'
+            )
+            msg.attach(csv_attachment)
         
         # Send email
         server = smtplib.SMTP(smtp_host, smtp_port)

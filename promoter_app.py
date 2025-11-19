@@ -637,6 +637,36 @@ if submitted:
         
         progress_bar.progress(90)
         
+        # ===== STEP 7.5: Generate CSV Allocation Data =====
+        show_loading_message("Generating allocation CSV...")
+        csv_allocation_content = None
+        try:
+            import sales_quotes_csv
+            
+            # Create site_hab_totals DataFrame from allocation_df for CSV generation
+            # This matches the structure used in app.py
+            if not allocation_df.empty:
+                # The allocation_df already has the necessary columns
+                # We'll use it directly for CSV generation
+                csv_allocation_content = sales_quotes_csv.generate_sales_quotes_csv_from_optimizer_output(
+                    quote_number=reference_number,
+                    client_name=client_name,
+                    development_address=postcode or site_address,
+                    base_ref=reference_number,
+                    introducer=promoter_name,
+                    today_date=datetime.now(),
+                    local_planning_authority=target_lpa,
+                    national_character_area=target_nca,
+                    alloc_df=allocation_df,
+                    contract_size=contract_size
+                )
+        except Exception as e:
+            # Log error but continue - CSV is optional
+            import traceback
+            csv_error = f"CSV generation failed: {str(e)}\n{traceback.format_exc()}"
+            # Don't fail the entire submission if CSV generation fails
+            csv_allocation_content = None
+        
         # ===== STEP 8: Save to Database =====
         show_loading_message("Saving to database...")
         try:
@@ -720,7 +750,7 @@ if submitted:
             if reviewer_emails:
                 # Choose email type based on quote total
                 if quote_total < 50000:
-                    # Send simple quote notification with metric attachment
+                    # Send simple quote notification with metric and CSV attachments
                     email_sent, email_status_message = send_email_notification(
                         to_emails=reviewer_emails,
                         client_name=client_name,
@@ -731,11 +761,12 @@ if submitted:
                         promoter_name=promoter_name,
                         contact_email=contact_email,
                         notes=notes,
-                        email_type='quote_notification'
+                        email_type='quote_notification',
+                        csv_allocation_content=csv_allocation_content
                     )
                     email_debug_info.append(f"Quote notification email sent (< £50k): {email_sent}")
                 else:
-                    # Send full quote email for reviewer to forward
+                    # Send full quote email for reviewer to forward with CSV attachment
                     email_sent, email_status_message = send_email_notification(
                         to_emails=reviewer_emails,
                         client_name=client_name,
@@ -748,7 +779,8 @@ if submitted:
                         notes=notes,
                         email_type='full_quote',
                         email_html_body=email_html_content,
-                        admin_fee=admin_fee
+                        admin_fee=admin_fee,
+                        csv_allocation_content=csv_allocation_content
                     )
                     email_debug_info.append(f"Full quote email sent (>= £50k): {email_sent}")
             else:
