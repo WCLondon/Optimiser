@@ -644,12 +644,8 @@ if submitted:
         email_html_content = None  # For £50k+ quotes
         
         # Generate auto-incrementing reference number from database
-        try:
-            db_for_ref = SubmissionsDB()
-            reference_number = db_for_ref.get_next_bng_reference("BNG-A-")
-        except Exception as e:
-            # Fallback to timestamp-based reference if database is unavailable
-            reference_number = f"BNG-A-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        db_for_ref = SubmissionsDB()
+        reference_number = db_for_ref.get_next_bng_reference("BNG-A-")
         
         # Calculate admin fee
         from optimizer_core import get_admin_fee_for_contract_size
