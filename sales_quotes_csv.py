@@ -521,7 +521,7 @@ def generate_sales_quotes_csv_from_optimizer_output(
         
         # Get tier (spatial relation)
         tiers = bank_group.get("tier", pd.Series(["far"] * len(bank_group)))
-        tier = str(tiers.iloc[0]).lower() if not tiers.empty else "far"
+        tier = str(tiers.iloc[0]).strip().lower() if not tiers.empty else "far"
         
         # Map tier to spatial_relation
         if tier == "local":
