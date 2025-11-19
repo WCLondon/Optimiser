@@ -284,7 +284,8 @@ def generate_sales_quotes_csv(
         row[1] = client_name.strip()
         
         # Column C (index 2): Address
-        row[2] = development_address.strip()
+        # Replace commas with semicolons to avoid CSV quoting
+        row[2] = development_address.strip().replace(',', ';')
         
         # Column D (index 3): Ref
         # If multiple allocations, suffix with letters (a, b, c, ...)
@@ -524,7 +525,7 @@ def generate_sales_quotes_csv_from_optimizer_output(
         
         # Map tier to spatial_relation
         if tier == "local":
-            spatial_relation = "adjacent"  # Local is closer than adjacent
+            spatial_relation = "local"
         elif tier == "adjacent":
             spatial_relation = "adjacent"
         else:
