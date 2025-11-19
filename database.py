@@ -922,8 +922,14 @@ class SubmissionsDB:
         return df
     
     def export_to_csv(self, df: pd.DataFrame, filename: str = "submissions_export.csv") -> bytes:
-        """Export DataFrame to CSV bytes for download."""
-        return df.to_csv(index=False).encode('utf-8')
+        """Export DataFrame to CSV bytes for download with float values formatted to 2 decimal places."""
+        # Format float columns to 2 decimal places
+        df_formatted = df.copy()
+        float_cols = df_formatted.select_dtypes(include=['float64', 'float32']).columns
+        for col in float_cols:
+            df_formatted[col] = df_formatted[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else x)
+        
+        return df_formatted.to_csv(index=False).encode('utf-8')
     
     def get_summary_stats(self) -> Dict[str, Any]:
         """Get summary statistics about submissions."""

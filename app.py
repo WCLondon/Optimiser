@@ -682,8 +682,14 @@ if st.session_state.app_mode == "Admin Dashboard":
                         st.markdown("##### Allocation Details")
                         st.dataframe(allocations, use_container_width=True, hide_index=True)
                         
-                        # Export allocations
-                        alloc_csv = allocations.to_csv(index=False).encode('utf-8')
+                        # Export allocations with formatted decimals (2 decimal places)
+                        # Format float columns to 2 decimal places
+                        alloc_formatted = allocations.copy()
+                        float_cols = alloc_formatted.select_dtypes(include=['float64', 'float32']).columns
+                        for col in float_cols:
+                            alloc_formatted[col] = alloc_formatted[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else x)
+                        
+                        alloc_csv = alloc_formatted.to_csv(index=False).encode('utf-8')
                         st.download_button(
                             "📥 Download Allocation Details CSV",
                             data=alloc_csv,
@@ -4235,7 +4241,13 @@ with st.expander("🧾 Price readout (normalised view the optimiser uses)", expa
             except Exception:
                 pass
 
-            csv_bytes = prn.to_csv(index=False).encode("utf-8")
+            # Format float columns to 2 decimal places for CSV export
+            prn_formatted = prn.copy()
+            float_cols = prn_formatted.select_dtypes(include=['float64', 'float32']).columns
+            for col in float_cols:
+                prn_formatted[col] = prn_formatted[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else x)
+            
+            csv_bytes = prn_formatted.to_csv(index=False).encode("utf-8")
             st.download_button(
                 "Download pricing (normalised, this size) CSV",
                 data=csv_bytes,
@@ -6398,7 +6410,7 @@ Wild Capital Team"""
                     client_name=client_name,
                     development_address=location,
                     base_ref=ref_number,
-                    introducer=st.session_state.get("selected_promoter_name"),
+                    introducer=st.session_state.get("selected_promoter"),
                     today_date=datetime.now(),
                     local_planning_authority=st.session_state.get("target_lpa_name", ""),
                     national_character_area=st.session_state.get("target_nca_name", ""),

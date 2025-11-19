@@ -244,15 +244,39 @@ def generate_sales_quotes_csv(
         standardized_bank_name, bank_fallback_note, source_display = get_standardized_bank_name(bank_ref, bank_name)
         
         # Calculate totals for this row
-        total_units = sum(h.get("effective_units" if is_paired else "units_supplied", 0.0) for h in habitats)
-        total_credit_price = sum(
-            h.get("effective_units" if is_paired else "units_supplied", 0.0) * h.get("avg_effective_unit_price", 0.0)
-            for h in habitats
-        )
+        # Note: We now use ST (Stock Take) = spatial_multiplier × # credits
+        # For paired allocations, spatial_multiplier = 1
+        # For non-paired allocations, spatial_multiplier varies based on tier
         
-        # Create CSV row with all columns A-CX
-        # Total: 102 columns (A=0 to CX=101) - UPDATED after moving habitats left
-        row = [""] * 102  # 102 columns from A to CX
+        # Get the numeric spatial multiplier for calculations
+        if is_paired:
+            sm_numeric = 1.0
+        else:
+            sm_numeric = spatial_multiplier_numeric
+        
+        total_st = 0.0  # Total Stock Take (sum of ST values)
+        total_credit_price = 0.0  # Total price including SRM
+        
+        for h in habitats:
+            # Get # credits (units_supplied for non-paired, effective_units for paired)
+            if is_paired:
+                credits = h.get("effective_units", 0.0)
+            else:
+                credits = h.get("units_supplied", 0.0)
+            
+            # Calculate ST = spatial_multiplier × # credits
+            st = sm_numeric * credits
+            total_st += st
+            
+            # Calculate price = ST × Quoted Price
+            quoted_price = h.get("avg_effective_unit_price", 0.0)
+            total_credit_price += st * quoted_price
+        
+        total_units = total_st
+        
+        # Create CSV row with all columns A-CY
+        # Total: 103 columns (A=0 to CY=102)
+        row = [""] * 103  # 103 columns from A to CY
         
         # Column A (index 0): blank
         
@@ -274,114 +298,117 @@ def generate_sales_quotes_csv(
         
         # Column R (index 17): blank
         
-        # Column S (index 18): Notes / SRM manual
+        # Column S (index 18): blank
+        
+        # Column T (index 19): Notes / SRM manual
         # Priority 1: Bank fallback note (if using 'Other')
         # Priority 2: SRM logic based on pairing and spatial_relation
         if bank_fallback_note:
             # If bank is not in valid combinations, put the actual bank name here
-            row[18] = bank_fallback_note
+            row[19] = bank_fallback_note
         elif is_paired:
             if spatial_relation == "far":
-                row[18] = "SRM manual (0.5)"
+                row[19] = "SRM manual (0.5)"
             elif spatial_relation == "adjacent":
-                row[18] = "SRM manual (0.75)"
+                row[19] = "SRM manual (0.75)"
             # else: blank
         # else: blank for non-paired
         
-        # Columns T-AA (indices 19-26): blank
+        # Columns U-AB (indices 20-27): blank
         
-        # Column AB (index 27): Habitat Bank / Source of Mitigation
+        # Column AC (index 28): Habitat Bank / Source of Mitigation
         # Use the standardized display format (first 5 chars + " - " + name)
-        row[27] = source_display
+        row[28] = source_display
         
-        # Column AC (index 28): Spatial Multiplier
+        # Column AD (index 29): Spatial Multiplier
         if is_paired:
             # For paired allocations, use numeric 1
-            row[28] = "1"
+            row[29] = "1"
         else:
             # For non-paired, use formula
             if spatial_relation == "adjacent":
-                row[28] = "=4/3"
+                row[29] = "=4/3"
             elif spatial_relation == "far":
-                row[28] = "=2/1"
+                row[29] = "=2/1"
             else:
                 # Default to 1 if relation not specified
-                row[28] = "1"
+                row[29] = "1"
         
-        # Column AD (index 29): Total Units (CORRECT POSITION per user)
-        row[29] = str(total_units)
+        # Column AE (index 30): Total Units
+        row[30] = f"{total_units:.2f}"
         
-        # Column AE (index 30): Contract Value (CORRECT POSITION per user)
+        # Column AF (index 31): Contract Value
         if alloc_idx == 0:
             contract_value = total_credit_price + admin_fee
         else:
             contract_value = total_credit_price
-        row[30] = str(contract_value)
+        row[31] = f"{contract_value:.2f}"
         
-        # Column AF (index 31): blank
+        # Column AG (index 32): blank
         
-        # Column AG (index 32): Local Planning Authority (MOVED LEFT from 33)
-        row[32] = local_planning_authority.strip()
+        # Column AH (index 33): Local Planning Authority
+        row[33] = local_planning_authority.strip()
         
-        # Column AH (index 33): National Character Area (MOVED LEFT from 34)
-        row[33] = national_character_area.strip()
+        # Column AI (index 34): National Character Area
+        row[34] = national_character_area.strip()
         
-        # Column AI (index 34): blank (MOVED LEFT from 35)
+        # Column AJ (index 35): blank
         
-        # Column AJ (index 35): Introducer (MOVED LEFT from 36)
-        row[35] = introducer.strip() if introducer else "Direct"
+        # Column AK (index 36): Introducer
+        row[36] = introducer.strip() if introducer else "Direct"
         
-        # Column AK (index 36): Quote Date (MOVED LEFT from 37)
-        row[36] = quote_date_str
+        # Column AL (index 37): Quote Date
+        row[37] = quote_date_str
         
-        # Column AL (index 37): Quote Period (MOVED LEFT from 38, always "30")
-        row[37] = "30"
+        # Column AM (index 38): Quote Period (always "30")
+        row[38] = "30"
         
-        # Column AM (index 38): Quote Expiry (Formula: Quote Date + Quote Period)
-        # Excel formula: =AK{row}+AL{row}
-        # We need to calculate the actual row number (data rows start at row 1 in Excel if no headers)
-        # Since we're generating multiple rows, we'll use a row-independent formula
-        # Actually, we need the actual Excel row number. For now, we'll leave a placeholder formula
-        # that assumes the CSV will be pasted starting at row 2 (row 1 would be headers)
+        # Column AN (index 39): Quote Expiry (Formula: Quote Date + Quote Period)
+        # Excel formula: =AL{row}+AM{row}
         row_number = alloc_idx + 2  # Assuming paste starts at row 2
-        row[38] = f"=AK{row_number}+AL{row_number}"
+        row[39] = f"=AL{row_number}+AM{row_number}"
         
-        # Columns AN-AP (indices 39-41): blank
+        # Columns AO-AQ (indices 40-42): blank
         
-        # Column AQ (index 42): Admin Fee (MOVED LEFT from 43, only on first row if multi-row)
+        # Column AR (index 43): Admin Fee (only on first row if multi-row)
         if alloc_idx == 0:
-            row[42] = str(admin_fee)
+            row[43] = f"{admin_fee:.2f}"
         # else: blank for subsequent rows
         
-        # Column AR (index 43): blank (Admin Fee was here, now moved to 42)
+        # Column AS (index 44): blank
         
-        # Column AS (index 44): Total Credit Price (CORRECT POSITION per user)
-        row[44] = str(total_credit_price)
-        row[44] = str(total_credit_price)
+        # Column AT (index 45): Total Credit Price
+        row[45] = f"{total_credit_price:.2f}"
         
-        # Column AT (index 45): Total Units (CORRECT POSITION per user)
-        row[45] = str(total_units)
+        # Column AU (index 46): Total Units
+        row[46] = f"{total_units:.2f}"
         
-        # Note: Column AU (index 46) is now the start of habitats, NOT blank
+        # Note: Column AV (index 47) is now the start of habitats
         
-        # Habitats 1-8 start at column AU (index 46) - MOVED LEFT from AV (47)
-        # Each habitat has 7 columns: Type, # credits, blank, blank, Quoted Price, blank, Total Cost
-        # Habitat 1: AU-BA (indices 46-52)
-        # Habitat 2: BB-BH (indices 53-59)
-        # Habitat 3: BI-BO (indices 60-66)
-        # Habitat 4: BP-BV (indices 67-73)
-        # Habitat 5: BW-CC (indices 74-80)
-        # Habitat 6: CD-CJ (indices 81-87)
-        # Habitat 7: CK-CQ (indices 88-94)
-        # Habitat 8: CR-CX (indices 95-101)
+        # Habitats 1-8 start at column AV (index 47)
+        # Each habitat has 7 columns: Type, # credits, ST, blank, Quoted Price, blank, Price inc SRM
+        # Habitat 1: AV-BB (indices 47-53)
+        # Habitat 2: BC-BI (indices 54-60)
+        # Habitat 3: BJ-BP (indices 61-67)
+        # Habitat 4: BQ-BW (indices 68-74)
+        # Habitat 5: BX-CD (indices 75-81)
+        # Habitat 6: CE-CK (indices 82-88)
+        # Habitat 7: CL-CR (indices 89-95)
+        # Habitat 8: CS-CY (indices 96-102)
+        
+        # Get numeric spatial multiplier for ST calculation
+        if is_paired:
+            sm_numeric = 1.0
+        else:
+            sm_numeric = spatial_multiplier_numeric
         
         # Process all habitats (up to 8) - each habitat represents exact allocation data
         for hab_idx in range(min(len(habitats), 8)):
             habitat = habitats[hab_idx]
             
             # Calculate starting column index for this habitat
-            # Habitat 1 starts at 46 (MOVED LEFT from 47), each habitat takes 7 columns
-            base_idx = 46 + (hab_idx * 7)
+            # Habitat 1 starts at 47 (Column AV), each habitat takes 7 columns
+            base_idx = 47 + (hab_idx * 7)
             
             # Column 0: Type
             row[base_idx] = str(habitat.get("type", "")).strip()
@@ -392,21 +419,23 @@ def generate_sales_quotes_csv(
                 units_value = habitat.get("effective_units", 0.0)
             else:
                 units_value = habitat.get("units_supplied", 0.0)
-            row[base_idx + 1] = str(units_value)
+            row[base_idx + 1] = f"{units_value:.2f}"
             
-            # Column 2: blank (was ST)
+            # Column 2: ST (Stock Take) = spatial_multiplier × # credits
+            st = sm_numeric * units_value
+            row[base_idx + 2] = f"{st:.2f}"
             
             # Column 3: blank (was Standard Price)
             
             # Column 4: Quoted Price (avg_effective_unit_price)
             quoted_price = habitat.get("avg_effective_unit_price", 0.0)
-            row[base_idx + 4] = str(quoted_price)
+            row[base_idx + 4] = f"{quoted_price:.2f}"
             
             # Column 5: blank (was Minimum)
             
-            # Column 6: Total Cost (2 cells to the right of Quoted Price = units * quoted_price)
-            habitat_total_cost = units_value * quoted_price
-            row[base_idx + 6] = str(habitat_total_cost)
+            # Column 6: Price inc SRM (Total Cost) = ST × Quoted Price
+            habitat_total_cost = st * quoted_price
+            row[base_idx + 6] = f"{habitat_total_cost:.2f}"
         
         # Convert row to CSV format
         # Escape fields that contain commas or quotes

@@ -78,25 +78,30 @@ def test_single_allocation():
     assert fields[1] == "Test Client"  # B: Client
     assert fields[3] == "BNG00001"  # D: Ref (no suffix)
     assert fields[17] == ""  # R: blank
-    # S (18): Notes - may have bank name if not in database, or blank if non-paired and bank found
-    # assert fields[18] == ""  # S: Notes (depends on database)
-    assert fields[27].endswith("Nunthorpe") or fields[27].endswith("Other")  # AB: Bank (database lookup)
-    assert fields[28] == "=4/3"  # AC: Spatial Multiplier (RESTORED)
-    assert fields[29] == "10.0"  # AD: Total Units (CORRECT)
-    assert fields[30] == "10500.0"  # AE: Contract Value (10000 + 500) (CORRECT)
-    assert fields[32] == "Test LPA"  # AG: LPA (CORRECTED - moved from 33)
-    assert fields[33] == "Test NCA"  # AH: NCA (CORRECTED - moved from 34)
-    assert fields[35] == "Test"  # AJ: Introducer (CORRECTED - moved from 36)
-    assert fields[36] == "10/11/2025"  # AK: Quote Date (CORRECTED - moved from 37)
-    assert fields[37] == "30"  # AL: Quote Period (CORRECTED - moved from 38)
-    assert fields[38].startswith("=AK")  # AM: Quote Expiry (formula)
-    assert fields[42] == "500.0"  # AQ: Admin Fee (MOVED LEFT from 43)
-    assert fields[44] == "10000.0"  # AS: Total Credit Price (CORRECT)
-    assert fields[45] == "10.0"  # AT: Total Units (CORRECT)
-    assert fields[46] == "Grassland"  # AU: Habitat Type (MOVED LEFT from 47)
-    assert fields[47] == "10.0"  # AV: Units (MOVED LEFT from 48)
-    assert fields[50] == "1000.0"  # AY: Quoted Price (MOVED LEFT from 51)
-    assert fields[52] == "10000.0"  # BA: Total Cost (MOVED LEFT from 53)
+    assert fields[18] == ""  # S: blank
+    # T (19): Notes - may have bank name if not in database, or blank if non-paired and bank found
+    assert fields[28].endswith("Nunthorpe") or fields[28].endswith("Other")  # AC: Bank (database lookup)
+    assert fields[29] == "=4/3"  # AD: Spatial Multiplier
+    
+    # New ST calculation: SM × # credits = 4/3 × 10.0 = 13.333... ≈ 13.33
+    assert fields[30] == "13.33"  # AE: Total Units (sum of ST values)
+    # New total: ST × Quoted Price + admin = 13.333... × 1000.0 + 500 = 13833.33
+    assert fields[31] == "13833.33"  # AF: Contract Value
+    
+    assert fields[33] == "Test LPA"  # AH: LPA
+    assert fields[34] == "Test NCA"  # AI: NCA
+    assert fields[36] == "Test"  # AK: Introducer
+    assert fields[37] == "10/11/2025"  # AL: Quote Date
+    assert fields[38] == "30"  # AM: Quote Period
+    assert fields[39].startswith("=AL")  # AN: Quote Expiry (formula)
+    assert fields[43] == "500.00"  # AR: Admin Fee (2 decimal places)
+    assert fields[45] == "13333.33"  # AT: Total Credit Price (ST × Quoted Price)
+    assert fields[46] == "13.33"  # AU: Total Units (sum of ST values)
+    assert fields[47] == "Grassland"  # AV: Habitat Type
+    assert fields[48] == "10.00"  # AW: # credits (2 decimal places)
+    assert fields[49] == "13.33"  # AX: ST = 4/3 × 10.0 (NEW!)
+    assert fields[51] == "1000.00"  # AZ: Quoted Price (2 decimal places)
+    assert fields[53] == "13333.33"  # BB: Price inc SRM = ST × Quoted Price (NEW CALC!)
 
 
 def test_multi_allocation_admin_fee():
@@ -137,8 +142,8 @@ def test_multi_allocation_admin_fee():
     assert len(rows) == 2
     assert rows[0][3] == "BNG00002a"  # First ref
     assert rows[1][3] == "BNG00002b"  # Second ref
-    assert rows[0][42] == "500.0"  # Admin fee on first row (MOVED to 42)
-    assert rows[1][42] == ""  # No admin fee on second row
+    assert rows[0][43] == "500.00"  # Admin fee on first row (AR column, 2 decimal places)
+    assert rows[1][43] == ""  # No admin fee on second row
 
 
 def test_paired_allocation_srm_notes():
@@ -167,10 +172,10 @@ def test_paired_allocation_srm_notes():
     reader = csv.reader(io.StringIO(csv_output))
     fields = list(reader)[0]
     
-    # S (18): Notes - if bank not in DB, shows bank name; otherwise SRM for paired
+    # T (19): Notes - if bank not in DB, shows bank name; otherwise SRM for paired
     # Bank fallback takes priority over SRM notes
-    assert fields[18] in ["SRM manual (0.5)", "Nunthorpe"]  # S: Notes
-    assert fields[28] == "1"  # AC: Spatial Multiplier = 1 for paired
+    assert fields[19] in ["SRM manual (0.5)", "Nunthorpe", "WC1P2"]  # T: Notes
+    assert fields[29] == "1"  # AD: Spatial Multiplier = 1 for paired
 
 
 def test_exact_allocation_data():
@@ -202,21 +207,27 @@ def test_exact_allocation_data():
     reader = csv.reader(io.StringIO(csv_output))
     fields = list(reader)[0]
     
-    # Habitat 1: exact values preserved (MOVED LEFT - now starts at 46)
-    assert fields[46] == "Grassland"  # AU: Habitat 1 Type (MOVED from 47)
-    assert fields[47] == "20.0"  # AV: Units (MOVED from 48) - NOT 14.545 (29.09/2)
-    assert fields[50] == "1500.0"  # AY: Quoted Price (MOVED from 51)
-    assert fields[52] == "30000.0"  # BA: Total Cost (MOVED from 53) - 20 * 1500
+    # Habitat 1: exact values preserved (now starts at 47, Column AV)
+    # For paired allocations, SM = 1, so ST = 1 × 20.0 = 20.0
+    assert fields[47] == "Grassland"  # AV: Habitat 1 Type
+    assert fields[48] == "20.00"  # AW: # credits (2 decimal places) - NOT 14.545 (29.09/2)
+    assert fields[49] == "20.00"  # AX: ST = 1 × 20.0 (paired, so SM=1)
+    assert fields[51] == "1500.00"  # AZ: Quoted Price (2 decimal places)
+    assert fields[53] == "30000.00"  # BB: Price inc SRM = 20.00 × 1500.00 (2 decimal places)
     
-    # Habitat 2: exact values preserved (MOVED LEFT - now starts at 53)
-    assert fields[53] == "Woodland"  # BB: Habitat 2 Type (MOVED from 54)
-    assert fields[54] == "9.09"  # BC: Units (MOVED from 55) - NOT 14.545 (29.09/2)
-    assert fields[57] == "1800.0"  # BF: Quoted Price (MOVED from 58)
-    assert fields[59] == "16362.0"  # BH: Total Cost (MOVED from 60) - 9.09 * 1800
+    # Habitat 2: exact values preserved (now starts at 54, Column BC)
+    # For paired allocations, SM = 1, so ST = 1 × 9.09 = 9.09
+    assert fields[54] == "Woodland"  # BC: Habitat 2 Type
+    assert fields[55] == "9.09"  # BD: # credits (2 decimal places) - NOT 14.545 (29.09/2)
+    assert fields[56] == "9.09"  # BE: ST = 1 × 9.09 (paired, so SM=1)
+    assert fields[58] == "1800.00"  # BG: Quoted Price (2 decimal places)
+    assert fields[60] == "16362.00"  # BI: Price inc SRM = 9.09 × 1800.00 (2 decimal places)
     
-    # Totals
-    assert float(fields[44]) == 46362.0  # Total credit price
-    assert float(fields[45]) == 29.09  # Total units
+    # Totals: sum of ST values and ST × Quoted Price
+    # Total ST = 20.00 + 9.09 = 29.09
+    # Total Price = 30000.00 + 16362.00 = 46362.00
+    assert float(fields[45]) == 46362.0  # AT: Total credit price
+    assert float(fields[46]) == 29.09  # AU: Total units (sum of ST)
 
 
 if __name__ == "__main__":
