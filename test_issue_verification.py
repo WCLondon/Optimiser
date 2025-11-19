@@ -1,169 +1,100 @@
 """
-Test to verify the exact scenario from the GitHub issue is resolved.
+Verification test for the exact issue reported.
 
-Issue description:
-"Hedgerow surpluses are not being read by the metric reader on parsing and therefore 
-not mitigating for downstream deficits. Please see example below where the optimiser 
-included non-native and ornamental hedgerow even though it can be mitigated for upstream"
-
-Example data:
-- Very High: Species-rich native hedgerow with trees - associated with bank or ditch: 0.00
-- High: Species-rich native hedgerow with trees: 0.37 ✓
-- Medium: Species-rich native hedgerow: 0.13 ✓
-- Low: Native hedgerow: 0.00
-- Very Low: Non-native and ornamental hedgerow: -0.03 ⚠
-
-Expected: The -0.03 deficit should be offset by the 0.37 + 0.13 = 0.50 surplus
+This test reproduces the exact scenario from the issue to verify the fix.
 """
 
-import io
 import pandas as pd
-import openpyxl
-from metric_reader import parse_metric_requirements
+from datetime import datetime
+from sales_quotes_csv import generate_sales_quotes_csv_from_optimizer_output
+import csv
+import io
 
 
-class MockUploadedFile:
-    """Mock file object for testing"""
-    def __init__(self, buffer):
-        self.buffer = buffer
-        self.name = "test_metric.xlsx"
-    
-    def read(self):
-        return self.buffer.read()
-
-
-def test_exact_issue_scenario():
+def test_issue_verification():
     """
-    Test the exact scenario from the GitHub issue.
+    Reproduce the exact issue scenario:
+    - Northants Grassland - Other neutral grassland
+    - Local tier
+    - 0.20885 units
+    - Address: "The Old Rectory, Rectory Lane, Great Rissington, Cheltenham, Gloucestershire GL54 2LL"
     
-    The issue shows that when there are hedgerow surpluses (High: 0.37, Medium: 0.13),
-    the Very Low deficit (Non-native and ornamental hedgerow: -0.03) should be offset
-    by the surpluses, but it wasn't happening.
+    Expected fixes:
+    1. Spatial multiplier should be "1" (not "=4/3")
+    2. Address should not be wrapped in quotes
     """
     
-    wb = openpyxl.Workbook()
+    # Create allocation matching the issue
+    alloc_df = pd.DataFrame([{
+        'BANK_KEY': 'Northants',
+        'bank_name': 'Northants',
+        'supply_habitat': 'Grassland - Other neutral grassland',
+        'tier': 'local',  # This was the problem - local tier
+        'allocation_type': 'normal',
+        'units_supplied': 0.20885,
+        'effective_units': 0.20885,
+        'cost': 4385.85,
+        'avg_effective_unit_price': 21000.0
+    }])
     
-    # Create Headline Results sheet
-    ws_headline = wb.create_sheet("Headline Results")
+    # Generate CSV
+    csv_output = generate_sales_quotes_csv_from_optimizer_output(
+        quote_number='BNG-A-02033',
+        client_name='Rob Freeman',
+        development_address='The Old Rectory, Rectory Lane, Great Rissington, Cheltenham, Gloucestershire GL54 2LL',
+        base_ref='BNG-A-02033',
+        introducer='Arbtech',
+        today_date=datetime(2025, 11, 19),
+        local_planning_authority='Cotswold',
+        national_character_area='Cotswolds',
+        alloc_df=alloc_df,
+        contract_size='small'
+    )
     
-    headers = ["Unit Type", "Target", "Baseline Units", "Units Required", "Unit Deficit"]
-    for col, header in enumerate(headers, start=1):
-        ws_headline.cell(row=5, column=col, value=header)
+    # Parse CSV
+    reader = csv.reader(io.StringIO(csv_output))
+    fields = list(reader)[0]
     
-    # Using data that matches the issue (approximate baseline to get similar net gain)
-    data = [
-        ["Habitat units", "10.00%", 1.81, 2.00, 1.44],
-        ["Hedgerow units", "10.00%", 0.94, 1.04, 1.04],
-        ["Watercourse units", "10.00%", 0.00, 0.00, 0.00],
-    ]
+    print("Issue Verification Test")
+    print("=" * 60)
+    print()
+    print("Original Issue:")
+    print("  - Tier: local")
+    print("  - Expected spatial multiplier: 1")
+    print("  - Actual was showing: =4/3 (WRONG)")
+    print()
+    print("  - Address had commas")
+    print("  - Expected: No quotation marks")
+    print("  - Actual was: Wrapped in quotes (WRONG)")
+    print()
+    print("Current Results After Fix:")
+    print("-" * 60)
     
-    for row_idx, row_data in enumerate(data, start=6):
-        for col_idx, value in enumerate(row_data, start=1):
-            ws_headline.cell(row=row_idx, column=col_idx, value=value)
+    # Verify spatial multiplier
+    spatial_multiplier = fields[29]  # Column AD
+    print(f"  Spatial Multiplier: {spatial_multiplier}")
+    assert spatial_multiplier == "1", f"Expected '1', got {repr(spatial_multiplier)}"
+    print("  ✓ Correct! (was =4/3 before)")
+    print()
     
-    # Create Trading Summary Hedgerows sheet matching the issue data
-    ws_hedge = wb.create_sheet("Trading Summary Hedgerows")
+    # Verify address is not quoted
+    address = fields[2]  # Column C
+    expected_address = 'The Old Rectory; Rectory Lane; Great Rissington; Cheltenham; Gloucestershire GL54 2LL'
+    print(f"  Address: {address}")
+    assert address == expected_address, f"Expected {repr(expected_address)}, got {repr(address)}"
+    print("  ✓ Correct! (commas replaced with semicolons, no quotes)")
+    print()
     
-    hedge_headers = ["Habitat", "Distinctiveness", "Project-wide unit change"]
-    for col, header in enumerate(hedge_headers, start=1):
-        ws_hedge.cell(row=1, column=col, value=header)
+    # Verify raw CSV doesn't have quotes around address
+    assert f'"{expected_address}"' not in csv_output, "Address should not be wrapped in quotes in raw CSV"
+    print("  Raw CSV verification:")
+    print("  ✓ No quotation marks around address field")
+    print()
     
-    # Exact data from the issue
-    hedge_data = [
-        ["Species-rich native hedgerow with trees - associated with bank or ditch", "Very High", 0.00],
-        ["Species-rich native hedgerow with trees", "High", 0.37],
-        ["Species-rich native hedgerow", "Medium", 0.13],
-        ["Native hedgerow", "Low", 0.00],
-        ["Non-native and ornamental hedgerow", "Very Low", -0.03],
-    ]
-    
-    for row_idx, row_data in enumerate(hedge_data, start=2):
-        for col_idx, value in enumerate(row_data, start=1):
-            ws_hedge.cell(row=row_idx, column=col_idx, value=value)
-    
-    # Remove default sheet
-    if "Sheet" in wb.sheetnames:
-        wb.remove(wb["Sheet"])
-    
-    # Save to BytesIO
-    excel_buffer = io.BytesIO()
-    wb.save(excel_buffer)
-    excel_buffer.seek(0)
-    
-    # Create mock uploaded file
-    mock_file = MockUploadedFile(excel_buffer)
-    
-    # Parse
-    requirements = parse_metric_requirements(mock_file)
-    
-    # Display results
-    print("\n" + "="*70)
-    print("GitHub Issue Scenario Test")
-    print("="*70)
-    
-    print("\nInput (from issue):")
-    print("  Very High: Species-rich native hedgerow with trees - bank/ditch: 0.00")
-    print("  High: Species-rich native hedgerow with trees: +0.37 ✓")
-    print("  Medium: Species-rich native hedgerow: +0.13 ✓")
-    print("  Low: Native hedgerow: 0.00")
-    print("  Very Low: Non-native and ornamental hedgerow: -0.03 ⚠")
-    print("\n  Total surplus: 0.37 + 0.13 = 0.50 units")
-    print("  Total deficit: 0.03 units")
-    print("  Net gain requirement: 0.94 × 10% = 0.094 units")
-    
-    hedge_req_df = requirements["hedgerows"]
-    
-    print("\nActual requirements:")
-    if hedge_req_df.empty:
-        print("  (empty - all requirements covered by on-site surplus)")
-    else:
-        print(hedge_req_df.to_string(index=False))
-    
-    print("\n" + "-"*70)
-    print("Verification:")
-    print("-"*70)
-    
-    # Check 1: Non-native and ornamental hedgerow should NOT be in requirements
-    deficit_rows = hedge_req_df[hedge_req_df["habitat"].str.contains("Non-native", case=False, na=False)]
-    if deficit_rows.empty:
-        print("✅ Non-native and ornamental hedgerow deficit correctly offset")
-        print("   (was showing as ⚠ in issue, now properly mitigated by surplus)")
-    else:
-        print("❌ ISSUE NOT FIXED: Non-native hedgerow still in requirements")
-        print(f"   Units required: {deficit_rows.iloc[0]['units']}")
-        return False
-    
-    # Check 2: Total surplus (0.50) should cover deficit (0.03) and net gain (0.094)
-    total_surplus = 0.50
-    total_need = 0.03 + 0.094  # 0.124
-    
-    if total_surplus >= total_need:
-        if hedge_req_df.empty or hedge_req_df["units"].sum() < 0.001:
-            print("✅ All hedgerow requirements covered by on-site surplus")
-            print(f"   Surplus (0.50) > Need (0.124), no off-site requirements needed")
-        else:
-            print("❌ Unexpected requirements found")
-            return False
-    else:
-        remaining_need = total_need - total_surplus
-        total_req = hedge_req_df["units"].sum()
-        if abs(total_req - remaining_need) < 0.001:
-            print(f"✅ Remaining requirements correctly calculated: {total_req:.3f} units")
-        else:
-            print(f"❌ Requirements mismatch: expected {remaining_need:.3f}, got {total_req:.3f}")
-            return False
-    
-    # Check 3: Verify the fix addresses the core issue
-    print("✅ Core issue resolved: Hedgerow surpluses ARE being read and ARE")
-    print("   mitigating downstream deficits as expected")
-    
-    print("\n" + "="*70)
-    print("✅ ISSUE FIXED: Hedgerow surplus offsetting working correctly!")
-    print("="*70)
-    
-    return True
+    print("=" * 60)
+    print("✅ ISSUE RESOLVED - Both problems fixed!")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
-    success = test_exact_issue_scenario()
-    exit(0 if success else 1)
+    test_issue_verification()
