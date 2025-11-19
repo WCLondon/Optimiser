@@ -644,12 +644,8 @@ if submitted:
         email_html_content = None  # For £50k+ quotes
         
         # Generate auto-incrementing reference number from database
-        try:
-            db_for_ref = SubmissionsDB()
-            reference_number = db_for_ref.get_next_bng_reference("BNG-A-")
-        except Exception as e:
-            # Fallback to timestamp-based reference if database is unavailable
-            reference_number = f"BNG-A-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        db_for_ref = SubmissionsDB()
+        reference_number = db_for_ref.get_next_bng_reference("BNG-A-")
         
         # Calculate admin fee
         from optimizer_core import get_admin_fee_for_contract_size
@@ -719,6 +715,7 @@ if submitted:
         # ===== STEP 7.5: Generate CSV Allocation Data =====
         show_loading_message("Generating allocation CSV...")
         csv_allocation_content = None
+        csv_generation_error = None
         try:
             import sales_quotes_csv
             import json
@@ -815,10 +812,12 @@ if submitted:
                     alloc_df=site_hab_totals,  # Use processed data like app.py
                     contract_size=contract_size
                 )
+            else:
+                csv_generation_error = "Allocation DataFrame is empty - no CSV generated"
         except Exception as e:
             # Log error but continue - CSV is optional
             import traceback
-            csv_error = f"CSV generation failed: {str(e)}\n{traceback.format_exc()}"
+            csv_generation_error = f"CSV generation failed: {str(e)}\n{traceback.format_exc()}"
             # Don't fail the entire submission if CSV generation fails
             csv_allocation_content = None
         
@@ -857,6 +856,14 @@ if submitted:
         email_sent = False
         email_status_message = ""
         email_debug_info = []  # Collect debug info to display in UI
+        
+        # Add CSV generation status to debug info
+        if csv_allocation_content:
+            email_debug_info.append(f"✓ CSV allocation generated successfully ({len(csv_allocation_content)} characters)")
+        elif csv_generation_error:
+            email_debug_info.append(f"✗ CSV generation failed: {csv_generation_error}")
+        else:
+            email_debug_info.append("⚠ CSV allocation content is None (no error reported)")
         
         try:
             # Get reviewer emails from secrets - try multiple access methods
