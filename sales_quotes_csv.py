@@ -539,12 +539,12 @@ def generate_sales_quotes_csv_from_optimizer_output(
             spatial_multiplier_numeric = 2.0
         
         # Aggregate habitats for this bank
-        # For paired allocations, split them into separate habitat columns
+        # Note: site_hab_totals already has habitats split into constituent parts
+        # with correct units based on stock_use ratios
         habitats = []
         for _, row in bank_group.iterrows():
             habitat_type = str(row.get("supply_habitat", "")).strip()
             units_supplied = float(row.get("units_supplied", 0.0) or 0.0)
-            allocation_type = str(row.get("allocation_type", "")).lower()
             
             # Use pre-calculated effective_units if available
             if "effective_units" in row:
@@ -559,74 +559,13 @@ def generate_sales_quotes_csv_from_optimizer_output(
                 total_cost = float(row.get("cost", 0.0) or 0.0)
                 avg_effective_unit_price = total_cost / effective_units if effective_units > 0 else 0.0
             
-            # Check if this is a paired allocation that needs to be split
-            if allocation_type == "paired" and "paired_parts" in row and row["paired_parts"]:
-                try:
-                    import json
-                    paired_parts = json.loads(str(row["paired_parts"]))
-                    if paired_parts and len(paired_parts) >= 2:
-                        # Split the paired allocation into separate habitat entries
-                        for idx, part in enumerate(paired_parts):
-                            part_habitat = str(part.get("habitat", "")).strip()
-                            stock_use = float(part.get("stock_use", 0.5))
-                            part_unit_price = float(part.get("unit_price", 0.0))
-                            
-                            # Calculate units for this part based on stock_use ratio
-                            part_units = units_supplied * stock_use
-                            part_effective_units = effective_units * stock_use
-                            
-                            if part_habitat:
-                                habitats.append({
-                                    "type": part_habitat,
-                                    "units_supplied": part_units,
-                                    "effective_units": part_effective_units,
-                                    "avg_effective_unit_price": part_unit_price
-                                })
-                    else:
-                        # Fallback: split by " + " in habitat name
-                        if " + " in habitat_type:
-                            parts = [p.strip() for p in habitat_type.split(" + ")]
-                            for part_name in parts:
-                                habitats.append({
-                                    "type": part_name,
-                                    "units_supplied": units_supplied / len(parts),
-                                    "effective_units": effective_units / len(parts),
-                                    "avg_effective_unit_price": avg_effective_unit_price
-                                })
-                        else:
-                            habitats.append({
-                                "type": habitat_type,
-                                "units_supplied": units_supplied,
-                                "effective_units": effective_units,
-                                "avg_effective_unit_price": avg_effective_unit_price
-                            })
-                except Exception:
-                    # If parsing fails, add as single habitat
-                    if habitat_type:
-                        habitats.append({
-                            "type": habitat_type,
-                            "units_supplied": units_supplied,
-                            "effective_units": effective_units,
-                            "avg_effective_unit_price": avg_effective_unit_price
-                        })
-            elif habitat_type:  # Normal allocation or paired without paired_parts
-                # Check if habitat name contains " + " and split if needed
-                if " + " in habitat_type:
-                    parts = [p.strip() for p in habitat_type.split(" + ")]
-                    for part_name in parts:
-                        habitats.append({
-                            "type": part_name,
-                            "units_supplied": units_supplied / len(parts),
-                            "effective_units": effective_units / len(parts),
-                            "avg_effective_unit_price": avg_effective_unit_price
-                        })
-                else:
-                    habitats.append({
-                        "type": habitat_type,
-                        "units_supplied": units_supplied,
-                        "effective_units": effective_units,
-                        "avg_effective_unit_price": avg_effective_unit_price
-                    })
+            if habitat_type:  # Only add if habitat type is not empty
+                habitats.append({
+                    "type": habitat_type,
+                    "units_supplied": units_supplied,
+                    "effective_units": effective_units,
+                    "avg_effective_unit_price": avg_effective_unit_price
+                })
         
         # Limit to 8 habitats (as per spec)
         habitats = habitats[:8]
