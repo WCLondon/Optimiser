@@ -335,7 +335,7 @@ def generate_sales_quotes_csv(
                 row[29] = "1"
         
         # Column AE (index 30): Total Units
-        row[30] = f"{total_units:.2f}"
+        row[30] = f"{total_units:.4f}"  # 4 decimal places for units
         
         # Column AF (index 31): Contract Value
         if alloc_idx == 0:
@@ -365,7 +365,8 @@ def generate_sales_quotes_csv(
         
         # Column AN (index 39): Quote Expiry (Formula: Quote Date + Quote Period)
         # Excel formula: =AL{row}+AM{row}
-        row_number = alloc_idx + 2  # Assuming paste starts at row 2
+        # Row number is 1-based (first data row is row 1)
+        row_number = alloc_idx + 1
         row[39] = f"=AL{row_number}+AM{row_number}"
         
         # Columns AO-AQ (indices 40-42): blank
@@ -381,7 +382,7 @@ def generate_sales_quotes_csv(
         row[45] = f"{total_credit_price:.2f}"
         
         # Column AU (index 46): Total Units
-        row[46] = f"{total_units:.2f}"
+        row[46] = f"{total_units:.4f}"  # 4 decimal places for units
         
         # Note: Column AV (index 47) is now the start of habitats
         
@@ -419,11 +420,11 @@ def generate_sales_quotes_csv(
                 units_value = habitat.get("effective_units", 0.0)
             else:
                 units_value = habitat.get("units_supplied", 0.0)
-            row[base_idx + 1] = f"{units_value:.2f}"
+            row[base_idx + 1] = f"{units_value:.4f}"  # 4 decimal places for units
             
             # Column 2: ST (Stock Take) = spatial_multiplier × # credits
             st = sm_numeric * units_value
-            row[base_idx + 2] = f"{st:.2f}"
+            row[base_idx + 2] = f"{st:.4f}"  # 4 decimal places for ST
             
             # Column 3: blank (was Standard Price)
             

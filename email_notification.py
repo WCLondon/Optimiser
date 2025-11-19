@@ -20,6 +20,7 @@ def send_email_notification(to_emails: List[str],
                            email_type: str = 'quote_notification',
                            email_html_body: Optional[str] = None,
                            admin_fee: Optional[float] = None,
+                           csv_allocation_content: Optional[str] = None,
                            **kwargs) -> tuple[bool, str]:
     """
     Send email notification about a new quote submission.
@@ -32,6 +33,7 @@ def send_email_notification(to_emails: List[str],
         email_type: Type of email - 'quote_notification' (default) or 'full_quote'
         email_html_body: HTML body for full quote email (required if email_type='full_quote')
         admin_fee: Admin fee for full quote (required if email_type='full_quote')
+        csv_allocation_content: CSV allocation data to attach (optional)
         **kwargs: Additional parameters (reference_number, site_location, etc.)
     
     Returns:
@@ -72,8 +74,8 @@ def send_email_notification(to_emails: List[str],
             
             total_with_admin = quote_total + (admin_fee or 0.0)
             
-            # Subject for the email to reviewer
-            msg['Subject'] = f"BNG Quote for Review & Forwarding - {client_name} - £{total_with_admin:,.0f}"
+            # Subject for the email to reviewer - include reference number
+            msg['Subject'] = f"BNG Quote for Review & Forwarding - {reference_number} - {client_name} - £{total_with_admin:,.0f}"
             
             # Create the wrapper email to reviewer (plain text)
             reviewer_instructions = f"""
@@ -85,7 +87,7 @@ CUSTOMER DETAILS:
 - Contact Email: {contact_email}
 - Location: {site_location}
 - Quote Total: £{total_with_admin:,.0f} + VAT
-- Reference Number: [TO BE FILLED IN MANUALLY]
+- Reference Number: {reference_number}
 
 PROMOTER DETAILS:
 - Promoter Name: {promoter_name}
@@ -105,9 +107,8 @@ This quote is £50,000 or over and requires review before sending to the custome
 
 ACTION REQUIRED:
 1. Review the customer-facing quote email below
-2. Fill in the reference number manually in the subject line
-3. Forward this email to the customer: {contact_email}
-4. The BNG metric file is attached for reference
+2. Forward this email to the customer: {contact_email}
+3. The BNG metric file and CSV allocation data are attached for reference
 
 The customer-facing email content is included below with both plain text and HTML formatting.
 
@@ -115,14 +116,14 @@ The customer-facing email content is included below with both plain text and HTM
 CUSTOMER-FACING EMAIL CONTENT (FORWARD THE SECTION BELOW)
 ================================================================================
 
-Subject: RE: BNG Units for site at {site_location} - [REFERENCE NUMBER]
+Subject: RE: BNG Units for site at {site_location} - {reference_number}
 
 """
             
             # Create plain text version of customer email
             customer_text = f"""Dear {client_name}
 
-Our Ref: [REFERENCE NUMBER TO BE FILLED IN]
+Our Ref: {reference_number}
 
 {promoter_name} has advised us that you need Biodiversity Net Gain units for your development in {site_location}, and we're here to help you discharge your BNG condition.
 
@@ -168,7 +169,7 @@ Wild Capital Team
             <li><strong>Contact Email:</strong> {contact_email}</li>
             <li><strong>Location:</strong> {site_location}</li>
             <li><strong>Quote Total:</strong> £{total_with_admin:,.0f} + VAT</li>
-            <li><strong>Reference Number:</strong> <span style="background-color: #FFFF00; padding: 2px 8px;">[TO BE FILLED IN MANUALLY]</span></li>
+            <li><strong>Reference Number:</strong> <span style="background-color: #90EE90; padding: 2px 8px;">{reference_number}</span></li>
         </ul>
     </div>
     
@@ -192,9 +193,8 @@ Wild Capital Team
         <p style="margin: 10px 0;"><strong>ACTION REQUIRED:</strong></p>
         <ol style="margin: 10px 0; padding-left: 20px;">
             <li>Review the customer-facing quote email below</li>
-            <li>Fill in the reference number manually</li>
             <li>Forward this email to the customer: <strong>{contact_email}</strong></li>
-            <li>The BNG metric file is attached for reference</li>
+            <li>The BNG metric file and CSV allocation data are attached for reference</li>
         </ol>
     </div>
 </div>
@@ -268,6 +268,17 @@ This is an automated notification from the Wild Capital BNG Quote System.
                 f'attachment; filename="{reference_number}_metric.xlsx"'
             )
             msg.attach(attachment)
+        
+        # Attach CSV allocation file if provided
+        if csv_allocation_content:
+            csv_attachment = MIMEBase('text', 'csv')
+            csv_attachment.set_payload(csv_allocation_content.encode('utf-8'))
+            encoders.encode_base64(csv_attachment)
+            csv_attachment.add_header(
+                'Content-Disposition',
+                f'attachment; filename="{reference_number}_allocation.csv"'
+            )
+            msg.attach(csv_attachment)
         
         # Send email
         server = smtplib.SMTP(smtp_host, smtp_port)
