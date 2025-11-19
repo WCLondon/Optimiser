@@ -156,6 +156,41 @@ def test_address_without_quotes():
     print("✓ Address field does not contain quotes")
 
 
+def test_tier_with_whitespace():
+    """Test that tier values with leading/trailing whitespace are handled correctly."""
+    alloc_df = pd.DataFrame([{
+        'BANK_KEY': 'TestBank',
+        'bank_name': 'TestBank',
+        'supply_habitat': 'Grassland',
+        'tier': ' local ',  # tier with whitespace
+        'allocation_type': 'normal',
+        'units_supplied': 10.0,
+        'effective_units': 10.0,
+        'cost': 5000.0,
+        'avg_effective_unit_price': 500.0
+    }])
+    
+    csv_output = generate_sales_quotes_csv_from_optimizer_output(
+        quote_number='TEST005',
+        client_name='Test Client',
+        development_address='Test Address',
+        base_ref='TEST005',
+        introducer='Direct',
+        today_date=datetime(2025, 11, 19),
+        local_planning_authority='Test LPA',
+        national_character_area='Test NCA',
+        alloc_df=alloc_df,
+        contract_size='small'
+    )
+    
+    reader = csv.reader(io.StringIO(csv_output))
+    fields = list(reader)[0]
+    
+    # Field 29 is the spatial multiplier (Column AD)
+    assert fields[29] == '1', f"Expected '1' for local tier with whitespace, got {repr(fields[29])}"
+    print("✓ Tier with whitespace produces correct spatial multiplier")
+
+
 def test_real_world_example():
     """Test with the actual example from the issue."""
     alloc_df = pd.DataFrame([{
@@ -203,6 +238,7 @@ if __name__ == "__main__":
     test_adjacent_tier_spatial_multiplier()
     test_far_tier_spatial_multiplier()
     test_address_without_quotes()
+    test_tier_with_whitespace()
     test_real_world_example()
     
     print("\n✅ All tests passed!")
