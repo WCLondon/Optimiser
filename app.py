@@ -6410,7 +6410,7 @@ Wild Capital Team"""
                     client_name=client_name,
                     development_address=location,
                     base_ref=ref_number,
-                    introducer=st.session_state.get("selected_promoter_name"),
+                    introducer=st.session_state.get("selected_promoter"),
                     today_date=datetime.now(),
                     local_planning_authority=st.session_state.get("target_lpa_name", ""),
                     national_character_area=st.session_state.get("target_nca_name", ""),
