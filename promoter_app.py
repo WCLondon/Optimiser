@@ -278,20 +278,32 @@ with st.form("quote_form"):
     
     col1, col2, col3 = st.columns([1, 2, 2])
     with col1:
-        title = st.selectbox("Title *", ["Mr", "Mrs", "Ms", "Dr", "Prof", "Other"], key="title")
+        title = st.selectbox("Title", ["Mr", "Mrs", "Ms", "Dr", "Prof", "Other", "N/A"], key="title")
     with col2:
-        first_name = st.text_input("First Name *", key="fname")
+        first_name = st.text_input("First Name", key="fname", 
+                                   help="Optional - leave blank if client details not available")
     with col3:
-        surname = st.text_input("Surname *", key="sname")
+        surname = st.text_input("Surname", key="sname",
+                               help="Optional - leave blank if client details not available")
     
-    contact_email = st.text_input("Contact Email *", key="email", 
-                                   help="Email address for quote delivery")
+    contact_email = st.text_input("Contact Email", key="email", 
+                                   help="Optional - leave blank if client details not available")
     
     st.subheader("📍 Site Location")
-    site_address = st.text_input("Site Address", key="addr", 
-                                  help="Full site address (optional if postcode provided)")
+    st.caption("Provide address/postcode OR select LPA/NCA")
+    
+    site_address = st.text_input("Site Address (First Line)", key="addr", 
+                                  help="First line of address (optional)")
     postcode = st.text_input("Postcode", key="pc", 
-                             help="Site postcode (optional if address provided)")
+                             help="Site postcode (optional)")
+    
+    st.markdown("**OR use LPA/NCA if address not available:**")
+    
+    # LPA/NCA selection (form-compatible approach)
+    manual_lpa = st.text_input("Local Planning Authority", key="manual_lpa",
+                               help="Enter LPA name if address/postcode not available")
+    manual_nca = st.text_input("National Character Area", key="manual_nca",
+                               help="Enter NCA name if address/postcode not available")
     
     st.subheader("📝 Additional Details")
     notes = st.text_area("Notes (optional)", key="notes", 
@@ -310,20 +322,48 @@ with st.form("quote_form"):
 # ================= FORM SUBMISSION PROCESSING =================
 if submitted:
     # ===== VALIDATION =====
-    if not contact_email or not first_name or not surname or not metric_file or not consent:
+    if not metric_file or not consent:
         st.error("❌ Please complete all required fields (marked with *)")
         st.stop()
     
-    if not site_address and not postcode:
-        st.error("❌ Please provide either site address or postcode")
+    # At least one of: address/postcode OR LPA/NCA must be provided
+    has_location = bool(site_address or postcode)
+    has_lpa_nca = bool(manual_lpa and manual_nca)
+    
+    if not has_location and not has_lpa_nca:
+        st.error("❌ Please provide either site address/postcode OR LPA and NCA")
         st.stop()
     
-    # Validate email format (basic check)
-    if '@' not in contact_email or '.' not in contact_email.split('@')[1]:
+    # Validate email format if provided
+    if contact_email and ('@' not in contact_email or '.' not in contact_email.split('@')[1]):
         st.error("❌ Please enter a valid email address")
         st.stop()
     
-    client_name = f"{title} {first_name} {surname}"
+    # Build client name - use promoter name as fallback
+    if first_name and surname:
+        client_name = f"{title} {first_name} {surname}" if title and title != "N/A" else f"{first_name} {surname}"
+    else:
+        client_name = promoter_name  # Fallback to promoter name
+    
+    # Build location string - combine address and postcode if both provided
+    if site_address and postcode:
+        location = f"{site_address}, {postcode}"
+    elif site_address:
+        location = site_address
+    elif postcode:
+        location = postcode
+    else:
+        # Use LPA/NCA as location
+        location = f"{manual_lpa}, {manual_nca}"
+    
+    # Determine target LPA and NCA
+    if manual_lpa and manual_nca:
+        target_lpa = manual_lpa
+        target_nca = manual_nca
+    else:
+        # Will be determined by geocoding later
+        target_lpa = None
+        target_nca = None
     
     # ===== LOADING SCREEN =====
     st.markdown("---")
@@ -405,23 +445,37 @@ if submitted:
         message_index += 1
         progress_bar.progress(30)
         lat, lon = None, None
-        target_lpa, target_nca = "", ""
         
-        if postcode:
-            try:
-                lat, lon, _ = get_postcode_info(postcode)
-            except Exception as e:
-                pass
+        # Only geocode if we don't have manual LPA/NCA
+        if not target_lpa or not target_nca:
+            if postcode:
+                try:
+                    lat, lon, _ = get_postcode_info(postcode)
+                except Exception as e:
+                    pass
         
         # ===== STEP 4: Get LPA/NCA =====
         show_loading_message(LOADING_MESSAGES[message_index % len(LOADING_MESSAGES)])
         message_index += 1
         progress_bar.progress(40)
-        if lat and lon:
-            try:
-                target_lpa, target_nca = get_lpa_nca_for_point(lat, lon)
-            except Exception as e:
-                pass
+        
+        # Only query if we don't have manual LPA/NCA
+        if not target_lpa or not target_nca:
+            if lat and lon:
+                try:
+                    queried_lpa, queried_nca = get_lpa_nca_for_point(lat, lon)
+                    if not target_lpa:
+                        target_lpa = queried_lpa
+                    if not target_nca:
+                        target_nca = queried_nca
+                except Exception as e:
+                    pass
+        
+        # Ensure we have LPA/NCA values
+        if not target_lpa:
+            target_lpa = ""
+        if not target_nca:
+            target_nca = ""
         
         # ===== STEP 5: Find Neighbors for Tier Calculation =====
         show_loading_message(LOADING_MESSAGES[message_index % len(LOADING_MESSAGES)])
@@ -553,7 +607,7 @@ if submitted:
                 pdf_content, pdf_debug_message = generate_quote_pdf(
                     client_name=client_name,
                     reference_number=reference_number,
-                    site_location=postcode or site_address,
+                    site_location=location,  # Use combined location
                     quote_total=quote_total,
                     report_df=report_df,
                     admin_fee=admin_fee
@@ -577,8 +631,8 @@ if submitted:
                     total_cost=quote_total,
                     admin_fee=admin_fee,
                     client_name=client_name,
-                    ref_number="",  # Leave blank for manual filling
-                    location=postcode or site_address,
+                    ref_number=reference_number,  # Include auto-generated reference
+                    location=location,  # Use combined location
                     backend=backend,
                     promoter_name=promoter_name,
                     promoter_discount_type=discount_type,
@@ -683,7 +737,7 @@ if submitted:
                 csv_allocation_content = sales_quotes_csv.generate_sales_quotes_csv_from_optimizer_output(
                     quote_number=reference_number,
                     client_name=client_name,
-                    development_address=postcode or site_address,
+                    development_address=location,  # Use combined location
                     base_ref=reference_number,
                     introducer=promoter_name,
                     today_date=datetime.now(),
@@ -706,7 +760,7 @@ if submitted:
             submission_id = db.store_submission(
                 client_name=client_name,
                 reference_number=reference_number,
-                site_location=postcode or site_address,
+                site_location=location,  # Use combined location
                 target_lpa=target_lpa,
                 target_nca=target_nca,
                 target_lat=lat,
@@ -788,10 +842,10 @@ if submitted:
                         client_name=client_name,
                         quote_total=quote_total,
                         metric_file_content=metric_file.getvalue(),
-                        reference_number=reference_number,
-                        site_location=postcode or site_address,
+                        reference_number=reference_number,  # Auto-generated reference
+                        site_location=location,  # Use combined location
                         promoter_name=promoter_name,
-                        contact_email=contact_email,
+                        contact_email=contact_email if contact_email else promoter_name,
                         notes=notes,
                         email_type='quote_notification',
                         csv_allocation_content=csv_allocation_content
@@ -804,10 +858,10 @@ if submitted:
                         client_name=client_name,
                         quote_total=quote_total,
                         metric_file_content=metric_file.getvalue(),
-                        reference_number="",  # Leave blank for manual filling
-                        site_location=postcode or site_address,
+                        reference_number=reference_number,  # Auto-generated reference
+                        site_location=location,  # Use combined location
                         promoter_name=promoter_name,
-                        contact_email=contact_email,
+                        contact_email=contact_email if contact_email else promoter_name,
                         notes=notes,
                         email_type='full_quote',
                         email_html_body=email_html_content,

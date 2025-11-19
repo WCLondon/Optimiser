@@ -237,7 +237,7 @@ def generate_quote_pdf(client_name: str,
         BNG is a pre-commencement, not a pre-planning, condition.<br/>
         To accept this quote, please contact us. The price is fixed for 30 days, but unit availability is only guaranteed once the Allocation Agreement is signed.<br/>
         Once you sign the agreement, pay the settlement fee and provide us with your metric and decision notice, we will allocate the units to you.<br/>
-        <b>Contact:</b> 01962 436574 | <b>Email:</b> info@wildlifecredits.co.uk
+        <b>Contact:</b> 01962 436574 | <b>Email:</b> info@wild-capital.co.uk
         """
         story.append(Paragraph(footer_text, styles['Normal']))
         
