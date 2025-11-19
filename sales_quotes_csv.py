@@ -365,7 +365,8 @@ def generate_sales_quotes_csv(
         
         # Column AN (index 39): Quote Expiry (Formula: Quote Date + Quote Period)
         # Excel formula: =AL{row}+AM{row}
-        row_number = alloc_idx + 2  # Assuming paste starts at row 2
+        # Row number is 1-based (first data row is row 1)
+        row_number = alloc_idx + 1
         row[39] = f"=AL{row_number}+AM{row_number}"
         
         # Columns AO-AQ (indices 40-42): blank

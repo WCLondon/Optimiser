@@ -1356,6 +1356,48 @@ class SubmissionsDB:
             
             return f"{base_ref}.{max_revision + 1}"
     
+    def get_next_bng_reference(self, prefix: str = "BNG-A-") -> str:
+        """
+        Generate the next sequential BNG reference number.
+        
+        Args:
+            prefix: Reference number prefix (default: "BNG-A-")
+        
+        Returns:
+            Next reference number in format "BNG-A-XXXXX" (e.g., "BNG-A-02025")
+        
+        Example:
+            If latest reference is "BNG-A-02025", returns "BNG-A-02026"
+            If no references exist, returns "BNG-A-02025" (starting number)
+        """
+        engine = self._get_connection()
+        
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT reference_number FROM submissions
+                WHERE reference_number LIKE :pattern
+                ORDER BY reference_number DESC
+                LIMIT 1
+            """), {"pattern": f"{prefix}%"})
+            
+            row = result.fetchone()
+            
+            if not row:
+                # No existing references with this prefix, start at 02025
+                return f"{prefix}02025"
+            
+            # Extract the numeric part from the latest reference
+            latest_ref = row[0]
+            try:
+                # Remove prefix to get numeric part (e.g., "BNG-A-02025" -> "02025")
+                numeric_part = latest_ref.replace(prefix, "").split('.')[0]  # Remove any revision suffix
+                next_number = int(numeric_part) + 1
+                # Format with same number of digits (5 digits with leading zeros)
+                return f"{prefix}{next_number:05d}"
+            except (ValueError, IndexError):
+                # If parsing fails, start at 02025
+                return f"{prefix}02025"
+    
     def get_quotes_by_reference_base(self, base_reference: str) -> pd.DataFrame:
         """Get all quotes with a given base reference (including revisions)."""
         engine = self._get_connection()

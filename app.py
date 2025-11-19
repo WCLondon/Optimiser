@@ -123,7 +123,7 @@ def init_session_state():
         "removed_allocation_rows": [],
         "bank_list_for_manual": [],  # Cache of bank names for manual entry
         "email_client_name": "INSERT NAME",
-        "email_ref_number": "BNG00XXX",
+        # email_ref_number is now auto-generated when quote is saved
         "email_location": "INSERT LOCATION",
         "postcode_input": "",
         "address_input": "",
@@ -192,7 +192,7 @@ def reset_quote():
         st.session_state["_next_manual_area_id"] = 1
         st.session_state["removed_allocation_rows"] = []
         st.session_state["email_client_name"] = "INSERT NAME"
-        st.session_state["email_ref_number"] = "BNG00XXX"
+        # email_ref_number is now auto-generated, remove from reset
         st.session_state["email_location"] = "INSERT LOCATION"
         st.session_state["map_version"] = st.session_state.get("map_version", 0) + 1
         # Clear felled woodland pricing state
@@ -6114,10 +6114,9 @@ if has_optimizer_results or has_manual_entries:
     # Initialize email inputs in session state (only if not exists)
     if "email_client_name" not in st.session_state:
         st.session_state.email_client_name = "INSERT NAME"
-    if "email_ref_number" not in st.session_state:
-        st.session_state.email_ref_number = "BNG00XXX"
     if "email_location" not in st.session_state:
         st.session_state.email_location = "INSERT LOCATION"
+    # Auto-generated reference - removed from session state initialization
     
     with st.expander("Generate Client Email Report", expanded=True):  # Force it to stay expanded
         st.markdown("**Generate a client-facing report table and email:**")
@@ -6125,7 +6124,7 @@ if has_optimizer_results or has_manual_entries:
         # ========== FIXED FORM WITH PERSISTENCE ==========
         with st.form("client_email_form", clear_on_submit=False):
             st.markdown("**📝 Email Details:**")
-            col_input1, col_input2, col_input3 = st.columns([1, 1, 1])
+            col_input1, col_input2 = st.columns([1, 1])
             
             with col_input1:
                 form_client_name = st.text_input(
@@ -6135,13 +6134,6 @@ if has_optimizer_results or has_manual_entries:
                 )
             
             with col_input2:
-                form_ref_number = st.text_input(
-                    "Reference Number", 
-                    value=st.session_state.email_ref_number,
-                    key="form_ref_number"
-                )
-            
-            with col_input3:
                 form_location = st.text_input(
                     "Development Location", 
                     value=st.session_state.email_location,
@@ -6181,17 +6173,23 @@ if has_optimizer_results or has_manual_entries:
         # Handle form submission OUTSIDE the form but INSIDE the expander
         if form_submitted:
             st.session_state.email_client_name = form_client_name
-            st.session_state.email_ref_number = form_ref_number
             st.session_state.email_location = form_location
             st.success("Email details updated!")
+            
+            # Auto-generate reference number from database
+            auto_ref_number = None
+            try:
+                auto_ref_number = db.get_next_bng_reference("BNG-A-")
+            except Exception as e:
+                st.error(f"❌ Failed to generate reference number: {e}")
             
             # Save to database after updating email details
             if not db:
                 st.error("❌ Database is not available.")
             elif not form_client_name or form_client_name == "INSERT NAME":
                 st.warning("⚠️ Please enter a valid client name before saving.")
-            elif not form_ref_number or form_ref_number == "BNG00XXX":
-                st.warning("⚠️ Please enter a valid reference number before saving.")
+            elif not auto_ref_number:
+                st.error("⚠️ Failed to generate reference number.")
             elif not form_location or form_location == "INSERT LOCATION":
                 st.warning("⚠️ Please enter a valid location before saving.")
             elif session_alloc_df.empty:
@@ -6238,7 +6236,7 @@ if has_optimizer_results or has_manual_entries:
                     
                     submission_id = db.store_submission(
                         client_name=form_client_name,
-                        reference_number=form_ref_number,
+                        reference_number=auto_ref_number,
                         site_location=form_location,
                         target_lpa=st.session_state.get("target_lpa_name", ""),
                         target_nca=st.session_state.get("target_nca_name", ""),
@@ -6266,7 +6264,10 @@ if has_optimizer_results or has_manual_entries:
                         suo_total_units=(st.session_state.get("suo_results") or {}).get("total_units_purchased")
                     )
                     st.success(f"✅ Quote saved to database! Submission ID: {submission_id}")
-                    st.info(f"📊 Client: {form_client_name} | Reference: {form_ref_number} | Total: £{session_total_cost + admin_fee_for_quote:,.0f}")
+                    st.info(f"📊 Client: {form_client_name} | Reference: **{auto_ref_number}** | Total: £{session_total_cost + admin_fee_for_quote:,.0f}")
+                    
+                    # Store the generated reference for use in report generation
+                    st.session_state.email_ref_number = auto_ref_number
                 except Exception as e:
                     st.error(f"❌ Error saving to database: {e}")
                     import traceback
@@ -6275,7 +6276,8 @@ if has_optimizer_results or has_manual_entries:
         
         # Use the session state values for generating the report
         client_name = st.session_state.email_client_name
-        ref_number = st.session_state.email_ref_number
+        # Get reference number from session state if it exists, otherwise show placeholder
+        ref_number = st.session_state.get("email_ref_number", "Will be auto-generated on save")
         location = st.session_state.email_location    
         
         # Calculate admin fee based on contract size
