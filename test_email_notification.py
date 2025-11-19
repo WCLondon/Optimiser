@@ -142,6 +142,66 @@ def test_email_notification_multiple_recipients():
             print("✓ Test passed: Multiple recipients handled correctly")
 
 
+def test_email_notification_with_csv_attachment():
+    """Test that CSV allocation attachment is properly attached to email"""
+    with patch('email_notification.st.secrets') as mock_secrets:
+        mock_secrets.get = MagicMock(side_effect=lambda key, default: {
+            'SMTP_HOST': 'smtp.gmail.com',
+            'SMTP_PORT': 587,
+            'SMTP_USER': 'test@example.com',
+            'SMTP_PASSWORD': 'testpassword',
+            'SMTP_FROM_EMAIL': 'test@example.com',
+            'SMTP_FROM_NAME': 'Test Sender'
+        }.get(key, default))
+        
+        with patch('email_notification.smtplib.SMTP') as mock_smtp:
+            mock_server = MagicMock()
+            mock_smtp.return_value = mock_server
+            
+            # Create sample CSV content
+            csv_content = "Bank,Habitat,Units,Cost\nNunthorpe,Grassland,10.0,1000.0\n"
+            
+            success, message = send_email_notification(
+                to_emails=['recipient@example.com'],
+                client_name='Test Client',
+                quote_total=1500.0,
+                metric_file_content=b'test metric content',
+                csv_allocation_content=csv_content,
+                reference_number='TEST-001',
+                site_location='Test Location',
+                promoter_name='Test Promoter',
+                contact_email='contact@example.com'
+            )
+            
+            assert success == True, "Should return True for successful send"
+            assert "Email sent successfully" in message, f"Expected success message, got: {message}"
+            
+            # Verify that send_message was called (which means attachments were added)
+            mock_server.send_message.assert_called_once()
+            
+            # Get the message that was sent
+            sent_message = mock_server.send_message.call_args[0][0]
+            
+            # Verify message has attachments
+            assert sent_message.is_multipart(), "Message should be multipart with attachments"
+            
+            # Count attachments (should be 2: metric file + CSV file)
+            attachments = [part for part in sent_message.walk() if part.get_content_disposition() == 'attachment']
+            assert len(attachments) >= 2, f"Expected at least 2 attachments (metric + CSV), got {len(attachments)}"
+            
+            # Verify CSV attachment is present
+            csv_attachment_found = False
+            for part in attachments:
+                filename = part.get_filename()
+                if filename and 'allocation.csv' in filename:
+                    csv_attachment_found = True
+                    break
+            
+            assert csv_attachment_found, "CSV allocation attachment should be present in email"
+            
+            print("✓ Test passed: CSV attachment is properly attached to email")
+
+
 if __name__ == '__main__':
     print("Running email notification tests...")
     print()
@@ -150,6 +210,7 @@ if __name__ == '__main__':
     test_email_notification_success()
     test_email_notification_smtp_error()
     test_email_notification_multiple_recipients()
+    test_email_notification_with_csv_attachment()
     
     print()
     print("=" * 60)
