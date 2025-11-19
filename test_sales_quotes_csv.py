@@ -82,21 +82,26 @@ def test_single_allocation():
     # assert fields[18] == ""  # S: Notes (depends on database)
     assert fields[27].endswith("Nunthorpe") or fields[27].endswith("Other")  # AB: Bank (database lookup)
     assert fields[28] == "=4/3"  # AC: Spatial Multiplier (RESTORED)
-    assert fields[29] == "10.0"  # AD: Total Units (CORRECT)
-    assert fields[30] == "10500.0"  # AE: Contract Value (10000 + 500) (CORRECT)
+    
+    # New ST calculation: SM × # credits = 4/3 × 10.0 = 13.333... ≈ 13.33
+    assert fields[29] == "13.33"  # AD: Total Units (sum of ST values)
+    # New total: ST × Quoted Price + admin = 13.333... × 1000.0 + 500 = 13833.33
+    assert fields[30] == "13833.33"  # AE: Contract Value (CORRECT)
+    
     assert fields[32] == "Test LPA"  # AG: LPA (CORRECTED - moved from 33)
     assert fields[33] == "Test NCA"  # AH: NCA (CORRECTED - moved from 34)
     assert fields[35] == "Test"  # AJ: Introducer (CORRECTED - moved from 36)
     assert fields[36] == "10/11/2025"  # AK: Quote Date (CORRECTED - moved from 37)
     assert fields[37] == "30"  # AL: Quote Period (CORRECTED - moved from 38)
     assert fields[38].startswith("=AK")  # AM: Quote Expiry (formula)
-    assert fields[42] == "500.0"  # AQ: Admin Fee (MOVED LEFT from 43)
-    assert fields[44] == "10000.0"  # AS: Total Credit Price (CORRECT)
-    assert fields[45] == "10.0"  # AT: Total Units (CORRECT)
+    assert fields[42] == "500.00"  # AQ: Admin Fee (2 decimal places)
+    assert fields[44] == "13333.33"  # AS: Total Credit Price (ST × Quoted Price)
+    assert fields[45] == "13.33"  # AT: Total Units (sum of ST values)
     assert fields[46] == "Grassland"  # AU: Habitat Type (MOVED LEFT from 47)
-    assert fields[47] == "10.0"  # AV: Units (MOVED LEFT from 48)
-    assert fields[50] == "1000.0"  # AY: Quoted Price (MOVED LEFT from 51)
-    assert fields[52] == "10000.0"  # BA: Total Cost (MOVED LEFT from 53)
+    assert fields[47] == "10.00"  # AV: # credits (2 decimal places)
+    assert fields[48] == "13.33"  # AW: ST = 4/3 × 10.0 (NEW!)
+    assert fields[50] == "1000.00"  # AY: Quoted Price (2 decimal places)
+    assert fields[52] == "13333.33"  # BA: Price inc SRM = ST × Quoted Price (NEW CALC!)
 
 
 def test_multi_allocation_admin_fee():
@@ -137,7 +142,7 @@ def test_multi_allocation_admin_fee():
     assert len(rows) == 2
     assert rows[0][3] == "BNG00002a"  # First ref
     assert rows[1][3] == "BNG00002b"  # Second ref
-    assert rows[0][42] == "500.0"  # Admin fee on first row (MOVED to 42)
+    assert rows[0][42] == "500.00"  # Admin fee on first row (2 decimal places)
     assert rows[1][42] == ""  # No admin fee on second row
 
 
@@ -203,20 +208,26 @@ def test_exact_allocation_data():
     fields = list(reader)[0]
     
     # Habitat 1: exact values preserved (MOVED LEFT - now starts at 46)
+    # For paired allocations, SM = 1, so ST = 1 × 20.0 = 20.0
     assert fields[46] == "Grassland"  # AU: Habitat 1 Type (MOVED from 47)
-    assert fields[47] == "20.0"  # AV: Units (MOVED from 48) - NOT 14.545 (29.09/2)
-    assert fields[50] == "1500.0"  # AY: Quoted Price (MOVED from 51)
-    assert fields[52] == "30000.0"  # BA: Total Cost (MOVED from 53) - 20 * 1500
+    assert fields[47] == "20.00"  # AV: # credits (2 decimal places) - NOT 14.545 (29.09/2)
+    assert fields[48] == "20.00"  # AW: ST = 1 × 20.0 (paired, so SM=1)
+    assert fields[50] == "1500.00"  # AY: Quoted Price (2 decimal places)
+    assert fields[52] == "30000.00"  # BA: Price inc SRM = 20.00 × 1500.00 (2 decimal places)
     
     # Habitat 2: exact values preserved (MOVED LEFT - now starts at 53)
+    # For paired allocations, SM = 1, so ST = 1 × 9.09 = 9.09
     assert fields[53] == "Woodland"  # BB: Habitat 2 Type (MOVED from 54)
-    assert fields[54] == "9.09"  # BC: Units (MOVED from 55) - NOT 14.545 (29.09/2)
-    assert fields[57] == "1800.0"  # BF: Quoted Price (MOVED from 58)
-    assert fields[59] == "16362.0"  # BH: Total Cost (MOVED from 60) - 9.09 * 1800
+    assert fields[54] == "9.09"  # BC: # credits (2 decimal places) - NOT 14.545 (29.09/2)
+    assert fields[55] == "9.09"  # BD: ST = 1 × 9.09 (paired, so SM=1)
+    assert fields[57] == "1800.00"  # BF: Quoted Price (2 decimal places)
+    assert fields[59] == "16362.00"  # BH: Price inc SRM = 9.09 × 1800.00 (2 decimal places)
     
-    # Totals
+    # Totals: sum of ST values and ST × Quoted Price
+    # Total ST = 20.00 + 9.09 = 29.09
+    # Total Price = 30000.00 + 16362.00 = 46362.00
     assert float(fields[44]) == 46362.0  # Total credit price
-    assert float(fields[45]) == 29.09  # Total units
+    assert float(fields[45]) == 29.09  # Total units (sum of ST)
 
 
 if __name__ == "__main__":
