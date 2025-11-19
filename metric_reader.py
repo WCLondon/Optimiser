@@ -1067,7 +1067,8 @@ def parse_metric_requirements(uploaded_file) -> Dict:
     - 'baseline_info': Dict with keys 'habitat', 'hedgerow', 'watercourse'
         Each containing: target_percent, baseline_units, units_required, unit_deficit
     - 'surplus': DataFrame with columns: habitat, broad_group, distinctiveness, units_surplus
-        Contains remaining surplus after offsetting deficits and headline
+        Contains surplus BEFORE headline allocation (for SUO calculation)
+        This allows SUO to use all surplus created by the development
     - 'flow_log': List of allocation records from on-site offset processing
         Each record has: deficit_habitat, deficit_broad_group, deficit_distinctiveness,
         surplus_habitat, surplus_broad_group, surplus_distinctiveness, 
@@ -1091,19 +1092,24 @@ def parse_metric_requirements(uploaded_file) -> Dict:
         raise RuntimeError(f"Could not open workbook: {e}")
     
     # Sheet name candidates
+    # Note: Sheet names in BNG Metric 4.0 are "A-Trading Summary", "B-Trading Summary", "C-Trading Summary"
+    # but we support multiple variations for compatibility
     AREA_SHEETS = [
+        "A-Trading Summary",  # BNG Metric 4.0 standard name
         "Trading Summary Area Habitats",
         "Area Habitats Trading Summary",
         "Area Trading Summary",
         "Trading Summary (Area Habitats)"
     ]
     HEDGE_SHEETS = [
+        "B-Trading Summary",  # BNG Metric 4.0 standard name
         "Trading Summary Hedgerows",
         "Hedgerows Trading Summary",
         "Hedgerow Trading Summary",
         "Trading Summary (Hedgerows)"
     ]
     WATER_SHEETS = [
+        "C-Trading Summary",  # BNG Metric 4.0 standard name
         "Trading Summary WaterCs",
         "Trading Summary WaterC's",  # Handle apostrophe variation
         "Trading Summary Watercourses",
@@ -1124,12 +1130,22 @@ def parse_metric_requirements(uploaded_file) -> Dict:
     surplus_after_all_offsets = pd.DataFrame()
     area_flow_log = []
     
+    # Store initial surplus before any allocations (for SUO detection)
+    # This is initialized here to ensure it's defined even if area_norm is empty
+    surplus_for_suo = pd.DataFrame()
+    
     if not area_norm.empty:
         # Step 1: Apply on-site offsets
         alloc = apply_area_offsets(area_norm)
         residual_table = alloc["residual_off_site"]
         surplus_detail = alloc["surplus_after_offsets_detail"]
         area_flow_log = alloc.get("flow_log", [])
+        
+        # Store initial surplus BEFORE headline allocation (for SUO)
+        # This is what users see in their metric file
+        if not surplus_detail.empty:
+            surplus_for_suo = surplus_detail.copy()
+            surplus_for_suo = surplus_for_suo.rename(columns={"surplus_remaining_units": "units_surplus"})
         
         # Add habitat residuals
         if not residual_table.empty:
@@ -1343,7 +1359,7 @@ def parse_metric_requirements(uploaded_file) -> Dict:
         "hedgerows": pd.DataFrame(hedge_requirements) if hedge_requirements else pd.DataFrame(columns=["habitat", "units"]),
         "watercourses": pd.DataFrame(water_requirements) if water_requirements else pd.DataFrame(columns=["habitat", "units"]),
         "baseline_info": headline_all,
-        "surplus": surplus_after_all_offsets if not surplus_after_all_offsets.empty else pd.DataFrame(columns=["habitat", "broad_group", "distinctiveness", "units_surplus"]),
+        "surplus": surplus_for_suo if not surplus_for_suo.empty else pd.DataFrame(columns=["habitat", "broad_group", "distinctiveness", "units_surplus"]),
         "flow_log": area_flow_log,
         "watercourse_diagnostics": water_diagnostics
     }
