@@ -14,7 +14,8 @@ import metric_reader
 from optimizer_core import (
     get_postcode_info, get_lpa_nca_for_point,
     arcgis_point_query, layer_intersect_names, norm_name,
-    optimise, generate_client_report_table_fixed, load_backend
+    optimise, generate_client_report_table_fixed, load_backend,
+    http_get, safe_json, sstr
 )
 from pdf_generator_promoter import generate_quote_pdf
 from email_notification import send_email_notification
@@ -38,6 +39,56 @@ LOADING_MESSAGES = [
     "Brewing a double-shot of habitat alpha…",
 ]
 
+
+# ================= Helper Functions =================
+def fetch_all_lpas_from_arcgis():
+    """
+    Fetch all unique LPA names from the ArcGIS LPA layer.
+    Uses a simple query to get all records.
+    Cached to avoid repeated API calls.
+    """
+    try:
+        params = {
+            "f": "json",
+            "where": "1=1",
+            "outFields": "LAD24NM",
+            "returnGeometry": "false",
+            "returnDistinctValues": "true"
+        }
+        r = http_get(f"{LPA_URL}/query", params=params)
+        js = safe_json(r)
+        features = js.get("features", [])
+        lpas = [sstr((f.get("attributes") or {}).get("LAD24NM")) for f in features]
+        return sorted({lpa for lpa in lpas if lpa})
+    except Exception as e:
+        st.warning(f"Could not fetch LPA list: {e}")
+        return []
+
+
+def fetch_all_ncas_from_arcgis():
+    """
+    Fetch all unique NCA names from the ArcGIS NCA layer.
+    Uses a simple query to get all records.
+    Cached to avoid repeated API calls.
+    """
+    try:
+        params = {
+            "f": "json",
+            "where": "1=1",
+            "outFields": "NCA_Name",
+            "returnGeometry": "false",
+            "returnDistinctValues": "true"
+        }
+        r = http_get(f"{NCA_URL}/query", params=params)
+        js = safe_json(r)
+        features = js.get("features", [])
+        ncas = [sstr((f.get("attributes") or {}).get("NCA_Name")) for f in features]
+        return sorted({nca for nca in ncas if nca})
+    except Exception as e:
+        st.warning(f"Could not fetch NCA list: {e}")
+        return []
+
+
 st.set_page_config(page_title="BNG Quote Request", page_icon="🌿", layout="wide")
 
 # ================= Initialize Session State =================
@@ -50,8 +101,13 @@ if 'submission_complete' not in st.session_state:
 if 'submission_data' not in st.session_state:
     st.session_state.submission_data = None
 
+# Cache LPA and NCA lists in session state
+if 'all_lpas_list' not in st.session_state:
+    st.session_state.all_lpas_list = fetch_all_lpas_from_arcgis()
+if 'all_ncas_list' not in st.session_state:
+    st.session_state.all_ncas_list = fetch_all_ncas_from_arcgis()
 
-# ================= Helper Functions =================
+
 def authenticate_promoter(username: str, password: str) -> Tuple[bool, Optional[dict]]:
     """
     Authenticate promoter using the database.
@@ -299,11 +355,24 @@ with st.form("quote_form"):
     
     st.markdown("**OR use LPA/NCA if address not available:**")
     
-    # LPA/NCA selection (form-compatible approach)
-    manual_lpa = st.text_input("Local Planning Authority", key="manual_lpa",
-                               help="Enter LPA name if address/postcode not available")
-    manual_nca = st.text_input("National Character Area", key="manual_nca",
-                               help="Enter NCA name if address/postcode not available")
+    # LPA/NCA selection with autocomplete dropdowns
+    lpa_options = [""] + st.session_state.all_lpas_list
+    nca_options = [""] + st.session_state.all_ncas_list
+    
+    manual_lpa = st.selectbox(
+        "Local Planning Authority", 
+        options=lpa_options,
+        index=0,
+        key="manual_lpa",
+        help="Select LPA if address/postcode not available (type to search)"
+    )
+    manual_nca = st.selectbox(
+        "National Character Area", 
+        options=nca_options,
+        index=0,
+        key="manual_nca",
+        help="Select NCA if address/postcode not available (type to search)"
+    )
     
     st.subheader("📝 Additional Details")
     notes = st.text_area("Notes (optional)", key="notes", 
