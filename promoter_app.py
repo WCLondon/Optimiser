@@ -598,11 +598,88 @@ if submitted:
         csv_allocation_content = None
         try:
             import sales_quotes_csv
+            import json
+            import numpy as np
             
-            # Generate CSV from allocation_df for CSV generation
-            # The CSV generator handles paired habitats by splitting them across columns
+            # Process allocation data exactly like app.py does
+            # This splits paired habitats into separate rows for CSV
             if not allocation_df.empty:
-                # Pass allocation_df directly - CSV generator splits paired habitats across columns
+                MULT = {"local": 1.0, "adjacent": 4/3, "far": 2.0}
+                
+                def sstr(x):
+                    """Convert to string safely."""
+                    return str(x) if x is not None else ""
+                
+                def split_paired_rows(df: pd.DataFrame) -> pd.DataFrame:
+                    """Split paired allocations into separate rows - matches app.py logic."""
+                    if df.empty: 
+                        return df
+                    rows = []
+                    for _, r in df.iterrows():
+                        if sstr(r.get("allocation_type")) != "paired":
+                            rows.append(r.to_dict())
+                            continue
+
+                        # Extract paired parts (each has its own unit price and stock_use)
+                        parts = []
+                        try:
+                            parts = json.loads(sstr(r.get("paired_parts")))
+                        except Exception:
+                            parts = []
+
+                        sh = sstr(r.get("supply_habitat"))
+                        name_parts = [p.strip() for p in sh.split("+")] if sh else []
+
+                        units_total = float(r.get("units_supplied", 0.0) or 0.0)
+
+                        if len(parts) == 2:
+                            # For paired allocations, split units according to stock_use ratios
+                            for idx, part in enumerate(parts):
+                                rr = r.to_dict()
+                                rr["supply_habitat"] = sstr(part.get("habitat") or (name_parts[idx] if idx < len(name_parts) else f"Part {idx+1}"))
+                                
+                                # Use stock_use ratio to determine units for this component
+                                stock_use = float(part.get("stock_use", 0.5))
+                                rr["units_supplied"] = units_total * stock_use
+                                rr["unit_price"] = float(part.get("unit_price", rr.get("unit_price", 0.0)))
+                                rr["cost"] = rr["units_supplied"] * rr["unit_price"]
+                                rows.append(rr)
+                        else:
+                            # Fallback: split cost/units evenly (50/50)
+                            units_each = 0.5 * units_total
+                            if len(name_parts) == 2:
+                                for part_name in name_parts:
+                                    rr = r.to_dict()
+                                    rr["supply_habitat"] = part_name
+                                    rr["units_supplied"] = units_each
+                                    rr["cost"] = float(r.get("cost", 0.0) or 0.0) * 0.5
+                                    rows.append(rr)
+                            else:
+                                rows.append(r.to_dict())
+                    return pd.DataFrame(rows)
+                
+                # Split paired rows - exactly like app.py
+                expanded_alloc = split_paired_rows(allocation_df.copy())
+                expanded_alloc["proximity"] = expanded_alloc.get("tier", "").map(sstr)
+                expanded_alloc["effective_units"] = expanded_alloc.apply(
+                    lambda r: float(r["units_supplied"]) * MULT.get(sstr(r.get("proximity", "")).lower(), 1.0), 
+                    axis=1
+                )
+                
+                # Create site_hab_totals - exactly like app.py
+                site_hab_totals = (expanded_alloc.groupby(
+                    ["BANK_KEY", "bank_name", "supply_habitat", "tier", "allocation_type"], 
+                    as_index=False
+                ).agg(
+                    units_supplied=("units_supplied", "sum"),
+                    effective_units=("effective_units", "sum"),
+                    cost=("cost", "sum")
+                ).sort_values(["bank_name", "supply_habitat", "tier"]))
+                
+                site_hab_totals["avg_unit_price"] = site_hab_totals["cost"] / site_hab_totals["units_supplied"].replace(0, np.nan)
+                site_hab_totals["avg_effective_unit_price"] = site_hab_totals["cost"] / site_hab_totals["effective_units"].replace(0, np.nan)
+                
+                # Generate CSV using the processed data - exactly like app.py
                 csv_allocation_content = sales_quotes_csv.generate_sales_quotes_csv_from_optimizer_output(
                     quote_number=reference_number,
                     client_name=client_name,
@@ -612,7 +689,7 @@ if submitted:
                     today_date=datetime.now(),
                     local_planning_authority=target_lpa,
                     national_character_area=target_nca,
-                    alloc_df=allocation_df,
+                    alloc_df=site_hab_totals,  # Use processed data like app.py
                     contract_size=contract_size
                 )
         except Exception as e:
