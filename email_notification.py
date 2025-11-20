@@ -13,6 +13,33 @@ from email import encoders
 import streamlit as st
 
 
+def get_excel_mime_type(filename: str) -> tuple[str, str]:
+    """
+    Determine the correct MIME type for an Excel file based on its extension.
+    
+    Args:
+        filename: The filename with extension
+    
+    Returns:
+        Tuple of (maintype, subtype) for MIMEBase
+    """
+    filename_lower = filename.lower()
+    
+    if filename_lower.endswith('.xlsm'):
+        # Excel macro-enabled workbook
+        return ('application', 'vnd.ms-excel.sheet.macroEnabled.12')
+    elif filename_lower.endswith('.xlsb'):
+        # Excel binary workbook
+        return ('application', 'vnd.ms-excel.sheet.binary.macroEnabled.12')
+    elif filename_lower.endswith('.xlsx'):
+        # Excel workbook (default)
+        return ('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    else:
+        # Default to generic binary for unknown extensions
+        return ('application', 'octet-stream')
+
+
+
 def send_email_notification(to_emails: List[str],
                            client_name: str,
                            quote_total: float,
@@ -21,6 +48,7 @@ def send_email_notification(to_emails: List[str],
                            email_html_body: Optional[str] = None,
                            admin_fee: Optional[float] = None,
                            csv_allocation_content: Optional[str] = None,
+                           metric_filename: Optional[str] = None,
                            **kwargs) -> tuple[bool, str]:
     """
     Send email notification about a new quote submission.
@@ -34,6 +62,7 @@ def send_email_notification(to_emails: List[str],
         email_html_body: HTML body for full quote email (required if email_type='full_quote')
         admin_fee: Admin fee for full quote (required if email_type='full_quote')
         csv_allocation_content: CSV allocation data to attach (optional)
+        metric_filename: Original filename of the metric file (optional, defaults to reference_number_metric.xlsx)
         **kwargs: Additional parameters (reference_number, site_location, etc.)
     
     Returns:
@@ -260,12 +289,23 @@ This is an automated notification from the Wild Capital BNG Quote System.
         
         # Attach metric file
         if metric_file_content:
-            attachment = MIMEBase('application', 'octet-stream')
+            # Determine the attachment filename
+            if metric_filename:
+                # Use the original filename if provided
+                attachment_filename = metric_filename
+            else:
+                # Fallback to reference number with .xlsx extension
+                attachment_filename = f"{reference_number}_metric.xlsx"
+            
+            # Get the correct MIME type based on the file extension
+            maintype, subtype = get_excel_mime_type(attachment_filename)
+            
+            attachment = MIMEBase(maintype, subtype)
             attachment.set_payload(metric_file_content)
             encoders.encode_base64(attachment)
             attachment.add_header(
                 'Content-Disposition',
-                f'attachment; filename="{reference_number}_metric.xlsx"'
+                f'attachment; filename="{attachment_filename}"'
             )
             msg.attach(attachment)
         

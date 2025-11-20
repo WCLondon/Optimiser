@@ -918,6 +918,7 @@ if submitted:
                         client_name=client_name,
                         quote_total=quote_total,
                         metric_file_content=metric_file.getvalue(),
+                        metric_filename=f"{reference_number}_{metric_file.name}",
                         reference_number=reference_number,  # Auto-generated reference
                         site_location=location,  # Use combined location
                         promoter_name=promoter_name,
@@ -934,6 +935,7 @@ if submitted:
                         client_name=client_name,
                         quote_total=quote_total,
                         metric_file_content=metric_file.getvalue(),
+                        metric_filename=f"{reference_number}_{metric_file.name}",
                         reference_number=reference_number,  # Auto-generated reference
                         site_location=location,  # Use combined location
                         promoter_name=promoter_name,
