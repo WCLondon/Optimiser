@@ -27,6 +27,11 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
+try:
+    import openpyxl
+except ImportError:
+    openpyxl = None
+
 
 # ------------- Medium distinctiveness hierarchy -------------
 # Priority Medium broad groups (processed before secondary groups during on-site offsets)
@@ -43,6 +48,28 @@ PRIORITY_MEDIUM_GROUPS = {
 
 # Secondary Medium broad groups: Grassland, Heathland and shrub
 # (processed after priority groups)
+
+
+# ------------- Helper function for openpyxl with keep_links=False -------------
+def _load_with_keep_links_false(data: bytes) -> pd.ExcelFile:
+    """
+    Load Excel file with keep_links=False to handle ExternalReference bug.
+    
+    This works around a known openpyxl bug when handling files with external 
+    references by loading the workbook without external links, saving to a 
+    clean buffer, and returning as pd.ExcelFile.
+    """
+    if openpyxl is None:
+        raise ImportError("openpyxl is not installed")
+    
+    wb = openpyxl.load_workbook(io.BytesIO(data), keep_links=False)
+    # Create a new BytesIO to pass to pd.ExcelFile
+    # We need to save the workbook to get a clean file without external refs
+    temp_buffer = io.BytesIO()
+    wb.save(temp_buffer)
+    temp_buffer.seek(0)
+    wb.close()
+    return pd.ExcelFile(temp_buffer, engine="openpyxl")
 
 
 # ------------- open workbook -------------
@@ -63,15 +90,7 @@ def open_metric_workbook(uploaded_file) -> pd.ExcelFile:
     if ext in [".xlsx", ".xlsm", ""]:
         # Try with keep_links=False to handle external references bug
         try:
-            import openpyxl
-            wb = openpyxl.load_workbook(io.BytesIO(data), keep_links=False)
-            # Create a new BytesIO to pass to pd.ExcelFile
-            # We need to save the workbook to get a clean file without external refs
-            temp_buffer = io.BytesIO()
-            wb.save(temp_buffer)
-            temp_buffer.seek(0)
-            wb.close()
-            return pd.ExcelFile(temp_buffer, engine="openpyxl")
+            return _load_with_keep_links_false(data)
         except Exception as e:
             errors.append(f"openpyxl keep_links=False: {str(e)[:150]}")
         
@@ -90,13 +109,7 @@ def open_metric_workbook(uploaded_file) -> pd.ExcelFile:
     
     # Fallback 1: Try openpyxl with keep_links=False for any extension
     try:
-        import openpyxl
-        wb = openpyxl.load_workbook(io.BytesIO(data), keep_links=False)
-        temp_buffer = io.BytesIO()
-        wb.save(temp_buffer)
-        temp_buffer.seek(0)
-        wb.close()
-        return pd.ExcelFile(temp_buffer, engine="openpyxl")
+        return _load_with_keep_links_false(data)
     except Exception as e:
         errors.append(f"openpyxl keep_links=False fallback: {str(e)[:150]}")
     
