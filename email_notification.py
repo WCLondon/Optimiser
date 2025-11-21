@@ -154,7 +154,7 @@ Subject: BNG Units for site at {site_location} - {client_name} - {reference_numb
 
 Our Ref: {reference_number}
 
-{promoter_name} has advised us that you need Biodiversity Net Gain units for your development in {site_location}, and we're here to help you discharge your BNG condition.
+Thank you for your enquiry into Biodiversity Net Gain units for your development in {site_location}, and we're here to help you discharge your BNG condition.
 
 About Us
 

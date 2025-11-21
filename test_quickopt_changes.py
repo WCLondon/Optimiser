@@ -2,6 +2,7 @@
 Tests for quickopt_app changes:
 1. CSV introducer field should be "Direct" when promoter is WC0323
 2. Email subject line should include client name
+3. Email intro text should use thank you message for WC0323
 """
 
 import pytest
@@ -102,6 +103,36 @@ def test_email_subject_line_format():
     # Check that the old format is NOT present
     assert 'Subject: RE: BNG Units for site at {site_location} - {reference_number}' not in content, \
         "Old email subject line format should be removed"
+
+
+def test_email_intro_text_for_wc0323():
+    """Test that email intro text uses thank you message for WC0323."""
+    # Read the email_notification.py file to verify the intro text
+    with open('/home/runner/work/Optimiser/Optimiser/email_notification.py', 'r') as f:
+        content = f.read()
+    
+    # Check that the thank you message is present
+    assert 'Thank you for your enquiry into Biodiversity Net Gain units' in content, \
+        "Email should use thank you message"
+    
+    # Check that the promoter_name reference is NOT in the plain text version
+    assert '{promoter_name} has advised us' not in content, \
+        "Email plain text should not reference promoter_name"
+
+
+def test_optimizer_intro_text_logic():
+    """Test that optimizer_core uses correct intro text based on promoter."""
+    # Read the optimizer_core.py file to verify the logic
+    with open('/home/runner/work/Optimiser/Optimiser/optimizer_core.py', 'r') as f:
+        content = f.read()
+    
+    # Check that WC0323 is excluded from promoter intro
+    assert 'promoter_name != "WC0323"' in content, \
+        "optimizer_core should exclude WC0323 from promoter intro"
+    
+    # Check that thank you message is used as fallback
+    assert 'Thank you for your enquiry into Biodiversity Net Gain units' in content, \
+        "optimizer_core should use thank you message for WC0323"
 
 
 if __name__ == "__main__":
