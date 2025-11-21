@@ -51,22 +51,34 @@ def open_metric_workbook(uploaded_file) -> pd.ExcelFile:
     data = uploaded_file.read() if hasattr(uploaded_file, "read") else uploaded_file
     name = getattr(uploaded_file, "name", "") or ""
     ext = os.path.splitext(name)[1].lower()
+    
+    # Track errors for better diagnostics
+    errors = []
+    
+    # Try openpyxl for .xlsx and .xlsm files
     if ext in [".xlsx", ".xlsm", ""]:
         try: 
             return pd.ExcelFile(io.BytesIO(data), engine="openpyxl")
-        except Exception: 
-            pass
+        except Exception as e: 
+            errors.append(f"openpyxl (for {ext or '.xlsx'}): {str(e)}")
+    
+    # Try pyxlsb for .xlsb files
     if ext == ".xlsb":
         try: 
             return pd.ExcelFile(io.BytesIO(data), engine="pyxlsb")
-        except Exception: 
-            pass
+        except Exception as e: 
+            errors.append(f"pyxlsb (for .xlsb): {str(e)}")
+    
+    # Fallback: try all engines regardless of extension
     for eng in ("openpyxl", "pyxlsb"):
         try: 
             return pd.ExcelFile(io.BytesIO(data), engine=eng)
-        except Exception: 
-            continue
-    raise RuntimeError("Could not open workbook. Try re-saving as .xlsx or .xlsm.")
+        except Exception as e: 
+            errors.append(f"{eng} (fallback): {str(e)}")
+    
+    # If all attempts failed, provide detailed error message
+    error_details = "; ".join(errors) if errors else "No engines available"
+    raise RuntimeError(f"Could not open workbook. Tried all available engines. Details: {error_details}")
 
 
 # ------------- utils -------------
