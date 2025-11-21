@@ -30,7 +30,7 @@ import pandas as pd
 try:
     import openpyxl
 except ImportError:
-    openpyxl = None
+    openpyxl = None  # Will be checked at runtime with helpful error message
 
 
 # ------------- Medium distinctiveness hierarchy -------------
@@ -55,21 +55,46 @@ def _load_with_keep_links_false(data: bytes) -> pd.ExcelFile:
     """
     Load Excel file with keep_links=False to handle ExternalReference bug.
     
-    This works around a known openpyxl bug when handling files with external 
-    references by loading the workbook without external links, saving to a 
-    clean buffer, and returning as pd.ExcelFile.
+    This works around a known openpyxl bug (ExternalReference.__init__() missing 'id')
+    when handling files with external references. External references include:
+    - Links to other workbooks ([Book1.xlsx]Sheet1!A1)
+    - External data sources
+    - Linked charts or objects
+    
+    The workbook is loaded without external links, saved to a clean buffer
+    (removing the external references), and returned as pd.ExcelFile.
+    
+    Args:
+        data: Raw bytes of the Excel file
+        
+    Returns:
+        pd.ExcelFile object ready for parsing
+        
+    Raises:
+        ImportError: If openpyxl is not installed
     """
     if openpyxl is None:
-        raise ImportError("openpyxl is not installed")
+        raise ImportError(
+            "openpyxl is required to read Excel files. "
+            "Install it with: pip install openpyxl"
+        )
     
-    wb = openpyxl.load_workbook(io.BytesIO(data), keep_links=False)
-    # Create a new BytesIO to pass to pd.ExcelFile
-    # We need to save the workbook to get a clean file without external refs
-    temp_buffer = io.BytesIO()
-    wb.save(temp_buffer)
-    temp_buffer.seek(0)
-    wb.close()
-    return pd.ExcelFile(temp_buffer, engine="openpyxl")
+    wb = None
+    try:
+        # keep_links=False prevents parsing of external references
+        # which can cause ExternalReference.__init__() errors
+        wb = openpyxl.load_workbook(io.BytesIO(data), keep_links=False)
+        # Create a new BytesIO to pass to pd.ExcelFile
+        # We need to save the workbook to get a clean file without external refs
+        temp_buffer = io.BytesIO()
+        wb.save(temp_buffer)
+        temp_buffer.seek(0)
+        return pd.ExcelFile(temp_buffer, engine="openpyxl")
+    finally:
+        # Ensure workbook is closed even if an error occurs
+        if wb is not None:
+            wb.close()
+
 
 
 # ------------- open workbook -------------
@@ -86,9 +111,9 @@ def open_metric_workbook(uploaded_file) -> pd.ExcelFile:
     # Track errors for better diagnostics
     errors = []
     
-    # Try openpyxl for .xlsx and .xlsm files
+    # Primary attempt: Try with keep_links=False first for .xlsx/.xlsm files
+    # This handles the ExternalReference bug that affects many files
     if ext in [".xlsx", ".xlsm", ""]:
-        # Try with keep_links=False to handle external references bug
         try:
             return _load_with_keep_links_false(data)
         except Exception as e:
@@ -107,13 +132,8 @@ def open_metric_workbook(uploaded_file) -> pd.ExcelFile:
         except Exception as e: 
             errors.append(f"pyxlsb: {str(e)[:150]}")
     
-    # Fallback 1: Try openpyxl with keep_links=False for any extension
-    try:
-        return _load_with_keep_links_false(data)
-    except Exception as e:
-        errors.append(f"openpyxl keep_links=False fallback: {str(e)[:150]}")
-    
-    # Fallback 2: Try all engines regardless of extension
+    # Final fallbacks for unknown extensions or if extension-specific attempts failed
+    # Try all engines in order of likelihood
     for eng in ("openpyxl", "pyxlsb"):
         try: 
             return pd.ExcelFile(io.BytesIO(data), engine=eng)
