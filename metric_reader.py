@@ -61,8 +61,22 @@ def open_metric_workbook(uploaded_file) -> pd.ExcelFile:
     
     # Try openpyxl for .xlsx and .xlsm files
     if ext in [".xlsx", ".xlsm", ""]:
+        # Try with keep_links=False to handle external references bug
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(data), keep_links=False)
+            # Create a new BytesIO to pass to pd.ExcelFile
+            # We need to save the workbook to get a clean file without external refs
+            temp_buffer = io.BytesIO()
+            wb.save(temp_buffer)
+            temp_buffer.seek(0)
+            wb.close()
+            return pd.ExcelFile(temp_buffer, engine="openpyxl")
+        except Exception as e:
+            errors.append(f"openpyxl keep_links=False: {str(e)[:150]}")
+        
+        # Try standard approach as fallback
         try: 
-            # Standard approach - works for most files
             return pd.ExcelFile(io.BytesIO(data), engine="openpyxl")
         except Exception as e: 
             errors.append(f"openpyxl standard: {str(e)[:150]}")
@@ -74,26 +88,24 @@ def open_metric_workbook(uploaded_file) -> pd.ExcelFile:
         except Exception as e: 
             errors.append(f"pyxlsb: {str(e)[:150]}")
     
-    # Fallback 1: Try all engines regardless of extension
+    # Fallback 1: Try openpyxl with keep_links=False for any extension
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(data), keep_links=False)
+        temp_buffer = io.BytesIO()
+        wb.save(temp_buffer)
+        temp_buffer.seek(0)
+        wb.close()
+        return pd.ExcelFile(temp_buffer, engine="openpyxl")
+    except Exception as e:
+        errors.append(f"openpyxl keep_links=False fallback: {str(e)[:150]}")
+    
+    # Fallback 2: Try all engines regardless of extension
     for eng in ("openpyxl", "pyxlsb"):
         try: 
             return pd.ExcelFile(io.BytesIO(data), engine=eng)
         except Exception as e: 
             errors.append(f"{eng} fallback: {str(e)[:150]}")
-    
-    # Fallback 2: Try using openpyxl directly with different settings
-    # Some Excel files need special handling for formulas, VBA, etc.
-    if ext in [".xlsx", ".xlsm", ""]:
-        try:
-            import openpyxl
-            # Try with data_only=True (ignores formulas, uses cached values)
-            wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True, keep_vba=False)
-            # We can't easily convert openpyxl workbook back to pd.ExcelFile
-            # So we'll read sheets manually if needed
-            # For now, raise to continue to next attempt
-            wb.close()
-        except Exception as e:
-            errors.append(f"openpyxl direct: {str(e)[:150]}")
     
     # If all attempts failed, provide detailed error message
     error_details = " | ".join(errors) if errors else "No engines available"
