@@ -145,7 +145,7 @@ The customer-facing email content is included below with both plain text and HTM
 CUSTOMER-FACING EMAIL CONTENT (FORWARD THE SECTION BELOW)
 ================================================================================
 
-Subject: RE: BNG Units for site at {site_location} - {reference_number}
+Subject: BNG Units for site at {site_location} - {client_name} - {reference_number}
 
 """
             
