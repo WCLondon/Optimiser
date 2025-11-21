@@ -47,7 +47,11 @@ PRIORITY_MEDIUM_GROUPS = {
 
 # ------------- open workbook -------------
 def open_metric_workbook(uploaded_file) -> pd.ExcelFile:
-    """Open a BNG metric workbook (.xlsx, .xlsm, .xlsb)"""
+    """
+    Open a BNG metric workbook (.xlsx, .xlsm, .xlsb)
+    
+    Tries multiple methods to handle various Excel file formats and edge cases.
+    """
     data = uploaded_file.read() if hasattr(uploaded_file, "read") else uploaded_file
     name = getattr(uploaded_file, "name", "") or ""
     ext = os.path.splitext(name)[1].lower()
@@ -58,27 +62,49 @@ def open_metric_workbook(uploaded_file) -> pd.ExcelFile:
     # Try openpyxl for .xlsx and .xlsm files
     if ext in [".xlsx", ".xlsm", ""]:
         try: 
+            # Standard approach - works for most files
             return pd.ExcelFile(io.BytesIO(data), engine="openpyxl")
         except Exception as e: 
-            errors.append(f"openpyxl (for {ext or '.xlsx'}): {str(e)}")
+            errors.append(f"openpyxl standard: {str(e)[:150]}")
     
     # Try pyxlsb for .xlsb files
     if ext == ".xlsb":
         try: 
             return pd.ExcelFile(io.BytesIO(data), engine="pyxlsb")
         except Exception as e: 
-            errors.append(f"pyxlsb (for .xlsb): {str(e)}")
+            errors.append(f"pyxlsb: {str(e)[:150]}")
     
-    # Fallback: try all engines regardless of extension
+    # Fallback 1: Try all engines regardless of extension
     for eng in ("openpyxl", "pyxlsb"):
         try: 
             return pd.ExcelFile(io.BytesIO(data), engine=eng)
         except Exception as e: 
-            errors.append(f"{eng} (fallback): {str(e)}")
+            errors.append(f"{eng} fallback: {str(e)[:150]}")
+    
+    # Fallback 2: Try using openpyxl directly with different settings
+    # Some Excel files need special handling for formulas, VBA, etc.
+    if ext in [".xlsx", ".xlsm", ""]:
+        try:
+            import openpyxl
+            # Try with data_only=True (ignores formulas, uses cached values)
+            wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True, keep_vba=False)
+            # We can't easily convert openpyxl workbook back to pd.ExcelFile
+            # So we'll read sheets manually if needed
+            # For now, raise to continue to next attempt
+            wb.close()
+        except Exception as e:
+            errors.append(f"openpyxl direct: {str(e)[:150]}")
     
     # If all attempts failed, provide detailed error message
-    error_details = "; ".join(errors) if errors else "No engines available"
-    raise RuntimeError(f"Could not open workbook. Tried all available engines. Details: {error_details}")
+    error_details = " | ".join(errors) if errors else "No engines available"
+    raise RuntimeError(
+        f"Could not open workbook '{name}'. This can happen if:\n"
+        f"1. The file was created with a newer version of Excel\n"
+        f"2. The file contains unsupported features (e.g., complex macros, external links)\n"
+        f"3. The file is password protected\n\n"
+        f"Try: Re-saving the file in Excel as a new .xlsx file (File > Save As > Excel Workbook)\n\n"
+        f"Technical details: {error_details}"
+    )
 
 
 # ------------- utils -------------
