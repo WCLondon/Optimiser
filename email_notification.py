@@ -145,7 +145,7 @@ The customer-facing email content is included below with both plain text and HTM
 CUSTOMER-FACING EMAIL CONTENT (FORWARD THE SECTION BELOW)
 ================================================================================
 
-Subject: RE: BNG Units for site at {site_location} - {reference_number}
+Subject: BNG Units for site at {site_location} - {client_name} - {reference_number}
 
 """
             
@@ -154,7 +154,7 @@ Subject: RE: BNG Units for site at {site_location} - {reference_number}
 
 Our Ref: {reference_number}
 
-{promoter_name} has advised us that you need Biodiversity Net Gain units for your development in {site_location}, and we're here to help you discharge your BNG condition.
+Thank you for your enquiry into Biodiversity Net Gain units for your development in {site_location}, and we're here to help you discharge your BNG condition.
 
 About Us
 

@@ -1710,10 +1710,11 @@ If you have any questions, please reply to this email or call 01962 436574."""
     
     # Generate full email body matching exact template
     # Dynamic intro text based on promoter selection
-    if promoter_name:
+    # For internal use (WC0323), use generic thank you message
+    if promoter_name and promoter_name != "WC0323":
         intro_text = f"{promoter_name} has advised us that you need Biodiversity Net Gain units for your development in {location}, and we're here to help you discharge your BNG condition."
     else:
-        intro_text = f"Thank you for enquiring about BNG Units for your development in {location}"
+        intro_text = f"Thank you for your enquiry into Biodiversity Net Gain units for your development in {location}, and we're here to help you discharge your BNG condition."
     
     email_body = f"""
 <div style="font-family: Arial, sans-serif; font-size: 12px; line-height: 1.4;">

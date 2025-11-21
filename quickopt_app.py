@@ -708,12 +708,14 @@ if submitted:
                 site_hab_totals["avg_effective_unit_price"] = site_hab_totals["cost"] / site_hab_totals["effective_units"].replace(0, np.nan)
                 
                 # Generate CSV using the processed data - exactly like app.py
+                # For WC0323 (internal use), set introducer to "Direct" in CSV
+                csv_introducer = "Direct" if promoter_name == "WC0323" else promoter_name
                 csv_allocation_content = sales_quotes_csv.generate_sales_quotes_csv_from_optimizer_output(
                     quote_number=reference_number,
                     client_name=client_name,
                     development_address=location,  # Use combined location
                     base_ref=reference_number,
-                    introducer=promoter_name,
+                    introducer=csv_introducer,
                     today_date=datetime.now(),
                     local_planning_authority=target_lpa,
                     national_character_area=target_nca,
