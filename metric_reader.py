@@ -50,19 +50,22 @@ PRIORITY_MEDIUM_GROUPS = {
 # (processed after priority groups)
 
 
-# ------------- Helper function for openpyxl with keep_links=False -------------
-def _load_with_keep_links_false(data: bytes) -> pd.ExcelFile:
+# ------------- Helper function to work around ExternalReference bug -------------
+def _load_with_workaround(data: bytes) -> pd.ExcelFile:
     """
-    Load Excel file with keep_links=False to handle ExternalReference bug.
+    Load Excel file working around the ExternalReference bug.
     
-    This works around a known openpyxl bug (ExternalReference.__init__() missing 'id')
-    when handling files with external references. External references include:
+    This addresses a bug in openpyxl 3.1.x where ExternalReference.__init__() 
+    is missing the 'id' parameter when handling files with external references.
+    
+    External references include:
     - Links to other workbooks ([Book1.xlsx]Sheet1!A1)
     - External data sources
     - Linked charts or objects
     
-    The workbook is loaded without external links, saved to a clean buffer
-    (removing the external references), and returned as pd.ExcelFile.
+    The workaround uses read_only=True mode which uses a different parser
+    that doesn't have the ExternalReference bug. Data is then re-saved to
+    create a clean file that can be loaded normally.
     
     Args:
         data: Raw bytes of the Excel file
@@ -81,13 +84,35 @@ def _load_with_keep_links_false(data: bytes) -> pd.ExcelFile:
     
     wb = None
     try:
-        # keep_links=False prevents parsing of external references
-        # which can cause ExternalReference.__init__() errors
-        wb = openpyxl.load_workbook(io.BytesIO(data), keep_links=False)
-        # Create a new BytesIO to pass to pd.ExcelFile
-        # We need to save the workbook to get a clean file without external refs
+        # Try read_only=True mode which uses a different parser
+        # that doesn't have the ExternalReference bug
+        wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        
+        # Create a new workbook and copy data
+        # This removes external references and other problematic elements
+        new_wb = openpyxl.Workbook()
+        # Remove the default sheet
+        if new_wb.sheetnames:
+            new_wb.remove(new_wb.active)
+        
+        # Copy each sheet from read-only workbook
+        for sheet_name in wb.sheetnames:
+            source_sheet = wb[sheet_name]
+            new_sheet = new_wb.create_sheet(title=sheet_name)
+            
+            # Copy cell values (read_only mode gives us values, not formulas)
+            for row in source_sheet.iter_rows():
+                for cell in row:
+                    if cell.value is not None:
+                        new_sheet[cell.coordinate].value = cell.value
+        
+        wb.close()
+        wb = None
+        
+        # Save to buffer and return as pd.ExcelFile
         temp_buffer = io.BytesIO()
-        wb.save(temp_buffer)
+        new_wb.save(temp_buffer)
+        new_wb.close()
         temp_buffer.seek(0)
         return pd.ExcelFile(temp_buffer, engine="openpyxl")
     finally:
@@ -111,13 +136,13 @@ def open_metric_workbook(uploaded_file) -> pd.ExcelFile:
     # Track errors for better diagnostics
     errors = []
     
-    # Primary attempt: Try with keep_links=False first for .xlsx/.xlsm files
+    # Primary attempt: Try with read_only workaround first for .xlsx/.xlsm files
     # This handles the ExternalReference bug that affects many files
     if ext in [".xlsx", ".xlsm", ""]:
         try:
-            return _load_with_keep_links_false(data)
+            return _load_with_workaround(data)
         except Exception as e:
-            errors.append(f"openpyxl keep_links=False: {str(e)[:150]}")
+            errors.append(f"openpyxl read_only workaround: {str(e)[:150]}")
         
         # Try standard approach as fallback
         try: 
