@@ -251,13 +251,19 @@ def get_lpa_nca_overlap_point(lpa_name: str, nca_name: str) -> Tuple[Optional[fl
         lpa_geom = lpa_feat.get("geometry", {})
         rings = lpa_geom.get("rings", [])
         
-        if not rings or not rings[0]:
+        if not rings:
+            return None, None, lpa_neighbors, nca_neighbors
+        
+        if not rings[0]:
             return None, None, lpa_neighbors, nca_neighbors
         
         # Calculate centroid from the first ring (outer boundary)
         outer_ring = rings[0]
         
         # Simple centroid calculation: average of all points
+        # Note: This is a simple arithmetic mean of vertices, not a true geometric centroid.
+        # For irregular/non-convex polygons, this may not be the optimal representative point,
+        # but it provides a reasonable approximation for tier calculations.
         total_lon = 0.0
         total_lat = 0.0
         point_count = 0

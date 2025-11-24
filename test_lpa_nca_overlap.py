@@ -130,7 +130,7 @@ def test_get_lpa_nca_overlap_point_missing_nca():
     print("\n=== Testing get_lpa_nca_overlap_point with missing NCA ===")
     
     mock_lpa_feat = {
-        "geometry": {"rings": [[[-0.15, 51.50], [-0.10, 51.50], [-0.10, 51.52], [-0.15, 51.50]]]},
+        "geometry": {"rings": [[[-0.15, 51.50], [-0.10, 51.50], [-0.10, 51.52], [-0.15, 51.52], [-0.15, 51.50]]]},
         "attributes": {"LAD24NM": "Westminster"}
     }
     
@@ -166,7 +166,7 @@ def test_get_lpa_nca_overlap_point_empty_geometry():
     }
     
     mock_nca_feat = {
-        "geometry": {"rings": [[[-0.20, 51.48], [-0.05, 51.48], [-0.05, 51.54], [-0.20, 51.48]]]},
+        "geometry": {"rings": [[[-0.20, 51.48], [-0.05, 51.48], [-0.05, 51.54], [-0.20, 51.54], [-0.20, 51.48]]]},
         "attributes": {"NCA_Name": "Thames Valley"}
     }
     
