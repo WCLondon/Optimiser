@@ -100,11 +100,13 @@ def _load_with_workaround(data: bytes) -> pd.ExcelFile:
             source_sheet = wb[sheet_name]
             new_sheet = new_wb.create_sheet(title=sheet_name)
             
-            # Copy cell values (read_only mode gives us values, not formulas)
+            # Copy cell values efficiently using row/column indices
+            # (read_only mode gives us values, not formulas)
             for row in source_sheet.iter_rows():
                 for cell in row:
                     if cell.value is not None:
-                        new_sheet[cell.coordinate].value = cell.value
+                        # Use row/column indices for better performance
+                        new_sheet.cell(row=cell.row, column=cell.column).value = cell.value
         
         wb.close()
         wb = None
