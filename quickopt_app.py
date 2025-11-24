@@ -13,7 +13,7 @@ from typing import Optional, Tuple
 
 import metric_reader
 from optimizer_core import (
-    get_postcode_info, get_lpa_nca_for_point,
+    get_postcode_info, get_lpa_nca_for_point, get_lpa_nca_overlap_point,
     arcgis_point_query, layer_intersect_names, norm_name,
     optimise, generate_client_report_table_fixed, load_backend,
     http_get, safe_json, sstr
@@ -492,6 +492,8 @@ if submitted:
         message_index += 1
         progress_bar.progress(50)
         lpa_neighbors, nca_neighbors = [], []
+        
+        # If we have lat/lon from postcode, use point query
         if lat and lon:
             try:
                 lpa_feat = arcgis_point_query(LPA_URL, lat, lon, "LAD24NM")
@@ -501,6 +503,25 @@ if submitted:
                     lpa_neighbors = layer_intersect_names(LPA_URL, lpa_feat.get("geometry"), "LAD24NM")
                 if nca_feat and nca_feat.get("geometry"):
                     nca_neighbors = layer_intersect_names(NCA_URL, nca_feat.get("geometry"), "NCA_Name")
+            except Exception as e:
+                pass
+        
+        # If we don't have neighbors yet and we have manual LPA/NCA, use name-based lookup
+        # This also populates lat/lon from the LPA centroid
+        if (not lpa_neighbors or not nca_neighbors) and target_lpa and target_nca:
+            try:
+                overlap_lat, overlap_lon, lpa_neigh_from_name, nca_neigh_from_name = get_lpa_nca_overlap_point(target_lpa, target_nca)
+                
+                # Use the overlap point as coordinates if we don't have any yet
+                if not lat and not lon and overlap_lat and overlap_lon:
+                    lat = overlap_lat
+                    lon = overlap_lon
+                
+                # Use neighbors from name query if we don't have them yet
+                if not lpa_neighbors and lpa_neigh_from_name:
+                    lpa_neighbors = lpa_neigh_from_name
+                if not nca_neighbors and nca_neigh_from_name:
+                    nca_neighbors = nca_neigh_from_name
             except Exception as e:
                 pass
         
