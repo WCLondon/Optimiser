@@ -23,7 +23,11 @@ import io
 import os
 import re
 import warnings
+import zipfile
+import tempfile
+import shutil
 from typing import Dict, List, Optional, Tuple
+from xml.etree import ElementTree as ET
 
 import pandas as pd
 
@@ -84,11 +88,6 @@ def _load_with_workaround(data: bytes) -> pd.ExcelFile:
             "openpyxl is required to read Excel files. "
             "Install it with: pip install openpyxl"
         )
-    
-    import zipfile
-    import tempfile
-    import shutil
-    from xml.etree import ElementTree as ET
     
     # Create temporary directory for working with the file
     temp_dir = tempfile.mkdtemp()
@@ -156,13 +155,13 @@ def open_metric_workbook(uploaded_file) -> pd.ExcelFile:
     # Track errors for better diagnostics
     errors = []
     
-    # Primary attempt: Try with read_only workaround first for .xlsx/.xlsm files
+    # Primary attempt: Try XML cleaning workaround first for .xlsx/.xlsm files
     # This handles the ExternalReference bug that affects many files
     if ext in [".xlsx", ".xlsm", ""]:
         try:
             return _load_with_workaround(data)
         except Exception as e:
-            errors.append(f"openpyxl read_only workaround: {str(e)[:150]}")
+            errors.append(f"openpyxl XML cleaning: {str(e)[:150]}")
         
         # Try standard approach as fallback
         try: 
