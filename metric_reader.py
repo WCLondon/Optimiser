@@ -63,9 +63,12 @@ def _load_with_workaround(data: bytes) -> pd.ExcelFile:
     - External data sources
     - Linked charts or objects
     
-    The workaround uses read_only=True mode which uses a different parser
-    that doesn't have the ExternalReference bug. Data is then re-saved to
-    create a clean file that can be loaded normally.
+    The workaround manually removes external reference definitions from the 
+    Excel file's XML before loading with openpyxl. This is done by:
+    1. Extracting the ZIP contents
+    2. Removing externalReferences from workbook.xml
+    3. Removing the external links directory
+    4. Re-packaging and loading
     
     Args:
         data: Raw bytes of the Excel file
@@ -82,45 +85,60 @@ def _load_with_workaround(data: bytes) -> pd.ExcelFile:
             "Install it with: pip install openpyxl"
         )
     
-    wb = None
+    import zipfile
+    import tempfile
+    import shutil
+    from xml.etree import ElementTree as ET
+    
+    # Create temporary directory for working with the file
+    temp_dir = tempfile.mkdtemp()
     try:
-        # Try read_only=True mode which uses a different parser
-        # that doesn't have the ExternalReference bug
-        wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        # Extract Excel file (which is a ZIP archive)
+        zip_buffer = io.BytesIO(data)
+        with zipfile.ZipFile(zip_buffer, 'r') as zip_ref:
+            zip_ref.extractall(temp_dir)
         
-        # Create a new workbook and copy data
-        # This removes external references and other problematic elements
-        new_wb = openpyxl.Workbook()
-        # Remove the default sheet
-        if new_wb.sheetnames:
-            new_wb.remove(new_wb.active)
+        # Path to workbook.xml which contains external reference definitions
+        workbook_xml_path = os.path.join(temp_dir, 'xl', 'workbook.xml')
         
-        # Copy each sheet from read-only workbook
-        for sheet_name in wb.sheetnames:
-            source_sheet = wb[sheet_name]
-            new_sheet = new_wb.create_sheet(title=sheet_name)
+        if os.path.exists(workbook_xml_path):
+            # Parse and clean the workbook.xml
+            tree = ET.parse(workbook_xml_path)
+            root = tree.getroot()
             
-            # Copy cell values efficiently using row/column indices
-            # (read_only mode gives us values, not formulas)
-            for row in source_sheet.iter_rows():
-                for cell in row:
-                    if cell.value is not None:
-                        # Use row/column indices for better performance
-                        new_sheet.cell(row=cell.row, column=cell.column).value = cell.value
+            # Define namespaces used in Excel XML
+            ns = {'main': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+            
+            # Remove externalReferences element if it exists
+            for elem in root.findall('.//main:externalReferences', ns):
+                root.remove(elem)
+            
+            # Write cleaned XML back
+            tree.write(workbook_xml_path, encoding='utf-8', xml_declaration=True)
         
-        wb.close()
-        wb = None
+        # Remove external links directory if it exists
+        external_links_dir = os.path.join(temp_dir, 'xl', 'externalLinks')
+        if os.path.exists(external_links_dir):
+            shutil.rmtree(external_links_dir)
         
-        # Save to buffer and return as pd.ExcelFile
-        temp_buffer = io.BytesIO()
-        new_wb.save(temp_buffer)
-        new_wb.close()
-        temp_buffer.seek(0)
-        return pd.ExcelFile(temp_buffer, engine="openpyxl")
+        # Re-package into a new ZIP
+        output_buffer = io.BytesIO()
+        with zipfile.ZipFile(output_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_out:
+            for root_dir, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    file_path = os.path.join(root_dir, file)
+                    arcname = os.path.relpath(file_path, temp_dir)
+                    zip_out.write(file_path, arcname)
+        
+        output_buffer.seek(0)
+        
+        # Now load with openpyxl - external references are removed
+        return pd.ExcelFile(output_buffer, engine="openpyxl")
+        
     finally:
-        # Ensure workbook is closed even if an error occurs
-        if wb is not None:
-            wb.close()
+        # Clean up temporary directory
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
 
 
 
