@@ -207,6 +207,87 @@ def get_lpa_nca_for_point(lat: float, lon: float) -> Tuple[str, str]:
     return lpa, nca
 
 
+def get_lpa_nca_overlap_point(lpa_name: str, nca_name: str) -> Tuple[Optional[float], Optional[float], List[str], List[str]]:
+    """
+    Find a representative point in the overlap between an LPA and NCA.
+    
+    When users select LPA/NCA manually without providing a postcode, we need to
+    find a coordinate to use for tier calculations. This function:
+    1. Queries ArcGIS by name to get the LPA and NCA geometries
+    2. Finds neighboring LPAs and NCAs from the geometries
+    3. Computes a centroid point from the LPA geometry as a representative location
+    
+    Args:
+        lpa_name: Name of the Local Planning Authority
+        nca_name: Name of the National Character Area
+        
+    Returns:
+        Tuple of (lat, lon, lpa_neighbors, nca_neighbors)
+        Returns (None, None, [], []) if either geometry cannot be found
+        
+    Note:
+        We use the LPA centroid as the representative point because:
+        - LPAs are smaller and more specific than NCAs
+        - The optimizer uses both LPA and NCA neighbors for tier calculations
+        - This ensures we have a valid point within the LPA boundary
+    """
+    try:
+        # Query LPA by name to get geometry
+        lpa_feat = arcgis_name_query(LPA_URL, "LAD24NM", lpa_name)
+        if not lpa_feat or not lpa_feat.get("geometry"):
+            return None, None, [], []
+        
+        # Query NCA by name to get geometry
+        nca_feat = arcgis_name_query(NCA_URL, "NCA_Name", nca_name)
+        if not nca_feat or not nca_feat.get("geometry"):
+            return None, None, [], []
+        
+        # Get neighbors using the geometries
+        lpa_neighbors = layer_intersect_names(LPA_URL, lpa_feat.get("geometry"), "LAD24NM")
+        nca_neighbors = layer_intersect_names(NCA_URL, nca_feat.get("geometry"), "NCA_Name")
+        
+        # Compute centroid from LPA geometry (more specific than NCA)
+        # The geometry is in the ArcGIS JSON format with rings
+        lpa_geom = lpa_feat.get("geometry", {})
+        rings = lpa_geom.get("rings", [])
+        
+        if not rings:
+            return None, None, lpa_neighbors, nca_neighbors
+        
+        if not rings[0]:
+            return None, None, lpa_neighbors, nca_neighbors
+        
+        # Calculate centroid from the first ring (outer boundary)
+        outer_ring = rings[0]
+        
+        # Simple centroid calculation: average of all points
+        # Note: This is a simple arithmetic mean of vertices, not a true geometric centroid.
+        # For irregular/non-convex polygons, this may not be the optimal representative point,
+        # but it provides a reasonable approximation for tier calculations.
+        total_lon = 0.0
+        total_lat = 0.0
+        point_count = 0
+        
+        for point in outer_ring:
+            if len(point) >= 2:
+                total_lon += point[0]  # longitude
+                total_lat += point[1]  # latitude
+                point_count += 1
+        
+        if point_count == 0:
+            return None, None, lpa_neighbors, nca_neighbors
+        
+        centroid_lon = total_lon / point_count
+        centroid_lat = total_lat / point_count
+        
+        return centroid_lat, centroid_lon, lpa_neighbors, nca_neighbors
+        
+    except Exception as e:
+        # If anything goes wrong, return empty values
+        # The calling code will handle this gracefully
+        return None, None, [], []
+
+
 def enrich_banks_with_geography(banks_df: pd.DataFrame) -> pd.DataFrame:
     """
     Geocode banks and add lpa_name/nca_name columns.
