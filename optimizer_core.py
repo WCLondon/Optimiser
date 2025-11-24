@@ -173,6 +173,33 @@ def layer_intersect_names(layer_url: str, polygon_geom: Dict[str, Any], name_fie
     return sorted({n for n in names if n})
 
 
+def arcgis_name_query(layer_url: str, name_field: str, name_value: str) -> Dict[str, Any]:
+    """
+    Query ArcGIS service for a feature by name.
+    
+    Args:
+        layer_url: URL of the ArcGIS feature service layer
+        name_field: Field name to search (e.g., "LAD24NM", "NCA_Name")
+        name_value: Value to search for
+        
+    Returns:
+        Feature dictionary with geometry and attributes, or empty dict if not found
+    """
+    # Use exact match query
+    where_clause = f"{name_field} = '{name_value}'"
+    params = {
+        "f": "json",
+        "where": where_clause,
+        "outFields": "*",
+        "returnGeometry": "true",
+        "outSR": 4326
+    }
+    r = http_get(f"{layer_url}/query", params=params)
+    js = safe_json(r)
+    feats = js.get("features") or []
+    return feats[0] if feats else {}
+
+
 def get_lpa_nca_for_point(lat: float, lon: float) -> Tuple[str, str]:
     """Get LPA/NCA for coordinates"""
     lpa = sstr((arcgis_point_query(LPA_URL, lat, lon, "LAD24NM").get("attributes") or {}).get("LAD24NM"))

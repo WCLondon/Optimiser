@@ -23,9 +23,18 @@ import io
 import os
 import re
 import warnings
+import zipfile
+import tempfile
+import shutil
 from typing import Dict, List, Optional, Tuple
+from xml.etree import ElementTree as ET
 
 import pandas as pd
+
+try:
+    import openpyxl
+except ImportError:
+    openpyxl = None  # Will be checked at runtime with helpful error message
 
 
 # ------------- Medium distinctiveness hierarchy -------------
@@ -45,28 +54,165 @@ PRIORITY_MEDIUM_GROUPS = {
 # (processed after priority groups)
 
 
+# ------------- Helper function to work around ExternalReference bug -------------
+def _load_with_workaround(data: bytes) -> pd.ExcelFile:
+    """
+    Load Excel file working around the ExternalReference bug.
+    
+    This addresses a bug in openpyxl 3.1.x where ExternalReference.__init__() 
+    is missing the 'id' parameter when handling files with external references.
+    
+    External references include:
+    - Links to other workbooks ([Book1.xlsx]Sheet1!A1)
+    - External data sources
+    - Linked charts or objects
+    
+    The workaround manually removes external reference definitions from the 
+    Excel file's XML before loading with openpyxl. This is done by:
+    1. Extracting the ZIP contents
+    2. Removing externalReferences from workbook.xml
+    3. Removing external link relationships from workbook.xml.rels
+    4. Removing the external links directory
+    5. Re-packaging and loading
+    
+    Args:
+        data: Raw bytes of the Excel file
+        
+    Returns:
+        pd.ExcelFile object ready for parsing
+        
+    Raises:
+        ImportError: If openpyxl is not installed
+    """
+    if openpyxl is None:
+        raise ImportError(
+            "openpyxl is required to read Excel files. "
+            "Install it with: pip install openpyxl"
+        )
+    
+    # Create temporary directory for working with the file
+    temp_dir = tempfile.mkdtemp()
+    try:
+        # Extract Excel file (which is a ZIP archive)
+        zip_buffer = io.BytesIO(data)
+        with zipfile.ZipFile(zip_buffer, 'r') as zip_ref:
+            zip_ref.extractall(temp_dir)
+        
+        # Path to workbook.xml which contains external reference definitions
+        workbook_xml_path = os.path.join(temp_dir, 'xl', 'workbook.xml')
+        
+        if os.path.exists(workbook_xml_path):
+            # Parse and clean the workbook.xml
+            tree = ET.parse(workbook_xml_path)
+            root = tree.getroot()
+            
+            # Define namespaces used in Excel XML
+            ns = {'main': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+            
+            # Remove externalReferences element if it exists
+            for elem in root.findall('.//main:externalReferences', ns):
+                root.remove(elem)
+            
+            # Write cleaned XML back
+            tree.write(workbook_xml_path, encoding='utf-8', xml_declaration=True)
+        
+        # Also clean the relationships file to remove external link references
+        rels_path = os.path.join(temp_dir, 'xl', '_rels', 'workbook.xml.rels')
+        if os.path.exists(rels_path):
+            tree = ET.parse(rels_path)
+            root = tree.getroot()
+            
+            # Remove external link relationships
+            # Namespace for relationships
+            ns = {'r': 'http://schemas.openxmlformats.org/package/2006/relationships'}
+            
+            # Find and remove relationships with Type="...externalLink"
+            for elem in root.findall('.//r:Relationship', ns):
+                rel_type = elem.get('Type', '')
+                if 'externalLink' in rel_type:
+                    root.remove(elem)
+            
+            tree.write(rels_path, encoding='utf-8', xml_declaration=True)
+        
+        # Remove external links directory if it exists
+        external_links_dir = os.path.join(temp_dir, 'xl', 'externalLinks')
+        if os.path.exists(external_links_dir):
+            shutil.rmtree(external_links_dir)
+        
+        # Re-package into a new ZIP
+        output_buffer = io.BytesIO()
+        with zipfile.ZipFile(output_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_out:
+            for root_dir, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    file_path = os.path.join(root_dir, file)
+                    arcname = os.path.relpath(file_path, temp_dir)
+                    zip_out.write(file_path, arcname)
+        
+        output_buffer.seek(0)
+        
+        # Now load with openpyxl - external references are removed
+        return pd.ExcelFile(output_buffer, engine="openpyxl")
+        
+    finally:
+        # Clean up temporary directory
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+
+
+
 # ------------- open workbook -------------
 def open_metric_workbook(uploaded_file) -> pd.ExcelFile:
-    """Open a BNG metric workbook (.xlsx, .xlsm, .xlsb)"""
+    """
+    Open a BNG metric workbook (.xlsx, .xlsm, .xlsb)
+    
+    Tries multiple methods to handle various Excel file formats and edge cases.
+    """
     data = uploaded_file.read() if hasattr(uploaded_file, "read") else uploaded_file
     name = getattr(uploaded_file, "name", "") or ""
     ext = os.path.splitext(name)[1].lower()
+    
+    # Track errors for better diagnostics
+    errors = []
+    
+    # Primary attempt: Try XML cleaning workaround first for .xlsx/.xlsm files
+    # This handles the ExternalReference bug that affects many files
     if ext in [".xlsx", ".xlsm", ""]:
+        try:
+            return _load_with_workaround(data)
+        except Exception as e:
+            errors.append(f"openpyxl XML cleaning: {str(e)[:150]}")
+        
+        # Try standard approach as fallback
         try: 
             return pd.ExcelFile(io.BytesIO(data), engine="openpyxl")
-        except Exception: 
-            pass
+        except Exception as e: 
+            errors.append(f"openpyxl standard: {str(e)[:150]}")
+    
+    # Try pyxlsb for .xlsb files
     if ext == ".xlsb":
         try: 
             return pd.ExcelFile(io.BytesIO(data), engine="pyxlsb")
-        except Exception: 
-            pass
+        except Exception as e: 
+            errors.append(f"pyxlsb: {str(e)[:150]}")
+    
+    # Final fallbacks for unknown extensions or if extension-specific attempts failed
+    # Try all engines in order of likelihood
     for eng in ("openpyxl", "pyxlsb"):
         try: 
             return pd.ExcelFile(io.BytesIO(data), engine=eng)
-        except Exception: 
-            continue
-    raise RuntimeError("Could not open workbook. Try re-saving as .xlsx or .xlsm.")
+        except Exception as e: 
+            errors.append(f"{eng} fallback: {str(e)[:150]}")
+    
+    # If all attempts failed, provide detailed error message
+    error_details = " | ".join(errors) if errors else "No engines available"
+    raise RuntimeError(
+        f"Could not open workbook '{name}'. This can happen if:\n"
+        f"1. The file was created with a newer version of Excel\n"
+        f"2. The file contains unsupported features (e.g., complex macros, external links)\n"
+        f"3. The file is password protected\n\n"
+        f"Try: Re-saving the file in Excel as a new .xlsx file (File > Save As > Excel Workbook)\n\n"
+        f"Technical details: {error_details}"
+    )
 
 
 # ------------- utils -------------
