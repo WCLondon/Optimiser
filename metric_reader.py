@@ -71,8 +71,9 @@ def _load_with_workaround(data: bytes) -> pd.ExcelFile:
     Excel file's XML before loading with openpyxl. This is done by:
     1. Extracting the ZIP contents
     2. Removing externalReferences from workbook.xml
-    3. Removing the external links directory
-    4. Re-packaging and loading
+    3. Removing external link relationships from workbook.xml.rels
+    4. Removing the external links directory
+    5. Re-packaging and loading
     
     Args:
         data: Raw bytes of the Excel file
@@ -114,6 +115,24 @@ def _load_with_workaround(data: bytes) -> pd.ExcelFile:
             
             # Write cleaned XML back
             tree.write(workbook_xml_path, encoding='utf-8', xml_declaration=True)
+        
+        # Also clean the relationships file to remove external link references
+        rels_path = os.path.join(temp_dir, 'xl', '_rels', 'workbook.xml.rels')
+        if os.path.exists(rels_path):
+            tree = ET.parse(rels_path)
+            root = tree.getroot()
+            
+            # Remove external link relationships
+            # Namespace for relationships
+            ns = {'r': 'http://schemas.openxmlformats.org/package/2006/relationships'}
+            
+            # Find and remove relationships with Type="...externalLink"
+            for elem in root.findall('.//r:Relationship', ns):
+                rel_type = elem.get('Type', '')
+                if 'externalLink' in rel_type:
+                    root.remove(elem)
+            
+            tree.write(rels_path, encoding='utf-8', xml_declaration=True)
         
         # Remove external links directory if it exists
         external_links_dir = os.path.join(temp_dir, 'xl', 'externalLinks')
