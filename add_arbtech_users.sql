@@ -1,0 +1,42 @@
+-- =====================================================
+-- SQL Script to Add Arbtech Individual User Logins
+-- =====================================================
+-- This script adds 14 individual logins for Arbtech promoter ecologists.
+-- Each user has their own username (email) and password.
+-- All users are linked to the parent 'Arbtech' promoter (ID: 2) for discount settings.
+-- 
+-- Password format: [Firstname][Lastname]1
+-- 
+-- NOTE: This SQL file is provided as documentation only.
+-- Use the Python script add_arbtech_users.py to add users with proper password hashing.
+-- =====================================================
+
+-- The individual users below need to be added using the Python script
+-- add_arbtech_users.py because passwords need to be hashed securely.
+--
+-- Parent: Arbtech (ID: 2, discount_type: 'tier_up', discount_value: 0)
+--
+-- Users to add (all linked to parent_introducer_id = 2):
+-- 1. Beth Ellison-Perrett / Bethellison-perrett@arbtech.co.uk / BethEllison-Perrett1
+-- 2. Craig Williams / Craigwilliams@arbtech.co.uk / CraigWilliams1
+-- 3. Fay Brotherhood / Faybrotherhood@arbtech.co.uk / FayBrotherhood1
+-- 4. Georgina Rennie / Georginarennie@arbtech.co.uk / GeorginaRennie1
+-- 5. Harley Stone / Harleystone@arbtech.co.uk / HarleyStone1
+-- 6. Harry Brindle / Harrybrindle@arbtech.co.uk / HarryBrindle1
+-- 7. Jamie-Lee Anderson / Jamie-leeanderson@arbtech.co.uk / Jamie-LeeAnderson1
+-- 8. Jeremy Grout / Jeremygrout@arbtech.co.uk / JeremyGrout1
+-- 9. Jonathan Stuttard / Jonathanstuttard@arbtech.co.uk / JonathanStuttard1
+-- 10. Leo Plevin / Leoplevin@arbtech.co.uk / LeoPlevin1
+-- 11. Kelly Clarke / Kellyclarke@arbtech.co.uk / KellyClarke1
+-- 12. Natalie Evans / Natalieevans@arbtech.co.uk / NatalieEvans1
+-- 13. Robbie Mackenzie / Robbiemackenzie@arbtech.co.uk / RobbieMackenzie1
+-- 14. Viktoria Kossmann / Viktoriakossmann@arbtech.co.uk / ViktoriaKossmann1
+
+-- To run the migration:
+-- 1. Ensure .streamlit/secrets.toml has database connection configured
+-- 2. Run: python add_arbtech_users.py
+
+-- Schema changes added to database.py for this feature:
+-- 1. introducers table: Added columns username, password_hash, password_salt, parent_introducer_id
+-- 2. submissions table: Added column submitted_by_username to track individual submitter
+-- 3. New authentication flow supports both legacy (name/password) and new (username/password_hash) methods

@@ -110,26 +110,45 @@ if 'all_ncas_list' not in st.session_state:
 
 def authenticate_promoter(username: str, password: str) -> Tuple[bool, Optional[dict]]:
     """
-    Authenticate promoter using the database.
+    Authenticate promoter using the database with proper password hashing.
     
-    For now, uses a simple comparison. In production, this should use
-    proper password hashing and secure authentication.
+    For child accounts (those with parent_introducer_id), also fetches parent info
+    to determine the correct promoter name and discount settings.
     
     Returns:
         Tuple of (success: bool, promoter_info: dict or None)
+        
+    The promoter_info dict includes:
+        - All fields from the introducer record
+        - 'effective_promoter_name': The promoter name to use for submissions
+        - 'submitted_by_name': The individual user's name
+        - 'submitted_by_username': The individual user's username/email
     """
     try:
         db = SubmissionsDB()
-        # Get all introducers (promoters)
-        introducers = db.get_all_introducers()
-        
-        for introducer in introducers:
-            # For now, we use the name as both username and password
-            # In production, add a proper password field to the database
-            if introducer['name'] == username:
-                # SECURITY NOTE: This is a placeholder authentication
-                # In production, implement proper password verification
-                return True, introducer
+        # Try to authenticate using username and password hash
+        success, introducer = db.authenticate_introducer(username, password)
+        if success:
+            # Check if this is a child account
+            parent_id = introducer.get('parent_introducer_id')
+            if parent_id:
+                # Get parent introducer info for discount settings
+                parent = db.get_introducer_by_id(parent_id)
+                if parent:
+                    # Use parent's discount settings but keep track of who submitted
+                    introducer['effective_promoter_name'] = parent.get('name', introducer.get('name'))
+                    introducer['discount_type'] = parent.get('discount_type', 'no_discount')
+                    introducer['discount_value'] = parent.get('discount_value', 0)
+                else:
+                    introducer['effective_promoter_name'] = introducer.get('name')
+            else:
+                introducer['effective_promoter_name'] = introducer.get('name')
+            
+            # Track the individual submitter
+            introducer['submitted_by_name'] = introducer.get('name')
+            introducer['submitted_by_username'] = introducer.get('username', username)
+            
+            return True, introducer
         
         return False, None
     except Exception as e:
@@ -154,38 +173,102 @@ if not st.session_state.logged_in:
                 success, promoter_info = authenticate_promoter(username, password)
                 if success:
                     st.session_state.logged_in = True
-                    st.session_state.promoter_name = username
+                    # Use effective_promoter_name for display (parent name for child accounts)
+                    st.session_state.promoter_name = promoter_info.get('effective_promoter_name', 
+                                                                        promoter_info.get('name', username))
                     st.session_state.promoter_info = promoter_info
-                    st.success(f"✓ Logged in as {username}")
+                    # Store submitter info separately
+                    st.session_state.submitted_by_name = promoter_info.get('submitted_by_name', 
+                                                                           promoter_info.get('name'))
+                    st.session_state.submitted_by_username = promoter_info.get('submitted_by_username', username)
+                    st.success(f"✓ Logged in as {st.session_state.submitted_by_name}")
                     st.rerun()
                 else:
                     st.error("Invalid credentials. Please try again.")
     
-    st.info("💡 Note: Contact your administrator if you need login credentials.")
+    st.markdown("---")
+    st.info("💡 **Forgot your password?** Contact your administrator to reset it.")
     st.stop()
 
 
 # ================= LOGGED IN - SHOW FORM =================
 promoter_name = st.session_state.promoter_name
 promoter_info = st.session_state.get('promoter_info', {})
+submitted_by_name = st.session_state.get('submitted_by_name', promoter_name)
+submitted_by_username = st.session_state.get('submitted_by_username', '')
 
 st.title(f"{promoter_name} - BNG Quote Request")
 
-# Show promoter info
-st.markdown(f"**Logged in as:** {promoter_name}")
+# Show user info - distinguish between promoter and individual user if different
+if submitted_by_name != promoter_name:
+    st.markdown(f"**Promoter:** {promoter_name} | **User:** {submitted_by_name}")
+else:
+    st.markdown(f"**Logged in as:** {promoter_name}")
 
 # Get discount info for sidebar and later use
 discount_type = promoter_info.get('discount_type', 'no_discount')
 discount_value = promoter_info.get('discount_value', 0)
 
+# Initialize session state for password change
+if 'show_password_change' not in st.session_state:
+    st.session_state.show_password_change = False
+
 # Logout button in sidebar
 with st.sidebar:
-    st.markdown(f"### {promoter_name}")
+    # Show promoter name and user name if different
+    if submitted_by_name != promoter_name:
+        st.markdown(f"### {promoter_name}")
+        st.markdown(f"*User: {submitted_by_name}*")
+    else:
+        st.markdown(f"### {promoter_name}")
     st.markdown("---")
+    
+    # Change Password button
+    if st.button("🔑 Change Password"):
+        st.session_state.show_password_change = not st.session_state.show_password_change
+    
+    # Password change form
+    if st.session_state.show_password_change:
+        st.markdown("#### Change Password")
+        with st.form("change_password_form"):
+            current_password = st.text_input("Current Password", type="password", key="current_pwd")
+            new_password = st.text_input("New Password", type="password", key="new_pwd")
+            confirm_password = st.text_input("Confirm New Password", type="password", key="confirm_pwd")
+            change_pwd_submit = st.form_submit_button("Update Password")
+            
+            if change_pwd_submit:
+                if not current_password or not new_password or not confirm_password:
+                    st.error("Please fill in all password fields")
+                elif new_password != confirm_password:
+                    st.error("New passwords do not match")
+                elif len(new_password) < 6:
+                    st.error("New password must be at least 6 characters")
+                else:
+                    # Verify current password using the individual's username
+                    success, _ = authenticate_promoter(
+                        promoter_info.get('username') or submitted_by_username, 
+                        current_password
+                    )
+                    if success:
+                        try:
+                            db = SubmissionsDB()
+                            db.update_introducer_password(promoter_info['id'], new_password)
+                            st.success("✓ Password updated successfully!")
+                            st.session_state.show_password_change = False
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error updating password: {e}")
+                    else:
+                        st.error("Current password is incorrect")
+        st.markdown("---")
+    
     if st.button("🚪 Logout"):
         st.session_state.logged_in = False
         st.session_state.promoter_name = ""
         st.session_state.promoter_info = {}
+        st.session_state.submitted_by_name = ""
+        st.session_state.submitted_by_username = ""
+        st.session_state.show_password_change = False
         st.rerun()
 
 st.markdown("---")
@@ -867,7 +950,8 @@ if submitted:
                 username=promoter_name,
                 promoter_name=promoter_name,
                 promoter_discount_type=discount_type,
-                promoter_discount_value=discount_value
+                promoter_discount_value=discount_value,
+                submitted_by_username=submitted_by_username  # Track individual submitter
             )
         except Exception as e:
             pass  # Database save failed, but continue
