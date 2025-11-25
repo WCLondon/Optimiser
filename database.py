@@ -1304,7 +1304,8 @@ class SubmissionsDB:
         
         if introducer:
             stored_password = introducer.get('password')
-            if stored_password and stored_password == password:
+            # Use constant-time comparison to prevent timing attacks
+            if stored_password and secrets.compare_digest(stored_password, password):
                 return True, introducer
         
         return False, None

@@ -7,6 +7,9 @@ Each user gets their own username (email) and password with proper hashing.
 All users are linked to the parent 'Arbtech' promoter for discount settings.
 
 Password format: [Firstname][Lastname]1
+Note: These are initial passwords as specified by the administrator.
+Users should be encouraged to change their password on first login using
+the "Change Password" feature in the sidebar.
 
 Usage:
     python add_arbtech_users.py
@@ -18,6 +21,8 @@ import sys
 from database import SubmissionsDB
 
 # List of Arbtech users to add
+# Initial passwords follow the format [Firstname][Lastname]1 as requested by admin.
+# Users should change their password on first login.
 ARBTECH_USERS = [
     {"name": "Beth Ellison-Perrett", "username": "Bethellison-perrett@arbtech.co.uk", "password": "BethEllison-Perrett1"},
     {"name": "Craig Williams", "username": "Craigwilliams@arbtech.co.uk", "password": "CraigWilliams1"},

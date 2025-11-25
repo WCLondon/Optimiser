@@ -241,8 +241,8 @@ with st.sidebar:
                     st.error("Please fill in all password fields")
                 elif new_password != confirm_password:
                     st.error("New passwords do not match")
-                elif len(new_password) < 6:
-                    st.error("New password must be at least 6 characters")
+                elif len(new_password) < 8:
+                    st.error("New password must be at least 8 characters")
                 else:
                     # Verify current password using the individual's username
                     success, _ = authenticate_promoter(
