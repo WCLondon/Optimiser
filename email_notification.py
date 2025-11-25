@@ -85,6 +85,7 @@ def send_email_notification(to_emails: List[str],
         reference_number = kwargs.get('reference_number', 'N/A')
         site_location = kwargs.get('site_location', 'N/A')
         promoter_name = kwargs.get('promoter_name', 'N/A')
+        submitted_by_name = kwargs.get('submitted_by_name', None)  # Individual submitter name
         contact_email = kwargs.get('contact_email', 'N/A')
         notes = kwargs.get('notes', '')
         
@@ -106,6 +107,11 @@ def send_email_notification(to_emails: List[str],
             # Subject for the email to reviewer - include reference number
             msg['Subject'] = f"BNG Quote for Review & Forwarding - {reference_number} - {client_name} - £{total_with_admin:,.0f}"
             
+            # Build promoter details section - include submitter if different from promoter
+            promoter_section_text = f"- Promoter Name: {promoter_name}"
+            if submitted_by_name and submitted_by_name != promoter_name:
+                promoter_section_text += f"\n- Submitted By: {submitted_by_name}"
+            
             # Create the wrapper email to reviewer (plain text)
             reviewer_instructions = f"""
 QUOTE READY FOR REVIEW AND FORWARDING
@@ -119,7 +125,7 @@ CUSTOMER DETAILS:
 - Reference Number: {reference_number}
 
 PROMOTER DETAILS:
-- Promoter Name: {promoter_name}
+{promoter_section_text}
 """
             
             if notes:
@@ -186,6 +192,11 @@ Wild Capital Team
             # Combine reviewer instructions with customer content for plain text
             full_body_text = reviewer_instructions + customer_text
             
+            # Build HTML promoter section - include submitter if different from promoter
+            promoter_section_html = f"<li><strong>Promoter Name:</strong> {promoter_name}</li>"
+            if submitted_by_name and submitted_by_name != promoter_name:
+                promoter_section_html += f"\n            <li><strong>Submitted By:</strong> {submitted_by_name}</li>"
+            
             # Create HTML version with reviewer instructions and formatted table
             reviewer_instructions_html = f"""
 <div style="font-family: Arial, sans-serif; font-size: 12px; line-height: 1.6; background-color: #f9f9f9; padding: 20px; margin-bottom: 20px; border: 2px solid #2A514A; border-radius: 5px;">
@@ -205,7 +216,7 @@ Wild Capital Team
     <div style="background-color: white; padding: 15px; border-radius: 5px; margin-bottom: 15px;">
         <h3 style="color: #2A514A; margin-top: 0;">Promoter Details:</h3>
         <ul style="list-style: none; padding-left: 0;">
-            <li><strong>Promoter Name:</strong> {promoter_name}</li>
+            {promoter_section_html}
         </ul>"""
             
             if notes:
@@ -254,6 +265,11 @@ Wild Capital Team
             # Simple quote notification (under £50k)
             msg['Subject'] = f"New BNG Quote Request - {reference_number} - {client_name}"
             
+            # Build promoter details section - include submitter if different from promoter
+            promoter_section = f"- Promoter Name: {promoter_name}"
+            if submitted_by_name and submitted_by_name != promoter_name:
+                promoter_section += f"\n- Submitted By: {submitted_by_name}"
+            
             # Create email body
             body = f"""
 New BNG Quote Request Submitted
@@ -267,7 +283,7 @@ CLIENT DETAILS:
 - Quote Total: £{quote_total:,.2f}
 
 PROMOTER DETAILS:
-- Promoter Name: {promoter_name}
+{promoter_section}
 
 """
             

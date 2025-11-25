@@ -1027,6 +1027,7 @@ if submitted:
                         reference_number=reference_number,  # Auto-generated reference
                         site_location=location,  # Use combined location
                         promoter_name=promoter_name,
+                        submitted_by_name=submitted_by_name,  # Individual submitter name
                         contact_email=contact_email if contact_email else promoter_name,
                         notes=notes,
                         email_type='quote_notification',
@@ -1044,6 +1045,7 @@ if submitted:
                         reference_number=reference_number,  # Auto-generated reference
                         site_location=location,  # Use combined location
                         promoter_name=promoter_name,
+                        submitted_by_name=submitted_by_name,  # Individual submitter name
                         contact_email=contact_email if contact_email else promoter_name,
                         notes=notes,
                         email_type='full_quote',
