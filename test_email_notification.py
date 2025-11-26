@@ -202,6 +202,74 @@ def test_email_notification_with_csv_attachment():
             print("✓ Test passed: CSV attachment is properly attached to email")
 
 
+def test_email_notification_quote_accepted():
+    """Test that quote_accepted email type sends correct notification"""
+    import base64
+    with patch('email_notification.st.secrets') as mock_secrets:
+        mock_secrets.get = MagicMock(side_effect=lambda key, default: {
+            'SMTP_HOST': 'smtp.gmail.com',
+            'SMTP_PORT': 587,
+            'SMTP_USER': 'test@example.com',
+            'SMTP_PASSWORD': 'testpassword',
+            'SMTP_FROM_EMAIL': 'test@example.com',
+            'SMTP_FROM_NAME': 'Test Sender'
+        }.get(key, default))
+        
+        with patch('email_notification.smtplib.SMTP') as mock_smtp:
+            mock_server = MagicMock()
+            mock_smtp.return_value = mock_server
+            
+            # Test quote_accepted email type
+            success, message = send_email_notification(
+                to_emails=['team@example.com'],
+                client_name='John Smith',
+                quote_total=25000.0,
+                metric_file_content=None,  # No metric file for acceptance
+                email_type='quote_accepted',
+                reference_number='BNG-A-12345',
+                site_location='123 Test Street, London',
+                promoter_name='Test Promoter Ltd',
+                submitted_by_name='Jane Doe',
+                contact_email='john@example.com',
+                contact_number='07123456789',
+                notes='Client wants to proceed ASAP',
+                allocation_summary='- Grassland: 10.5 units @ £2,000/unit = £21,000\n',
+                accepted_by='Jane Doe'
+            )
+            
+            assert success == True, "Should return True for successful send"
+            assert "Email sent successfully" in message, f"Expected success message, got: {message}"
+            
+            # Verify that send_message was called
+            mock_server.send_message.assert_called_once()
+            
+            # Get the message that was sent
+            sent_message = mock_server.send_message.call_args[0][0]
+            
+            # Verify subject line contains QUOTE ACCEPTED
+            assert 'QUOTE ACCEPTED' in sent_message['Subject'], f"Subject should contain 'QUOTE ACCEPTED', got: {sent_message['Subject']}"
+            assert 'BNG-A-12345' in sent_message['Subject'], f"Subject should contain reference number"
+            assert 'John Smith' in sent_message['Subject'], f"Subject should contain client name"
+            
+            # Verify body content (may be base64 encoded)
+            body = sent_message.get_payload()
+            if isinstance(body, list):
+                body = body[0].get_payload()
+            
+            # Decode if base64 encoded
+            try:
+                decoded_body = base64.b64decode(body).decode('utf-8')
+            except Exception:
+                decoded_body = body
+            
+            assert 'ACCEPTED BY CLIENT' in decoded_body, f"Body should indicate quote acceptance"
+            assert '25,000' in decoded_body, f"Body should contain quote total"
+            assert 'John Smith' in decoded_body, f"Body should contain client name"
+            assert 'BNG-A-12345' in decoded_body, f"Body should contain reference number"
+            
+            print("✓ Test passed: quote_accepted email type works correctly")
+
+
 if __name__ == '__main__':
     print("Running email notification tests...")
     print()
@@ -211,6 +279,7 @@ if __name__ == '__main__':
     test_email_notification_smtp_error()
     test_email_notification_multiple_recipients()
     test_email_notification_with_csv_attachment()
+    test_email_notification_quote_accepted()
     
     print()
     print("=" * 60)

@@ -5,6 +5,7 @@ This app allows promoters to submit BNG quote requests on behalf of clients.
 Includes login system, form for client details, and automated quote generation.
 """
 
+import json
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -209,9 +210,17 @@ else:
 discount_type = promoter_info.get('discount_type', 'no_discount')
 discount_value = promoter_info.get('discount_value', 0)
 
-# Initialize session state for password change
+# Initialize session state for password change and quote search
 if 'show_password_change' not in st.session_state:
     st.session_state.show_password_change = False
+if 'show_my_quotes' not in st.session_state:
+    st.session_state.show_my_quotes = False
+if 'selected_quote_id' not in st.session_state:
+    st.session_state.selected_quote_id = None
+if 'quote_search_results' not in st.session_state:
+    st.session_state.quote_search_results = None
+if 'acceptance_notes' not in st.session_state:
+    st.session_state.acceptance_notes = ""
 
 # Logout button in sidebar
 with st.sidebar:
@@ -223,9 +232,17 @@ with st.sidebar:
         st.markdown(f"### {promoter_name}")
     st.markdown("---")
     
+    # My Quotes button
+    if st.button("📋 My Quotes", type="primary" if st.session_state.show_my_quotes else "secondary"):
+        st.session_state.show_my_quotes = not st.session_state.show_my_quotes
+        st.session_state.show_password_change = False  # Close other panels
+        st.session_state.selected_quote_id = None  # Clear selected quote
+        st.rerun()
+    
     # Change Password button
     if st.button("🔑 Change Password"):
         st.session_state.show_password_change = not st.session_state.show_password_change
+        st.session_state.show_my_quotes = False  # Close other panels
     
     # Password change form
     if st.session_state.show_password_change:
@@ -269,9 +286,286 @@ with st.sidebar:
         st.session_state.submitted_by_name = ""
         st.session_state.submitted_by_username = ""
         st.session_state.show_password_change = False
+        st.session_state.show_my_quotes = False
+        st.session_state.selected_quote_id = None
+        st.session_state.quote_search_results = None
         st.rerun()
 
 st.markdown("---")
+
+# ================= MY QUOTES PANEL =================
+if st.session_state.show_my_quotes:
+    st.title("📋 My Quotes")
+    st.markdown("Search and manage your submitted quotes.")
+    
+    # Search filters
+    with st.expander("🔎 Search Filters", expanded=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            search_client = st.text_input("Client Name", key="quote_search_client", 
+                                          help="Search by client name (partial match)")
+            search_ref = st.text_input("Reference Number", key="quote_search_ref",
+                                       help="Search by quote reference (partial match)")
+        with col2:
+            search_location = st.text_input("Address/Postcode", key="quote_search_location",
+                                           help="Search by site address or postcode (partial match)")
+            search_lpa = st.text_input("LPA", key="quote_search_lpa",
+                                      help="Search by Local Planning Authority (partial match)")
+        
+        search_btn = st.button("🔍 Search Quotes", key="quote_search_btn", type="primary")
+    
+    # Perform search
+    if search_btn:
+        try:
+            db = SubmissionsDB()
+            
+            # Build query to filter by promoter name
+            from sqlalchemy import text as sql_text
+            engine = db._get_connection()
+            
+            query = "SELECT * FROM submissions WHERE promoter_name = %(promoter_name)s"
+            params = {"promoter_name": promoter_name}
+            
+            if search_client:
+                query += " AND client_name ILIKE %(client_name)s"
+                params["client_name"] = f"%{search_client}%"
+            if search_ref:
+                query += " AND reference_number ILIKE %(reference_number)s"
+                params["reference_number"] = f"%{search_ref}%"
+            if search_location:
+                query += " AND site_location ILIKE %(location)s"
+                params["location"] = f"%{search_location}%"
+            if search_lpa:
+                query += " AND target_lpa ILIKE %(lpa)s"
+                params["lpa"] = f"%{search_lpa}%"
+            
+            query += " ORDER BY submission_date DESC LIMIT 50"
+            
+            with engine.connect() as conn:
+                results_df = pd.read_sql_query(query, conn, params=params)
+            
+            st.session_state.quote_search_results = results_df
+            
+        except Exception as e:
+            st.error(f"Error searching quotes: {e}")
+    
+    # Show recent quotes if no search has been performed
+    if st.session_state.quote_search_results is None:
+        try:
+            db = SubmissionsDB()
+            from sqlalchemy import text as sql_text
+            engine = db._get_connection()
+            
+            query = "SELECT * FROM submissions WHERE promoter_name = %(promoter_name)s ORDER BY submission_date DESC LIMIT 20"
+            params = {"promoter_name": promoter_name}
+            
+            with engine.connect() as conn:
+                results_df = pd.read_sql_query(query, conn, params=params)
+            
+            st.session_state.quote_search_results = results_df
+        except Exception as e:
+            st.error(f"Error loading quotes: {e}")
+            results_df = pd.DataFrame()
+    
+    # Display search results
+    results_df = st.session_state.quote_search_results
+    if results_df is not None and not results_df.empty:
+        st.markdown(f"### 📄 Your Quotes ({len(results_df)} found)")
+        
+        # Display columns
+        display_cols = ["id", "submission_date", "client_name", "reference_number", 
+                       "site_location", "target_lpa", "contract_size", "total_with_admin"]
+        display_cols = [c for c in display_cols if c in results_df.columns]
+        
+        df_display = results_df[display_cols].copy()
+        if "submission_date" in df_display.columns:
+            df_display["submission_date"] = pd.to_datetime(df_display["submission_date"]).dt.strftime("%Y-%m-%d")
+        if "total_with_admin" in df_display.columns:
+            df_display["total_with_admin"] = df_display["total_with_admin"].apply(
+                lambda x: f"£{x:,.0f}" if pd.notna(x) else "Pending"
+            )
+        
+        # Rename columns for display
+        df_display = df_display.rename(columns={
+            "id": "ID",
+            "submission_date": "Date",
+            "client_name": "Client",
+            "reference_number": "Reference",
+            "site_location": "Location",
+            "target_lpa": "LPA",
+            "contract_size": "Size",
+            "total_with_admin": "Total"
+        })
+        
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
+        
+        # Select quote to view
+        st.markdown("---")
+        st.markdown("### 👁️ View Quote Details")
+        quote_ids = results_df["id"].tolist()
+        quote_options = [f"{row['reference_number']} - {row['client_name']}" for _, row in results_df.iterrows()]
+        
+        selected_idx = st.selectbox("Select a quote to view:", 
+                                   range(len(quote_options)),
+                                   format_func=lambda x: quote_options[x],
+                                   key="quote_select_view")
+        
+        if st.button("View Details", key="view_quote_btn"):
+            st.session_state.selected_quote_id = quote_ids[selected_idx]
+            st.rerun()
+        
+    elif results_df is not None:
+        st.info("No quotes found. Submit a new quote or try different search criteria.")
+    
+    # Show selected quote details
+    if st.session_state.selected_quote_id is not None:
+        st.markdown("---")
+        st.markdown("### 📑 Quote Details")
+        
+        try:
+            db = SubmissionsDB()
+            submission = db.get_submission_by_id(st.session_state.selected_quote_id)
+            
+            if submission:
+                # Back button
+                if st.button("← Back to Quote List", key="back_to_list"):
+                    st.session_state.selected_quote_id = None
+                    st.rerun()
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("##### Quote Information")
+                    st.write(f"**Reference:** {submission['reference_number']}")
+                    st.write(f"**Client:** {submission['client_name']}")
+                    st.write(f"**Location:** {submission['site_location']}")
+                    st.write(f"**Date:** {submission['submission_date']}")
+                    st.write(f"**Contract Size:** {submission['contract_size'] or 'N/A'}")
+                    
+                    total_with_admin = submission.get('total_with_admin', 0) or 0
+                    if total_with_admin > 0:
+                        st.write(f"**Total (inc. Admin):** £{total_with_admin:,.0f}")
+                    else:
+                        st.write("**Total:** Pending manual review")
+                
+                with col2:
+                    st.markdown("##### Location Details")
+                    st.write(f"**LPA:** {submission['target_lpa'] or 'N/A'}")
+                    st.write(f"**NCA:** {submission['target_nca'] or 'N/A'}")
+                    
+                    if submission.get('contact_email'):
+                        st.write(f"**Contact Email:** {submission['contact_email']}")
+                    if submission.get('contact_number'):
+                        st.write(f"**Contact Number:** {submission['contact_number']}")
+                
+                # Show demand details
+                if submission.get('demand_habitats'):
+                    st.markdown("##### Habitat Requirements")
+                    demand_data = submission['demand_habitats']
+                    if isinstance(demand_data, str):
+                        import json
+                        demand_data = json.loads(demand_data)
+                    if demand_data:
+                        demand_df = pd.DataFrame(demand_data)
+                        # Select and rename columns for display
+                        if 'habitat_name' in demand_df.columns:
+                            display_demand = demand_df[['habitat_name', 'units_required']].copy() if 'units_required' in demand_df.columns else demand_df[['habitat_name']].copy()
+                            display_demand = display_demand.rename(columns={'habitat_name': 'Habitat', 'units_required': 'Units Required'})
+                            st.dataframe(display_demand, use_container_width=True, hide_index=True)
+                
+                # Show allocation details
+                allocations = db.get_allocations_for_submission(st.session_state.selected_quote_id)
+                if not allocations.empty:
+                    st.markdown("##### Allocation Details")
+                    alloc_display = allocations[['bank_name', 'supply_habitat', 'units_supplied', 'unit_price', 'cost']].copy()
+                    alloc_display['unit_price'] = alloc_display['unit_price'].apply(lambda x: f"£{x:,.0f}" if pd.notna(x) else "")
+                    alloc_display['cost'] = alloc_display['cost'].apply(lambda x: f"£{x:,.0f}" if pd.notna(x) else "")
+                    alloc_display = alloc_display.rename(columns={
+                        'bank_name': 'Bank',
+                        'supply_habitat': 'Habitat',
+                        'units_supplied': 'Units',
+                        'unit_price': 'Unit Price',
+                        'cost': 'Cost'
+                    })
+                    st.dataframe(alloc_display, use_container_width=True, hide_index=True)
+                
+                # Quote acceptance section
+                st.markdown("---")
+                st.markdown("### ✅ Accept Quote & Notify Team")
+                st.info("If the client has accepted this quote, click the button below to notify our team. They will contact you to proceed with the Allocation Agreement.")
+                
+                acceptance_notes = st.text_area(
+                    "Additional notes for our team (optional):",
+                    key="acceptance_notes_input",
+                    help="Add any additional information or instructions for our team"
+                )
+                
+                if st.button("🎉 Mark Quote as Accepted & Notify Team", key="accept_quote_btn", type="primary"):
+                    try:
+                        # Get reviewer emails from secrets
+                        reviewer_emails = []
+                        try:
+                            reviewer_emails_raw = st.secrets["REVIEWER_EMAILS"]
+                            if isinstance(reviewer_emails_raw, list):
+                                reviewer_emails = [e.strip() for e in reviewer_emails_raw if e and e.strip()]
+                            elif isinstance(reviewer_emails_raw, str):
+                                reviewer_emails = [e.strip() for e in reviewer_emails_raw.split(",") if e.strip()]
+                        except KeyError:
+                            pass
+                        
+                        if not reviewer_emails:
+                            st.error("No team email addresses configured. Please contact support.")
+                        else:
+                            # Build allocation summary
+                            allocation_summary = ""
+                            if not allocations.empty:
+                                for _, row in allocations.iterrows():
+                                    allocation_summary += f"- {row['supply_habitat']}: {row['units_supplied']:.2f} units @ £{row['unit_price']:,.0f}/unit = £{row['cost']:,.0f}\n"
+                            
+                            # Send acceptance notification email
+                            email_sent, email_message = send_email_notification(
+                                to_emails=reviewer_emails,
+                                client_name=submission['client_name'],
+                                quote_total=submission.get('total_with_admin', 0) or 0,
+                                metric_file_content=None,  # No metric file needed for acceptance
+                                email_type='quote_accepted',
+                                reference_number=submission['reference_number'],
+                                site_location=submission['site_location'],
+                                promoter_name=promoter_name,
+                                submitted_by_name=submitted_by_name,
+                                contact_email=submission.get('contact_email', ''),
+                                contact_number=submission.get('contact_number', ''),
+                                notes=acceptance_notes,
+                                allocation_summary=allocation_summary,
+                                accepted_by=submitted_by_name
+                            )
+                            
+                            if email_sent:
+                                st.success("✅ Quote acceptance notification sent to our team! They will contact you shortly to proceed.")
+                                st.balloons()
+                            else:
+                                st.error(f"Failed to send notification: {email_message}")
+                                st.info("Please contact our team directly to inform them of the quote acceptance.")
+                                
+                    except Exception as e:
+                        st.error(f"Error sending acceptance notification: {e}")
+                        st.info("Please contact our team directly to inform them of the quote acceptance.")
+                
+            else:
+                st.error("Quote not found.")
+                st.session_state.selected_quote_id = None
+                
+        except Exception as e:
+            st.error(f"Error loading quote details: {e}")
+    
+    # Back to new quote button
+    st.markdown("---")
+    if st.button("📝 Submit New Quote", key="back_to_new_quote", type="secondary"):
+        st.session_state.show_my_quotes = False
+        st.session_state.selected_quote_id = None
+        st.rerun()
+    
+    st.stop()  # Don't show the quote form when viewing My Quotes
 
 # ================= CHECK IF SHOWING CONFIRMATION SCREEN =================
 if st.session_state.get('submission_complete', False):
