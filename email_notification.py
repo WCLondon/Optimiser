@@ -4,6 +4,7 @@ Email notification module for promoter submissions
 This module sends email notifications when promoters submit quotes.
 """
 
+import re
 from typing import List, Optional
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -11,6 +12,25 @@ from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 import streamlit as st
+
+
+def sanitize_email_header(value: str) -> str:
+    """
+    Sanitize a value for use in email headers to prevent header injection attacks.
+    
+    Removes newlines, carriage returns, and other control characters that could
+    be used for header injection.
+    
+    Args:
+        value: The string to sanitize
+    
+    Returns:
+        Sanitized string safe for email headers
+    """
+    if not value:
+        return ""
+    # Remove any newlines, carriage returns, and control characters
+    return re.sub(r'[\r\n\x00-\x1f\x7f]', '', str(value))
 
 
 def get_excel_mime_type(filename: str) -> tuple[str, str]:
@@ -325,7 +345,10 @@ This is an automated notification from the Wild Capital BNG Quote System.
             allocation_summary = kwargs.get('allocation_summary', '')
             accepted_by = kwargs.get('accepted_by', promoter_name)
             
-            msg['Subject'] = f"🎉 QUOTE ACCEPTED - {reference_number} - {client_name}"
+            # Sanitize user-provided data for email subject to prevent header injection
+            safe_ref = sanitize_email_header(reference_number)
+            safe_client = sanitize_email_header(client_name)
+            msg['Subject'] = f"🎉 QUOTE ACCEPTED - {safe_ref} - {safe_client}"
             
             # Build promoter details section
             promoter_section = f"- Promoter Name: {promoter_name}"

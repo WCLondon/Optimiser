@@ -318,9 +318,6 @@ if st.session_state.show_my_quotes:
     if search_btn:
         try:
             db = SubmissionsDB()
-            
-            # Build query to filter by promoter name
-            from sqlalchemy import text as sql_text
             engine = db._get_connection()
             
             query = "SELECT * FROM submissions WHERE promoter_name = %(promoter_name)s"
@@ -353,7 +350,6 @@ if st.session_state.show_my_quotes:
     if st.session_state.quote_search_results is None:
         try:
             db = SubmissionsDB()
-            from sqlalchemy import text as sql_text
             engine = db._get_connection()
             
             query = "SELECT * FROM submissions WHERE promoter_name = %(promoter_name)s ORDER BY submission_date DESC LIMIT 20"
@@ -463,13 +459,15 @@ if st.session_state.show_my_quotes:
                     st.markdown("##### Habitat Requirements")
                     demand_data = submission['demand_habitats']
                     if isinstance(demand_data, str):
-                        import json
                         demand_data = json.loads(demand_data)
                     if demand_data:
                         demand_df = pd.DataFrame(demand_data)
                         # Select and rename columns for display
                         if 'habitat_name' in demand_df.columns:
-                            display_demand = demand_df[['habitat_name', 'units_required']].copy() if 'units_required' in demand_df.columns else demand_df[['habitat_name']].copy()
+                            if 'units_required' in demand_df.columns:
+                                display_demand = demand_df[['habitat_name', 'units_required']].copy()
+                            else:
+                                display_demand = demand_df[['habitat_name']].copy()
                             display_demand = display_demand.rename(columns={'habitat_name': 'Habitat', 'units_required': 'Units Required'})
                             st.dataframe(display_demand, use_container_width=True, hide_index=True)
                 
