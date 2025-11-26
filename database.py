@@ -4,8 +4,10 @@ Uses PostgreSQL via SQLAlchemy for persistent storage of all form submissions an
 """
 
 import json
+import hashlib
+import secrets
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Tuple
 from decimal import Decimal
 import pandas as pd
 import numpy as np
@@ -13,6 +15,43 @@ from sqlalchemy import text, Table, MetaData, Column, Integer, String, Float, Da
 from sqlalchemy.dialects.postgresql import JSONB
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from db import DatabaseConnection
+
+
+def hash_password(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
+    """
+    Hash a password using SHA256 with salt.
+    
+    Args:
+        password: The plain text password to hash
+        salt: Optional salt. If not provided, generates a new random salt.
+    
+    Returns:
+        Tuple of (password_hash, salt)
+    """
+    if salt is None:
+        salt = secrets.token_hex(32)
+    
+    # Combine password and salt, then hash
+    salted_password = f"{password}{salt}"
+    password_hash = hashlib.sha256(salted_password.encode('utf-8')).hexdigest()
+    
+    return password_hash, salt
+
+
+def verify_password(password: str, stored_hash: str, salt: str) -> bool:
+    """
+    Verify a password against a stored hash.
+    
+    Args:
+        password: The plain text password to verify
+        stored_hash: The stored password hash
+        salt: The salt used when hashing
+    
+    Returns:
+        True if password matches, False otherwise
+    """
+    computed_hash, _ = hash_password(password, salt)
+    return secrets.compare_digest(computed_hash, stored_hash)
 
 
 def sanitize_for_db(value: Any) -> Any:
@@ -209,6 +248,30 @@ class SubmissionsDB:
                             ALTER TABLE submissions ADD COLUMN manual_area_habitat_entries JSONB;
                         END IF;
                     END $$;
+                """))
+        except Exception:
+            # Column might already exist
+            pass
+        
+        # Add submitted_by_username column to track individual submitter (separate from promoter_name)
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'submissions' 
+                            AND column_name = 'submitted_by_username'
+                        ) THEN
+                            ALTER TABLE submissions ADD COLUMN submitted_by_username TEXT;
+                        END IF;
+                    END $$;
+                """))
+                # Create index for submitted_by_username
+                conn.execute(text("""
+                    CREATE INDEX IF NOT EXISTS idx_submissions_submitted_by 
+                    ON submissions(submitted_by_username)
                 """))
         except Exception:
             # Column might already exist
@@ -502,6 +565,10 @@ class SubmissionsDB:
                 CREATE TABLE IF NOT EXISTS introducers (
                     id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
+                    username TEXT UNIQUE,
+                    password_hash TEXT,
+                    password_salt TEXT,
+                    parent_introducer_id INTEGER REFERENCES introducers(id),
                     discount_type TEXT NOT NULL CHECK(discount_type IN ('tier_up', 'percentage', 'no_discount')),
                     discount_value FLOAT NOT NULL,
                     created_date TIMESTAMP NOT NULL,
@@ -537,10 +604,60 @@ class SubmissionsDB:
                 # Table might not exist yet or constraint already correct
                 pass
             
+            # Add username, password_hash, password_salt, and parent_introducer_id columns if they don't exist
+            try:
+                conn.execute(text("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'introducers' AND column_name = 'username'
+                        ) THEN
+                            ALTER TABLE introducers ADD COLUMN username TEXT UNIQUE;
+                        END IF;
+                        
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'introducers' AND column_name = 'password_hash'
+                        ) THEN
+                            ALTER TABLE introducers ADD COLUMN password_hash TEXT;
+                        END IF;
+                        
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'introducers' AND column_name = 'password_salt'
+                        ) THEN
+                            ALTER TABLE introducers ADD COLUMN password_salt TEXT;
+                        END IF;
+                        
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'introducers' AND column_name = 'parent_introducer_id'
+                        ) THEN
+                            ALTER TABLE introducers ADD COLUMN parent_introducer_id INTEGER REFERENCES introducers(id);
+                        END IF;
+                    END $$;
+                """))
+            except Exception:
+                # Columns might already exist
+                pass
+            
             # Create index for introducers
             conn.execute(text("""
                 CREATE INDEX IF NOT EXISTS idx_introducers_name 
                 ON introducers(name)
+            """))
+            
+            # Create index for username
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_introducers_username 
+                ON introducers(username)
+            """))
+            
+            # Create index for parent_introducer_id
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_introducers_parent 
+                ON introducers(parent_introducer_id)
             """))
             
             # Customers table
@@ -696,10 +813,16 @@ class SubmissionsDB:
                         suo_discount_fraction: Optional[float] = None,
                         suo_eligible_surplus: Optional[float] = None,
                         suo_usable_surplus: Optional[float] = None,
-                        suo_total_units: Optional[float] = None) -> int:
+                        suo_total_units: Optional[float] = None,
+                        submitted_by_username: Optional[str] = None) -> int:
         """
         Store a complete submission to the database.
         Returns the submission_id for reference.
+        
+        Args:
+            ...
+            submitted_by_username: Username of the individual who submitted this quote
+                                   (may differ from promoter_name for child accounts)
         
         Uses transactions and automatic retry on transient failures.
         """
@@ -755,7 +878,8 @@ class SubmissionsDB:
                         allocation_results, username,
                         promoter_name, promoter_discount_type, promoter_discount_value,
                         customer_id,
-                        suo_enabled, suo_discount_fraction, suo_eligible_surplus, suo_usable_surplus, suo_total_units
+                        suo_enabled, suo_discount_fraction, suo_eligible_surplus, suo_usable_surplus, suo_total_units,
+                        submitted_by_username
                     ) VALUES (
                         :submission_date, :client_name, :reference_number, :site_location,
                         :target_lpa, :target_nca, :target_lat, :target_lon,
@@ -766,7 +890,8 @@ class SubmissionsDB:
                         :allocation_results, :username,
                         :promoter_name, :promoter_discount_type, :promoter_discount_value,
                         :customer_id,
-                        :suo_enabled, :suo_discount_fraction, :suo_eligible_surplus, :suo_usable_surplus, :suo_total_units
+                        :suo_enabled, :suo_discount_fraction, :suo_eligible_surplus, :suo_usable_surplus, :suo_total_units,
+                        :submitted_by_username
                     ) RETURNING id
                 """), {
                     "submission_date": submission_date,
@@ -799,7 +924,8 @@ class SubmissionsDB:
                     "suo_discount_fraction": float(suo_discount_fraction) if suo_discount_fraction is not None else None,
                     "suo_eligible_surplus": float(suo_eligible_surplus) if suo_eligible_surplus is not None else None,
                     "suo_usable_surplus": float(suo_usable_surplus) if suo_usable_surplus is not None else None,
-                    "suo_total_units": float(suo_total_units) if suo_total_units is not None else None
+                    "suo_total_units": float(suo_total_units) if suo_total_units is not None else None,
+                    "submitted_by_username": submitted_by_username
                 })
                 
                 submission_id = result.fetchone()[0]
@@ -980,21 +1106,50 @@ class SubmissionsDB:
         retry=retry_if_exception_type((Exception,)),
         reraise=True
     )
-    def add_introducer(self, name: str, discount_type: str, discount_value: float) -> int:
-        """Add a new introducer/promoter."""
+    def add_introducer(self, name: str, discount_type: str, discount_value: float,
+                       username: Optional[str] = None, password: Optional[str] = None,
+                       parent_introducer_id: Optional[int] = None) -> int:
+        """
+        Add a new introducer/promoter with optional username/password.
+        
+        Args:
+            name: Display name for the introducer
+            discount_type: Type of discount ('tier_up', 'percentage', 'no_discount')
+            discount_value: Value of discount
+            username: Optional login username
+            password: Optional plain text password (will be hashed)
+            parent_introducer_id: Optional ID of parent introducer (for child accounts)
+        
+        Returns:
+            ID of the created introducer
+        """
         engine = self._get_connection()
         
         now = datetime.now()
+        
+        # Hash password if provided
+        password_hash = None
+        password_salt = None
+        if password:
+            password_hash, password_salt = hash_password(password)
         
         with engine.connect() as conn:
             trans = conn.begin()
             try:
                 result = conn.execute(text("""
-                    INSERT INTO introducers (name, discount_type, discount_value, created_date, updated_date)
-                    VALUES (:name, :discount_type, :discount_value, :created_date, :updated_date)
+                    INSERT INTO introducers (name, username, password_hash, password_salt, 
+                                            parent_introducer_id,
+                                            discount_type, discount_value, created_date, updated_date)
+                    VALUES (:name, :username, :password_hash, :password_salt,
+                            :parent_introducer_id,
+                            :discount_type, :discount_value, :created_date, :updated_date)
                     RETURNING id
                 """), {
                     "name": name,
+                    "username": username,
+                    "password_hash": password_hash,
+                    "password_salt": password_salt,
+                    "parent_introducer_id": parent_introducer_id,
                     "discount_type": discount_type,
                     "discount_value": discount_value,
                     "created_date": now,
@@ -1016,6 +1171,20 @@ class SubmissionsDB:
             rows = result.fetchall()
             
             return [dict(row._mapping) for row in rows]
+    
+    def get_introducer_by_id(self, introducer_id: int) -> Optional[Dict[str, Any]]:
+        """Get an introducer by ID."""
+        engine = self._get_connection()
+        with engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT * FROM introducers WHERE id = :id"),
+                {"id": introducer_id}
+            )
+            row = result.fetchone()
+            
+            if row:
+                return dict(row._mapping)
+            return None
     
     def get_introducer_by_name(self, name: str) -> Optional[Dict[str, Any]]:
         """Get an introducer by name."""
@@ -1083,6 +1252,153 @@ class SubmissionsDB:
                 )
                 
                 trans.commit()
+            except Exception as e:
+                trans.rollback()
+                raise
+    
+    def get_introducer_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        """Get an introducer by username."""
+        engine = self._get_connection()
+        with engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT * FROM introducers WHERE username = :username"),
+                {"username": username}
+            )
+            row = result.fetchone()
+            
+            if row:
+                return dict(row._mapping)
+            return None
+    
+    def authenticate_introducer(self, username: str, password: str) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        """
+        Authenticate an introducer by username and password.
+        
+        Supports both:
+        1. New secure authentication with username + password_hash/salt
+        2. Legacy authentication with name as username + plain text password column
+        
+        Args:
+            username: The username (or name for legacy auth) to authenticate
+            password: The plain text password
+        
+        Returns:
+            Tuple of (success: bool, introducer_info: dict or None)
+        """
+        # First try to find by username (new method)
+        introducer = self.get_introducer_by_username(username)
+        
+        if introducer:
+            # Try new secure password hash first
+            stored_hash = introducer.get('password_hash')
+            stored_salt = introducer.get('password_salt')
+            
+            if stored_hash and stored_salt:
+                if verify_password(password, stored_hash, stored_salt):
+                    return True, introducer
+                # If hash verification fails, don't fall back to plain text
+                return False, None
+        
+        # Fall back to legacy authentication: name as username, plain text password
+        introducer = self.get_introducer_by_name(username)
+        
+        if introducer:
+            stored_password = introducer.get('password')
+            # Use constant-time comparison to prevent timing attacks
+            if stored_password and secrets.compare_digest(stored_password, password):
+                return True, introducer
+        
+        return False, None
+    
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((Exception,)),
+        reraise=True
+    )
+    def update_introducer_password(self, introducer_id: int, new_password: str) -> bool:
+        """
+        Update an introducer's password.
+        
+        Args:
+            introducer_id: ID of the introducer
+            new_password: New plain text password (will be hashed)
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        engine = self._get_connection()
+        
+        # Hash the new password
+        password_hash, password_salt = hash_password(new_password)
+        now = datetime.now()
+        
+        with engine.connect() as conn:
+            trans = conn.begin()
+            try:
+                conn.execute(text("""
+                    UPDATE introducers 
+                    SET password_hash = :password_hash, 
+                        password_salt = :password_salt,
+                        updated_date = :updated_date
+                    WHERE id = :id
+                """), {
+                    "password_hash": password_hash,
+                    "password_salt": password_salt,
+                    "updated_date": now,
+                    "id": introducer_id
+                })
+                
+                trans.commit()
+                return True
+            except Exception as e:
+                trans.rollback()
+                raise
+    
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((Exception,)),
+        reraise=True
+    )
+    def set_introducer_credentials(self, introducer_id: int, username: str, password: str) -> bool:
+        """
+        Set username and password for an existing introducer.
+        
+        Args:
+            introducer_id: ID of the introducer
+            username: Login username
+            password: Plain text password (will be hashed)
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        engine = self._get_connection()
+        
+        # Hash the password
+        password_hash, password_salt = hash_password(password)
+        now = datetime.now()
+        
+        with engine.connect() as conn:
+            trans = conn.begin()
+            try:
+                conn.execute(text("""
+                    UPDATE introducers 
+                    SET username = :username,
+                        password_hash = :password_hash, 
+                        password_salt = :password_salt,
+                        updated_date = :updated_date
+                    WHERE id = :id
+                """), {
+                    "username": username,
+                    "password_hash": password_hash,
+                    "password_salt": password_salt,
+                    "updated_date": now,
+                    "id": introducer_id
+                })
+                
+                trans.commit()
+                return True
             except Exception as e:
                 trans.rollback()
                 raise
