@@ -311,7 +311,9 @@ if st.session_state.get('submission_complete', False):
             st.write(f"**Reference:** {submission_data['reference_number']}")
             st.write(f"**Location:** {submission_data['location']}")
         with col2:
-            st.write(f"**Contact:** {submission_data['contact_email']}")
+            st.write(f"**Email:** {submission_data['contact_email']}")
+            if submission_data.get('contact_number'):
+                st.write(f"**Phone:** {submission_data['contact_number']}")
             st.write(f"**Metric Type:** {metric_type_display}")
             st.write(f"**Status:** Pending Manual Review")
     else:
@@ -346,7 +348,9 @@ if st.session_state.get('submission_complete', False):
             st.write(f"**Client:** {submission_data['client_name']}")
             st.write(f"**Reference:** {submission_data['reference_number']}")
             st.write(f"**Location:** {submission_data['location']}")
-            st.write(f"**Contact:** {submission_data['contact_email']}")
+            st.write(f"**Email:** {submission_data['contact_email']}")
+            if submission_data.get('contact_number'):
+                st.write(f"**Phone:** {submission_data['contact_number']}")
         with col2:
             # Only show quote total for quotes under £50,000
             quote_total_val = submission_data.get('quote_total', 0)
@@ -479,6 +483,9 @@ with st.form("quote_form"):
     
     contact_email = st.text_input("Contact Email", key="email", 
                                    help="Optional - leave blank if client details not available")
+    
+    contact_number = st.text_input("Contact Number", key="phone",
+                                   help="Optional - client phone number for follow-up")
     
     st.subheader("📍 Site Location")
     st.caption("Provide address/postcode OR select LPA/NCA")
@@ -621,6 +628,7 @@ if submitted:
                         promoter_name=promoter_name,
                         submitted_by_name=submitted_by_name,
                         contact_email=contact_email if contact_email else promoter_name,
+                        contact_number=contact_number,
                         notes=notes,
                         email_type='manual_review',
                         metric_type=metric_type
@@ -640,6 +648,7 @@ if submitted:
                 'reference_number': reference_number,
                 'location': location,
                 'contact_email': contact_email,
+                'contact_number': contact_number,
                 'quote_total': None,  # No quote for manual review
                 'admin_fee': None,
                 'contract_size': None,
@@ -1096,7 +1105,9 @@ if submitted:
                 promoter_name=promoter_name,
                 promoter_discount_type=discount_type,
                 promoter_discount_value=discount_value,
-                submitted_by_username=submitted_by_username  # Track individual submitter
+                submitted_by_username=submitted_by_username,  # Track individual submitter
+                contact_email=contact_email,
+                contact_number=contact_number
             )
         except Exception as e:
             pass  # Database save failed, but continue
@@ -1174,6 +1185,7 @@ if submitted:
                         promoter_name=promoter_name,
                         submitted_by_name=submitted_by_name,  # Individual submitter name
                         contact_email=contact_email if contact_email else promoter_name,
+                        contact_number=contact_number,
                         notes=notes,
                         email_type='quote_notification',
                         csv_allocation_content=csv_allocation_content
@@ -1192,6 +1204,7 @@ if submitted:
                         promoter_name=promoter_name,
                         submitted_by_name=submitted_by_name,  # Individual submitter name
                         contact_email=contact_email if contact_email else promoter_name,
+                        contact_number=contact_number,
                         notes=notes,
                         email_type='full_quote',
                         email_html_body=email_html_content,
@@ -1218,6 +1231,7 @@ if submitted:
             'reference_number': reference_number,
             'location': postcode or site_address,
             'contact_email': contact_email,
+            'contact_number': contact_number,
             'quote_total': quote_total,
             'admin_fee': admin_fee,
             'contract_size': contract_size,

@@ -87,6 +87,7 @@ def send_email_notification(to_emails: List[str],
         promoter_name = kwargs.get('promoter_name', 'N/A')
         submitted_by_name = kwargs.get('submitted_by_name', None)  # Individual submitter name
         contact_email = kwargs.get('contact_email', 'N/A')
+        contact_number = kwargs.get('contact_number', '')
         notes = kwargs.get('notes', '')
         
         # Create message
@@ -112,6 +113,9 @@ def send_email_notification(to_emails: List[str],
             if submitted_by_name and submitted_by_name != promoter_name:
                 promoter_section_text += f"\n- Submitted By: {submitted_by_name}"
             
+            # Build contact number line if provided
+            contact_number_text = f"\n- Contact Number: {contact_number}" if contact_number else ""
+            
             # Create the wrapper email to reviewer (plain text)
             reviewer_instructions = f"""
 QUOTE READY FOR REVIEW AND FORWARDING
@@ -119,7 +123,7 @@ QUOTE READY FOR REVIEW AND FORWARDING
 
 CUSTOMER DETAILS:
 - Client Name: {client_name}
-- Contact Email: {contact_email}
+- Contact Email: {contact_email}{contact_number_text}
 - Location: {site_location}
 - Quote Total: £{total_with_admin:,.0f} + VAT
 - Reference Number: {reference_number}
@@ -197,6 +201,9 @@ Wild Capital Team
             if submitted_by_name and submitted_by_name != promoter_name:
                 promoter_section_html += f"\n            <li><strong>Submitted By:</strong> {submitted_by_name}</li>"
             
+            # Build contact number HTML line if provided
+            contact_number_html = f"\n            <li><strong>Contact Number:</strong> {contact_number}</li>" if contact_number else ""
+            
             # Create HTML version with reviewer instructions and formatted table
             reviewer_instructions_html = f"""
 <div style="font-family: Arial, sans-serif; font-size: 12px; line-height: 1.6; background-color: #f9f9f9; padding: 20px; margin-bottom: 20px; border: 2px solid #2A514A; border-radius: 5px;">
@@ -206,7 +213,7 @@ Wild Capital Team
         <h3 style="color: #2A514A; margin-top: 0;">Customer Details:</h3>
         <ul style="list-style: none; padding-left: 0;">
             <li><strong>Client Name:</strong> {client_name}</li>
-            <li><strong>Contact Email:</strong> {contact_email}</li>
+            <li><strong>Contact Email:</strong> {contact_email}</li>{contact_number_html}
             <li><strong>Location:</strong> {site_location}</li>
             <li><strong>Quote Total:</strong> £{total_with_admin:,.0f} + VAT</li>
             <li><strong>Reference Number:</strong> <span style="background-color: #90EE90; padding: 2px 8px;">{reference_number}</span></li>
@@ -272,6 +279,9 @@ Wild Capital Team
             if submitted_by_name and submitted_by_name != promoter_name:
                 promoter_section += f"\n- Submitted By: {submitted_by_name}"
             
+            # Build contact number line if provided
+            contact_number_line = f"\n- Contact Number: {contact_number}" if contact_number else ""
+            
             # Create email body
             body = f"""
 Manual Quote Request - {metric_type}
@@ -284,7 +294,7 @@ CLIENT DETAILS:
 - Client Name: {client_name}
 - Reference: {reference_number}
 - Location: {site_location}
-- Contact Email: {contact_email}
+- Contact Email: {contact_email}{contact_number_line}
 
 PROMOTER DETAILS:
 {promoter_section}
@@ -319,6 +329,9 @@ This is an automated notification from the Wild Capital BNG Quote System.
             if submitted_by_name and submitted_by_name != promoter_name:
                 promoter_section += f"\n- Submitted By: {submitted_by_name}"
             
+            # Build contact number line if provided
+            contact_number_line = f"\n- Contact Number: {contact_number}" if contact_number else ""
+            
             # Create email body
             body = f"""
 New BNG Quote Request Submitted
@@ -328,7 +341,7 @@ CLIENT DETAILS:
 - Client Name: {client_name}
 - Reference: {reference_number}
 - Location: {site_location}
-- Contact Email: {contact_email}
+- Contact Email: {contact_email}{contact_number_line}
 - Quote Total: £{quote_total:,.2f}
 
 PROMOTER DETAILS:

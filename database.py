@@ -277,6 +277,33 @@ class SubmissionsDB:
             # Column might already exist
             pass
         
+        # Add contact_email and contact_number columns to submissions table
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'submissions' 
+                            AND column_name = 'contact_email'
+                        ) THEN
+                            ALTER TABLE submissions ADD COLUMN contact_email TEXT;
+                        END IF;
+                        
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'submissions' 
+                            AND column_name = 'contact_number'
+                        ) THEN
+                            ALTER TABLE submissions ADD COLUMN contact_number TEXT;
+                        END IF;
+                    END $$;
+                """))
+        except Exception:
+            # Columns might already exist
+            pass
+        
         # Drop the old view if it exists (replaced with physical table)
         try:
             with engine.begin() as conn:
@@ -814,7 +841,9 @@ class SubmissionsDB:
                         suo_eligible_surplus: Optional[float] = None,
                         suo_usable_surplus: Optional[float] = None,
                         suo_total_units: Optional[float] = None,
-                        submitted_by_username: Optional[str] = None) -> int:
+                        submitted_by_username: Optional[str] = None,
+                        contact_email: Optional[str] = None,
+                        contact_number: Optional[str] = None) -> int:
         """
         Store a complete submission to the database.
         Returns the submission_id for reference.
@@ -823,6 +852,8 @@ class SubmissionsDB:
             ...
             submitted_by_username: Username of the individual who submitted this quote
                                    (may differ from promoter_name for child accounts)
+            contact_email: Client's email address for contact
+            contact_number: Client's phone number for contact
         
         Uses transactions and automatic retry on transient failures.
         """
@@ -879,7 +910,7 @@ class SubmissionsDB:
                         promoter_name, promoter_discount_type, promoter_discount_value,
                         customer_id,
                         suo_enabled, suo_discount_fraction, suo_eligible_surplus, suo_usable_surplus, suo_total_units,
-                        submitted_by_username
+                        submitted_by_username, contact_email, contact_number
                     ) VALUES (
                         :submission_date, :client_name, :reference_number, :site_location,
                         :target_lpa, :target_nca, :target_lat, :target_lon,
@@ -891,7 +922,7 @@ class SubmissionsDB:
                         :promoter_name, :promoter_discount_type, :promoter_discount_value,
                         :customer_id,
                         :suo_enabled, :suo_discount_fraction, :suo_eligible_surplus, :suo_usable_surplus, :suo_total_units,
-                        :submitted_by_username
+                        :submitted_by_username, :contact_email, :contact_number
                     ) RETURNING id
                 """), {
                     "submission_date": submission_date,
@@ -925,7 +956,9 @@ class SubmissionsDB:
                     "suo_eligible_surplus": float(suo_eligible_surplus) if suo_eligible_surplus is not None else None,
                     "suo_usable_surplus": float(suo_usable_surplus) if suo_usable_surplus is not None else None,
                     "suo_total_units": float(suo_total_units) if suo_total_units is not None else None,
-                    "submitted_by_username": submitted_by_username
+                    "submitted_by_username": submitted_by_username,
+                    "contact_email": contact_email,
+                    "contact_number": contact_number
                 })
                 
                 submission_id = result.fetchone()[0]
