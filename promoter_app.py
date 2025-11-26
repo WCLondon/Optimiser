@@ -550,6 +550,14 @@ if submitted:
         st.error("❌ Please enter a valid email address")
         st.stop()
     
+    # Validate phone number format if provided (basic validation - digits, spaces, +, -, parentheses)
+    if contact_number:
+        # Remove common formatting characters for validation
+        cleaned_number = contact_number.replace(' ', '').replace('-', '').replace('(', '').replace(')', '').replace('+', '')
+        if not cleaned_number.isdigit() or len(cleaned_number) < 7:
+            st.error("❌ Please enter a valid contact number (at least 7 digits)")
+            st.stop()
+    
     # Build client name - use promoter name as fallback
     if first_name and surname:
         client_name = f"{title} {first_name} {surname}" if title and title != "N/A" else f"{first_name} {surname}"
