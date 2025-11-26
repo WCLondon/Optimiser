@@ -280,125 +280,161 @@ if st.session_state.get('submission_complete', False):
     
     submission_data = st.session_state.submission_data
     
-    st.success("✅ **Quote request submitted successfully!**")
+    # Check if this is a manual review submission
+    is_manual_review = submission_data.get('is_manual_review', False)
     
-    st.markdown("---")
-    st.subheader("📋 Submission Summary")
-    
-    # Show email notification status prominently
-    email_sent = submission_data.get('email_sent', False)
-    email_status = submission_data.get('email_status_message', '')
-    email_debug_info = submission_data.get('email_debug_info', [])
-    
-    if email_sent:
-        st.success(f"✅ **Email Notification Sent:** {email_status}")
-    elif email_status:
-        st.warning(f"⚠️ **Email Notification Issue:** {email_status}")
-        st.info("💡 Your quote was saved successfully, but the email notification could not be sent. Please contact your administrator to check the email configuration.")
+    if is_manual_review:
+        # Manual review confirmation screen
+        metric_type_display = submission_data.get('metric_type', 'Unknown')
+        st.success(f"✅ **{metric_type_display} submitted for manual review!**")
         
-        # Show debug information in an expander
-        if email_debug_info:
-            with st.expander("🔍 Email Debug Information", expanded=True):
-                st.markdown("**Diagnostic Information:**")
-                for info in email_debug_info:
-                    st.text(info)
+        st.markdown("---")
+        st.subheader("📋 Submission Summary")
+        
+        st.info(f"ℹ️ Your **{metric_type_display}** has been sent to our team for manual processing. You will be contacted with a quote once the review is complete.")
+        
+        # Show email notification status
+        email_sent = submission_data.get('email_sent', False)
+        email_status = submission_data.get('email_status_message', '')
+        
+        if email_sent:
+            st.success(f"✅ **Notification Sent:** Our team has been notified of your request.")
+        elif email_status:
+            st.warning(f"⚠️ **Email Notification Issue:** {email_status}")
+            st.info("💡 Your request was logged, but the email notification could not be sent. Please contact your administrator.")
+        
+        st.markdown("---")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write(f"**Client:** {submission_data['client_name']}")
+            st.write(f"**Reference:** {submission_data['reference_number']}")
+            st.write(f"**Location:** {submission_data['location']}")
+        with col2:
+            st.write(f"**Contact:** {submission_data['contact_email']}")
+            st.write(f"**Metric Type:** {metric_type_display}")
+            st.write(f"**Status:** Pending Manual Review")
+    else:
+        # Standard quote confirmation screen
+        st.success("✅ **Quote request submitted successfully!**")
+        
+        st.markdown("---")
+        st.subheader("📋 Submission Summary")
+        
+        # Show email notification status prominently
+        email_sent = submission_data.get('email_sent', False)
+        email_status = submission_data.get('email_status_message', '')
+        email_debug_info = submission_data.get('email_debug_info', [])
+        
+        if email_sent:
+            st.success(f"✅ **Email Notification Sent:** {email_status}")
+        elif email_status:
+            st.warning(f"⚠️ **Email Notification Issue:** {email_status}")
+            st.info("💡 Your quote was saved successfully, but the email notification could not be sent. Please contact your administrator to check the email configuration.")
+            
+            # Show debug information in an expander
+            if email_debug_info:
+                with st.expander("🔍 Email Debug Information", expanded=True):
+                    st.markdown("**Diagnostic Information:**")
+                    for info in email_debug_info:
+                        st.text(info)
+        
+        st.markdown("---")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write(f"**Client:** {submission_data['client_name']}")
+            st.write(f"**Reference:** {submission_data['reference_number']}")
+            st.write(f"**Location:** {submission_data['location']}")
+            st.write(f"**Contact:** {submission_data['contact_email']}")
+        with col2:
+            # Only show quote total for quotes under £50,000
+            quote_total_val = submission_data.get('quote_total', 0)
+            if quote_total_val < 50000:
+                st.write(f"**Total Cost:** £{round(submission_data['quote_total']):,.0f}")
+                st.write(f"**Admin Fee:** £{submission_data['admin_fee']:,.0f}")
+            else:
+                st.write(f"**Status:** Under Review")
+                st.info("This quote is £50,000 or over and is under review. You will be contacted with pricing details.")
+            st.write(f"**Contract Size:** {submission_data['contract_size']}")
+            st.write(f"**Habitats:** {submission_data['num_habitats']}")
     
-    st.markdown("---")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write(f"**Client:** {submission_data['client_name']}")
-        st.write(f"**Reference:** {submission_data['reference_number']}")
-        st.write(f"**Location:** {submission_data['location']}")
-        st.write(f"**Contact:** {submission_data['contact_email']}")
-    with col2:
-        # Only show quote total for quotes under £50,000
+        # Display SUO discount if applicable (only for standard quotes)
+        if submission_data.get('suo_applicable', False) and submission_data.get('suo_results'):
+            st.markdown("---")
+            st.markdown("### 🎯 Surplus Uplift Offset (SUO) - Cost Discount Applied")
+            
+            suo_results = submission_data['suo_results']
+            discount_pct = suo_results['discount_fraction'] * 100
+            
+            st.success(f"✅ SUO Discount Applied: {discount_pct:.1f}% cost reduction based on eligible on-site surplus")
+            
+            # Show SUO summary metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Eligible Surplus", f"{suo_results['eligible_surplus']:.2f} units", 
+                         help="Total surplus from Medium+ distinctiveness habitats")
+            with col2:
+                st.metric("Usable (50% headroom)", f"{suo_results['usable_surplus']:.2f} units",
+                         help="50% of eligible surplus available for offset")
+            with col3:
+                st.metric("Discount Applied", f"{discount_pct:.1f}%",
+                         help="Percentage discount on allocation costs")
+        
+        # PDF download button - show prominently for quotes under £50,000
         quote_total_val = submission_data.get('quote_total', 0)
         if quote_total_val < 50000:
-            st.write(f"**Total Cost:** £{round(submission_data['quote_total']):,.0f}")
-            st.write(f"**Admin Fee:** £{submission_data['admin_fee']:,.0f}")
-        else:
-            st.write(f"**Status:** Under Review")
-            st.info("This quote is £50,000 or over and is under review. You will be contacted with pricing details.")
-        st.write(f"**Contract Size:** {submission_data['contract_size']}")
-        st.write(f"**Habitats:** {submission_data['num_habitats']}")
-    
-    # Display SUO discount if applicable
-    if submission_data.get('suo_applicable', False) and submission_data.get('suo_results'):
-        st.markdown("---")
-        st.markdown("### 🎯 Surplus Uplift Offset (SUO) - Cost Discount Applied")
-        
-        suo_results = submission_data['suo_results']
-        discount_pct = suo_results['discount_fraction'] * 100
-        
-        st.success(f"✅ SUO Discount Applied: {discount_pct:.1f}% cost reduction based on eligible on-site surplus")
-        
-        # Show SUO summary metrics
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Eligible Surplus", f"{suo_results['eligible_surplus']:.2f} units", 
-                     help="Total surplus from Medium+ distinctiveness habitats")
-        with col2:
-            st.metric("Usable (50% headroom)", f"{suo_results['usable_surplus']:.2f} units",
-                     help="50% of eligible surplus available for offset")
-        with col3:
-            st.metric("Discount Applied", f"{discount_pct:.1f}%",
-                     help="Percentage discount on allocation costs")
-    
-    # PDF download button - show prominently for quotes under £50,000
-    quote_total_val = submission_data.get('quote_total', 0)
-    if quote_total_val < 50000:
-        st.markdown("---")
-        
-        pdf_data = submission_data.get('pdf_content')
-        pdf_debug = submission_data.get('pdf_debug_message', '')
-        
-        if pdf_data:
-            # Check if it's an actual PDF or an error/fallback message
-            if isinstance(pdf_data, bytes) and len(pdf_data) > 0:
-                # Check if it's text content (error message) or actual PDF binary
-                try:
-                    # Try to decode as text - if it works and contains error markers, it's not a real PDF
-                    text_content = pdf_data.decode('utf-8')
-                    # Only show error message if it's explicitly an error
-                    if text_content.startswith('PDF generation error:'):
-                        st.error("⚠️ There was an error generating the PDF. Our team has been notified and will email you a copy shortly.")
-                        if pdf_debug:
-                            st.code(pdf_debug, language="text")
-                    else:
-                        # It decoded as text but doesn't have error marker - might be fallback text
-                        # Show as downloadable text file
+            st.markdown("---")
+            
+            pdf_data = submission_data.get('pdf_content')
+            pdf_debug = submission_data.get('pdf_debug_message', '')
+            
+            if pdf_data:
+                # Check if it's an actual PDF or an error/fallback message
+                if isinstance(pdf_data, bytes) and len(pdf_data) > 0:
+                    # Check if it's text content (error message) or actual PDF binary
+                    try:
+                        # Try to decode as text - if it works and contains error markers, it's not a real PDF
+                        text_content = pdf_data.decode('utf-8')
+                        # Only show error message if it's explicitly an error
+                        if text_content.startswith('PDF generation error:'):
+                            st.error("⚠️ There was an error generating the PDF. Our team has been notified and will email you a copy shortly.")
+                            if pdf_debug:
+                                st.code(pdf_debug, language="text")
+                        else:
+                            # It decoded as text but doesn't have error marker - might be fallback text
+                            # Show as downloadable text file
+                            st.download_button(
+                                label="📄 Download Quote",
+                                data=pdf_data,
+                                file_name=f"BNG_Quote_{submission_data['client_name'].replace(' ', '_')}.txt",
+                                mime="text/plain",
+                                type="primary"
+                            )
+                            if pdf_debug:
+                                with st.expander("Debug Information"):
+                                    st.code(pdf_debug, language="text")
+                    except UnicodeDecodeError:
+                        # It's binary data (actual PDF) - this is what we want!
                         st.download_button(
-                            label="📄 Download Quote",
+                            label="📄 Download PDF Quote",
                             data=pdf_data,
-                            file_name=f"BNG_Quote_{submission_data['client_name'].replace(' ', '_')}.txt",
-                            mime="text/plain",
+                            file_name=f"BNG_Quote_{submission_data['client_name'].replace(' ', '_')}.pdf",
+                            mime="application/pdf",
                             type="primary"
                         )
-                        if pdf_debug:
-                            with st.expander("Debug Information"):
-                                st.code(pdf_debug, language="text")
-                except UnicodeDecodeError:
-                    # It's binary data (actual PDF) - this is what we want!
-                    st.download_button(
-                        label="📄 Download PDF Quote",
-                        data=pdf_data,
-                        file_name=f"BNG_Quote_{submission_data['client_name'].replace(' ', '_')}.pdf",
-                        mime="application/pdf",
-                        type="primary"
-                    )
+                else:
+                    st.warning("⚠️ PDF generation encountered an issue. A copy will be emailed to you shortly.")
+                    # Show debug information
+                    if pdf_debug:
+                        st.code(pdf_debug, language="text")
             else:
-                st.warning("⚠️ PDF generation encountered an issue. A copy will be emailed to you shortly.")
+                # No PDF content at all - show informative message
+                st.warning("⚠️ PDF could not be generated. Please contact support or check the logs. A copy will be emailed to you.")
                 # Show debug information
                 if pdf_debug:
                     st.code(pdf_debug, language="text")
-        else:
-            # No PDF content at all - show informative message
-            st.warning("⚠️ PDF could not be generated. Please contact support or check the logs. A copy will be emailed to you.")
-            # Show debug information
-            if pdf_debug:
-                st.code(pdf_debug, language="text")
-                st.code(submission_data['pdf_debug_message'], language=None)
+                    st.code(submission_data['pdf_debug_message'], language=None)
     
     st.markdown("---")
     
@@ -413,6 +449,22 @@ if st.session_state.get('submission_complete', False):
 
 # ================= QUOTE REQUEST FORM =================
 with st.form("quote_form"):
+    # Metric Type Selection at the top
+    st.subheader("📊 Metric Type")
+    metric_type = st.radio(
+        "Select the type of BNG metric file you are uploading:",
+        options=["Standard Metric", "Small Sites Metric", "Nutrient Neutrality Metric"],
+        index=0,
+        key="metric_type",
+        help="Select 'Standard Metric' for automatic quote generation. Small Sites and Nutrient Neutrality metrics require manual processing."
+    )
+    
+    # Show info message for manual processing types
+    if metric_type in ["Small Sites Metric", "Nutrient Neutrality Metric"]:
+        st.info(f"ℹ️ **{metric_type}** requires manual processing. Your request will be sent to our team for a manual quote.")
+    
+    st.markdown("---")
+    
     st.subheader("👤 Client Details")
     
     col1, col2, col3 = st.columns([1, 2, 2])
@@ -516,6 +568,99 @@ if submitted:
         # Will be determined by geocoding later
         target_lpa = None
         target_nca = None
+    
+    # ===== HANDLE MANUAL METRIC TYPES =====
+    # For Small Sites Metric and Nutrient Neutrality Metric, skip processing and send for manual review
+    if metric_type in ["Small Sites Metric", "Nutrient Neutrality Metric"]:
+        st.markdown("---")
+        st.markdown("### 📨 Submitting for Manual Review")
+        
+        loading_placeholder = st.empty()
+        progress_bar = st.progress(0)
+        
+        try:
+            loading_placeholder.info("⏳ Preparing your request for manual review...")
+            progress_bar.progress(30)
+            
+            # Generate reference number for tracking
+            db = SubmissionsDB()
+            reference_number = db.get_next_bng_reference()
+            
+            progress_bar.progress(50)
+            loading_placeholder.info("⏳ Sending notification to our team...")
+            
+            # Send manual review email
+            email_sent = False
+            email_status_message = ""
+            email_debug_info = []
+            
+            try:
+                # Get reviewer emails from secrets
+                try:
+                    reviewer_emails_raw = st.secrets["REVIEWER_EMAILS"]
+                except KeyError:
+                    reviewer_emails_raw = st.secrets.get("REVIEWER_EMAILS", [])
+                
+                # Handle both array and string formats
+                if isinstance(reviewer_emails_raw, list):
+                    reviewer_emails = [e.strip() for e in reviewer_emails_raw if e and e.strip()]
+                elif isinstance(reviewer_emails_raw, str):
+                    reviewer_emails = [e.strip() for e in reviewer_emails_raw.split(",") if e.strip()]
+                else:
+                    reviewer_emails = []
+                
+                if reviewer_emails:
+                    email_sent, email_status_message = send_email_notification(
+                        to_emails=reviewer_emails,
+                        client_name=client_name,
+                        quote_total=0,  # No quote generated for manual review
+                        metric_file_content=metric_file.getvalue(),
+                        metric_filename=f"{reference_number}_{metric_file.name}",
+                        reference_number=reference_number,
+                        site_location=location,
+                        promoter_name=promoter_name,
+                        submitted_by_name=submitted_by_name,
+                        contact_email=contact_email if contact_email else promoter_name,
+                        notes=notes,
+                        email_type='manual_review',
+                        metric_type=metric_type
+                    )
+                else:
+                    email_status_message = "No reviewer emails configured"
+            except Exception as e:
+                email_status_message = f"Email error: {str(e)}"
+            
+            progress_bar.progress(100)
+            loading_placeholder.success("✓ Request submitted for manual review!")
+            
+            # Save to session state and show confirmation
+            st.session_state.submission_complete = True
+            st.session_state.submission_data = {
+                'client_name': client_name,
+                'reference_number': reference_number,
+                'location': location,
+                'contact_email': contact_email,
+                'quote_total': None,  # No quote for manual review
+                'admin_fee': None,
+                'contract_size': None,
+                'num_habitats': None,
+                'allocation_df': pd.DataFrame(),
+                'promoter_name': promoter_name,
+                'discount_type': discount_type,
+                'discount_value': discount_value,
+                'email_sent': email_sent,
+                'email_status_message': email_status_message,
+                'email_debug_info': email_debug_info,
+                'pdf_content': None,
+                'pdf_debug_message': None,
+                'is_manual_review': True,
+                'metric_type': metric_type
+            }
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"❌ Error submitting request: {str(e)}")
+            st.stop()
     
     # ===== LOADING SCREEN =====
     st.markdown("---")

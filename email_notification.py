@@ -260,6 +260,55 @@ Wild Capital Team
             
             # Attach the alternative part to the main message
             msg.attach(msg_alternative)
+        
+        elif email_type == 'manual_review':
+            # Manual review email for Small Sites Metric or Nutrient Neutrality Metric
+            metric_type = kwargs.get('metric_type', 'Unknown Metric Type')
+            
+            msg['Subject'] = f"Manual Quote Request ({metric_type}) - {reference_number} - {client_name}"
+            
+            # Build promoter details section - include submitter if different from promoter
+            promoter_section = f"- Promoter Name: {promoter_name}"
+            if submitted_by_name and submitted_by_name != promoter_name:
+                promoter_section += f"\n- Submitted By: {submitted_by_name}"
+            
+            # Create email body
+            body = f"""
+Manual Quote Request - {metric_type}
+{'=' * (24 + len(metric_type))}
+
+⚠️ This quote requires MANUAL PROCESSING - the metric file attached is a {metric_type}
+which cannot be automatically processed by the system.
+
+CLIENT DETAILS:
+- Client Name: {client_name}
+- Reference: {reference_number}
+- Location: {site_location}
+- Contact Email: {contact_email}
+
+PROMOTER DETAILS:
+{promoter_section}
+
+"""
+            
+            if notes:
+                body += f"""
+ADDITIONAL NOTES:
+{notes}
+
+"""
+            
+            body += f"""
+ACTION REQUIRED:
+Please process this {metric_type} manually and provide a quote to the client.
+
+The metric file is attached for your review.
+
+---
+This is an automated notification from the Wild Capital BNG Quote System.
+"""
+            
+            msg.attach(MIMEText(body, 'plain'))
             
         else:
             # Simple quote notification (under £50k)
