@@ -471,22 +471,6 @@ if st.session_state.show_my_quotes:
                             display_demand = display_demand.rename(columns={'habitat_name': 'Habitat', 'units_required': 'Units Required'})
                             st.dataframe(display_demand, use_container_width=True, hide_index=True)
                 
-                # Show allocation details
-                allocations = db.get_allocations_for_submission(st.session_state.selected_quote_id)
-                if not allocations.empty:
-                    st.markdown("##### Allocation Details")
-                    alloc_display = allocations[['bank_name', 'supply_habitat', 'units_supplied', 'unit_price', 'cost']].copy()
-                    alloc_display['unit_price'] = alloc_display['unit_price'].apply(lambda x: f"£{x:,.0f}" if pd.notna(x) else "")
-                    alloc_display['cost'] = alloc_display['cost'].apply(lambda x: f"£{x:,.0f}" if pd.notna(x) else "")
-                    alloc_display = alloc_display.rename(columns={
-                        'bank_name': 'Bank',
-                        'supply_habitat': 'Habitat',
-                        'units_supplied': 'Units',
-                        'unit_price': 'Unit Price',
-                        'cost': 'Cost'
-                    })
-                    st.dataframe(alloc_display, use_container_width=True, hide_index=True)
-                
                 # Quote acceptance section
                 st.markdown("---")
                 st.markdown("### ✅ Accept Quote & Notify Team")
