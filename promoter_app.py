@@ -560,22 +560,14 @@ if st.session_state.get('submission_complete', False):
     is_manual_review = submission_data.get('is_manual_review', False)
     
     if is_manual_review:
-        # Manual review confirmation screen
-        metric_type_display = submission_data.get('metric_type', 'Unknown')
-        st.success(f"✅ **{metric_type_display} submitted for manual review!**")
+        # Manual review confirmation screen - single clear message
+        st.success("✅ **Your request has been submitted for manual review.** Our team will contact you with a quote.")
         
-        st.markdown("---")
-        st.subheader("📋 Submission Summary")
-        
-        st.info(f"ℹ️ Your **{metric_type_display}** has been sent to our team for manual processing. You will be contacted with a quote once the review is complete.")
-        
-        # Show email notification status
+        # Only show email issue if there was a problem
         email_sent = submission_data.get('email_sent', False)
         email_status = submission_data.get('email_status_message', '')
         
-        if email_sent:
-            st.success(f"✅ **Notification Sent:** Our team has been notified of your request.")
-        elif email_status:
+        if not email_sent and email_status:
             st.warning(f"⚠️ **Email Notification Issue:** {email_status}")
             st.info("💡 Your request was logged, but the email notification could not be sent. Please contact your administrator.")
         
@@ -590,7 +582,6 @@ if st.session_state.get('submission_complete', False):
             st.write(f"**Email:** {submission_data['contact_email']}")
             if submission_data.get('contact_number'):
                 st.write(f"**Phone:** {submission_data['contact_number']}")
-            st.write(f"**Metric Type:** {metric_type_display}")
             st.write(f"**Status:** Pending Manual Review")
     else:
         # Standard quote confirmation screen
@@ -1539,9 +1530,6 @@ if submitted:
         
         # Check if this is a "No legal options" error - redirect to manual review
         if "No legal options" in error_msg or "no legal options" in error_msg:
-            st.warning("⚠️ This quote contains habitats that require manual processing.")
-            st.info("Your request will be sent to our team for a manual quote.")
-            
             # Submit for manual review instead of showing error
             try:
                 # Generate reference number for tracking
