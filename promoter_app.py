@@ -1552,13 +1552,102 @@ if submitted:
         
     except Exception as e:
         error_msg = str(e)
-        st.error(f"❌ Error processing quote request: {error_msg}")
         
-        import traceback
-        with st.expander("Show error details"):
-            st.code(traceback.format_exc())
-        
-        # Show catalog debug info if present in error message
-        if "[DEBUG]" in error_msg:
-            with st.expander("🔍 Catalog Debug Information", expanded=True):
-                st.text(error_msg)
+        # Check if this is a "No legal options" error - redirect to manual review
+        if "No legal options" in error_msg or "no legal options" in error_msg:
+            st.warning("⚠️ This quote contains habitats that require manual processing.")
+            st.info("Your request will be sent to our team for a manual quote.")
+            
+            # Submit for manual review instead of showing error
+            try:
+                # Generate reference number for tracking
+                db_manual = SubmissionsDB()
+                reference_number_manual = db_manual.get_next_bng_reference()
+                
+                # Extract habitat name from error message for notes
+                habitat_error_note = f"Automated processing failed: {error_msg.split('[DEBUG]')[0].strip()}"
+                combined_notes = f"{notes}\n\n--- System Note ---\n{habitat_error_note}" if notes else habitat_error_note
+                
+                # Send manual review email
+                email_sent_manual = False
+                email_status_manual = ""
+                
+                try:
+                    # Get reviewer emails from secrets
+                    try:
+                        reviewer_emails_raw = st.secrets["REVIEWER_EMAILS"]
+                    except KeyError:
+                        reviewer_emails_raw = st.secrets.get("REVIEWER_EMAILS", [])
+                    
+                    # Handle both array and string formats
+                    if isinstance(reviewer_emails_raw, list):
+                        reviewer_emails = [e.strip() for e in reviewer_emails_raw if e and e.strip()]
+                    elif isinstance(reviewer_emails_raw, str):
+                        reviewer_emails = [e.strip() for e in reviewer_emails_raw.split(",") if e.strip()]
+                    else:
+                        reviewer_emails = []
+                    
+                    if reviewer_emails:
+                        email_sent_manual, email_status_manual = send_email_notification(
+                            to_emails=reviewer_emails,
+                            client_name=client_name,
+                            quote_total=0,  # No quote generated for manual review
+                            metric_file_content=metric_file.getvalue(),
+                            metric_filename=f"{reference_number_manual}_{metric_file.name}",
+                            reference_number=reference_number_manual,
+                            site_location=location,
+                            promoter_name=promoter_name,
+                            submitted_by_name=submitted_by_name,
+                            contact_email=contact_email if contact_email else promoter_name,
+                            contact_number=contact_number,
+                            notes=combined_notes,
+                            email_type='manual_review',
+                            metric_type="Standard Metric (Manual Review Required)"
+                        )
+                    else:
+                        email_status_manual = "No reviewer emails configured"
+                except Exception as email_ex:
+                    email_status_manual = f"Email error: {str(email_ex)}"
+                
+                # Save to session state and show confirmation
+                st.session_state.submission_complete = True
+                st.session_state.submission_data = {
+                    'client_name': client_name,
+                    'reference_number': reference_number_manual,
+                    'location': location,
+                    'contact_email': contact_email,
+                    'contact_number': contact_number,
+                    'quote_total': None,  # No quote for manual review
+                    'admin_fee': None,
+                    'contract_size': None,
+                    'num_habitats': None,
+                    'allocation_df': pd.DataFrame(),
+                    'promoter_name': promoter_name,
+                    'discount_type': discount_type,
+                    'discount_value': discount_value,
+                    'email_sent': email_sent_manual,
+                    'email_status_message': email_status_manual,
+                    'email_debug_info': [],
+                    'pdf_content': None,
+                    'pdf_debug_message': None,
+                    'is_manual_review': True,
+                    'metric_type': "Standard Metric (Manual Review Required)"
+                }
+                st.rerun()
+                
+            except Exception as manual_ex:
+                # If manual review submission also fails, show original error
+                st.error(f"❌ Error processing quote request: {error_msg}")
+                st.error(f"❌ Also failed to submit for manual review: {str(manual_ex)}")
+        else:
+            # For other errors, show the error details
+            st.error(f"❌ Error processing quote request: {error_msg}")
+            
+            import traceback
+            with st.expander("Show error details"):
+                st.code(traceback.format_exc())
+            
+            # Show catalog debug info if present in error message
+            if "[DEBUG]" in error_msg:
+                with st.expander("🔍 Catalog Debug Information", expanded=True):
+                    st.text(error_msg)
