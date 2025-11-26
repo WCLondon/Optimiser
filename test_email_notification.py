@@ -12,7 +12,30 @@ import smtplib
 # Mock streamlit before importing email_notification
 sys.modules['streamlit'] = MagicMock()
 
-from email_notification import send_email_notification
+from email_notification import send_email_notification, sanitize_email_header
+
+
+def test_sanitize_email_header():
+    """Test that email header sanitization properly removes injection characters"""
+    # Test basic passthrough
+    assert sanitize_email_header("Normal Client Name") == "Normal Client Name"
+    assert sanitize_email_header("BNG-A-12345") == "BNG-A-12345"
+    
+    # Test newline injection prevention
+    assert sanitize_email_header("Name\nBcc: attacker@evil.com") == "NameBcc: attacker@evil.com"
+    assert sanitize_email_header("Name\r\nBcc: attacker@evil.com") == "NameBcc: attacker@evil.com"
+    
+    # Test carriage return injection
+    assert sanitize_email_header("Client\rName") == "ClientName"
+    
+    # Test control characters
+    assert sanitize_email_header("Client\x00Name") == "ClientName"
+    
+    # Test empty/None values
+    assert sanitize_email_header("") == ""
+    assert sanitize_email_header(None) == ""
+    
+    print("✓ Test passed: Email header sanitization works correctly")
 
 
 def test_email_notification_missing_credentials():
@@ -274,6 +297,7 @@ if __name__ == '__main__':
     print("Running email notification tests...")
     print()
     
+    test_sanitize_email_header()
     test_email_notification_missing_credentials()
     test_email_notification_success()
     test_email_notification_smtp_error()
