@@ -109,7 +109,7 @@ def get_standardized_bank_name(bank_key: str, bank_name: str) -> Tuple[str, str,
         Tuple of (standardized_bank_name, notes_for_column_S, source_display)
         - standardized_bank_name: Bank name from database or 'Other'
         - notes_for_column_S: Empty string or the actual bank name if using 'Other'
-        - source_display: The full "ref - name" string for column AB
+        - source_display: The full "ref - name" string for column AC
     """
     bank_key = bank_key.strip()
     bank_name = bank_name.strip()
