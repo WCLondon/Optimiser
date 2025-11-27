@@ -1,0 +1,25 @@
+-- =====================================================
+-- SQL Script to Add Cypher Individual User Logins
+-- =====================================================
+-- This script adds individual logins for Cypher Carbon Brokers employees.
+-- Each user has their own username (email) and password.
+-- All users are linked to the parent 'Cypher' promoter for discount settings.
+-- 
+-- Password format: [Firstname][Lastname]1
+-- 
+-- NOTE: This SQL file is provided as documentation only.
+-- Use the Python script add_cypher_users.py to add users with proper password hashing.
+-- =====================================================
+
+-- The individual users below need to be added using the Python script
+-- add_cypher_users.py because passwords need to be hashed securely.
+--
+-- Parent: Cypher (discount_type: 'no_discount', discount_value: 0)
+--
+-- Users to add (all linked to parent_introducer_id for Cypher):
+-- 1. Charlie Cliff / charlie@cyphercarbonbrokers.co.uk / CharlieCliff1
+-- 2. Henry Cowls / henry.cowls@cypherclimatebrokers.co.uk / HenryCowls1
+
+-- To run the migration:
+-- 1. Ensure .streamlit/secrets.toml has database connection configured
+-- 2. Run: python add_cypher_users.py
