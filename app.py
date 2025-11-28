@@ -4380,17 +4380,50 @@ if run:
         lpa_neighbors_norm = st.session_state["lpa_neighbors_norm"]
         nca_neighbors_norm = st.session_state["nca_neighbors_norm"]
 
-        # Run optimization (now without felled woodland if it was handled above)
-        with st.spinner("Running optimization..."):
-            alloc_df, total_cost, size = optimise(
-                demand_df,
-                target_lpa, target_nca,
-                [sstr(n) for n in lpa_neighbors], [sstr(n) for n in nca_neighbors],
-                lpa_neighbors_norm, nca_neighbors_norm
+        # Run gross-based optimization using GrossInventory table
+        with st.spinner("Running gross-based optimization..."):
+            # Get gross inventory from backend
+            gross_inventory = backend.get("GrossInventory", pd.DataFrame())
+            
+            if gross_inventory.empty:
+                st.warning("⚠️ GrossInventory table is empty. Please populate it with inventory data.")
+                st.stop()
+            
+            # Determine SRM multiplier based on tier
+            # For now, use a simple tier-based approach
+            # In future, this could be per-bank based on geocoding
+            srm_map = {"local": 1.0, "adjacent": 4/3, "far": 2.0}
+            default_srm = 1.0  # Assume local if no tier info
+            
+            # Get metric requirements from session state (if uploaded)
+            metric_requirements = st.session_state.get("metric_requirements", None)
+            
+            # Determine contract size from total demand
+            total_demand_units = demand_df["units_required"].sum()
+            present_sizes = backend["Pricing"]["contract_size"].drop_duplicates().tolist()
+            chosen_size = select_contract_size(total_demand_units, present_sizes)
+            
+            # Run the gross optimization
+            alloc_df, total_cost, size, gross_result = gross_optimizer_integration.run_gross_optimization(
+                demand_df=demand_df,
+                metric_requirements=metric_requirements,
+                gross_inventory=gross_inventory,
+                pricing_df=backend["Pricing"],
+                catalog_df=backend["HabitatCatalog"],
+                dist_levels_df=backend["DistinctivenessLevels"],
+                tier="local",  # Default tier; individual bank tiers determined at runtime
+                contract_size=chosen_size,
+                srm_multiplier=default_srm
             )
+            
+            # Store the gross optimization result for display
+            st.session_state["gross_optimization_result"] = gross_result
+            st.session_state["gross_optimization_log"] = gross_result.allocation_log
 
         # IMPORTANT: Load catchment data BEFORE setting optimization_complete
-        selected_banks = alloc_df["BANK_KEY"].unique()
+        # For gross optimizer, get unique bank IDs from allocations
+        bank_allocations = alloc_df[alloc_df["BANK_KEY"] != "ON_SITE"]
+        selected_banks = bank_allocations["BANK_KEY"].unique() if not bank_allocations.empty else []
         
         with st.spinner(f"Loading catchment areas for {len(selected_banks)} selected bank(s)..."):
             # Get bank coordinates first

@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS "GrossInventory" (
     -- Bank identification
     bank_id TEXT NOT NULL,
     bank_name TEXT NOT NULL,
+    bank_postcode TEXT,  -- Postcode for geocoding and tier calculations
     bgs_reference TEXT,  -- Biodiversity Gain Site Reference (e.g., BGS-150825001)
     habitat_reference TEXT,  -- Habitat Reference (e.g., HAB-00004166-BM4S1)
     
@@ -63,6 +64,7 @@ CREATE TABLE IF NOT EXISTS "GrossInventory" (
 -- Indexes for faster queries
 CREATE INDEX IF NOT EXISTS idx_gross_inventory_bank ON "GrossInventory"(bank_id);
 CREATE INDEX IF NOT EXISTS idx_gross_inventory_new_habitat ON "GrossInventory"(new_habitat);
+CREATE INDEX IF NOT EXISTS idx_gross_inventory_postcode ON "GrossInventory"(bank_postcode);
 CREATE INDEX IF NOT EXISTS idx_gross_inventory_baseline_habitat ON "GrossInventory"(baseline_habitat);
 CREATE INDEX IF NOT EXISTS idx_gross_inventory_unique_id ON "GrossInventory"(unique_id);
 CREATE INDEX IF NOT EXISTS idx_gross_inventory_remaining ON "GrossInventory"(remaining_units);
@@ -77,6 +79,7 @@ SELECT
     gi.unique_id,
     gi.bank_id,
     gi.bank_name,
+    gi.bank_postcode,
     gi.baseline_habitat,
     gi.baseline_units,
     gi.new_habitat,
@@ -103,11 +106,10 @@ WHERE gi.remaining_units > 0;
 -- =====================================================
 -- Sample Data Insert (matching the provided example)
 -- =====================================================
--- Uncomment to insert sample data for testing
+-- Run this INSERT statement to populate the GrossInventory table with sample data
 
-/*
 INSERT INTO "GrossInventory" (
-    unique_id, bank_id, bank_name, bgs_reference, habitat_reference,
+    unique_id, bank_id, bank_name, bank_postcode, bgs_reference, habitat_reference,
     baseline_habitat, baseline_area, baseline_units,
     new_habitat, new_area, gross_units, net_units,
     gross_yield_per_area, net_yield_per_area,
@@ -116,7 +118,7 @@ INSERT INTO "GrossInventory" (
 ) VALUES 
 (
     'Wild HordenBGS-150825001HAB-00004166-BM4S1',
-    'wild_horden', 'Wild Horden', 'BGS-150825001', 'HAB-00004166-BM4S1',
+    'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004166-BM4S1',
     'Cereal crops', 2.80494, 5.60988,
     'Traditional orchards', 2.80494, 16.50635148, 10.89647148,
     5.884743162, 3.884743162,
@@ -125,7 +127,7 @@ INSERT INTO "GrossInventory" (
 ),
 (
     'Wild HordenBGS-150825001HAB-00004164-BG0N0',
-    'wild_horden', 'Wild Horden', 'BGS-150825001', 'HAB-00004164-BG0N0',
+    'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004164-BG0N0',
     'Cereal crops', 2.780805, 5.56161,
     'Mixed scrub', 2.780805, 23.36818139, 17.80657139,
     8.40338729, 6.40338729,
@@ -134,7 +136,7 @@ INSERT INTO "GrossInventory" (
 ),
 (
     'Wild HordenBGS-150825001HAB-00004162-BQ3D5',
-    'wild_horden', 'Wild Horden', 'BGS-150825001', 'HAB-00004162-BQ3D5',
+    'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004162-BQ3D5',
     'Modified grassland', 0.72, 2.88,
     'Lowland calcareous grassland', 0.72, 4.022336023, 1.142336023,
     5.58657781, 1.58657781,
@@ -143,7 +145,7 @@ INSERT INTO "GrossInventory" (
 ),
 (
     'Wild HordenBGS-150825001HAB-00004160-BD5Y3',
-    'wild_horden', 'Wild Horden', 'BGS-150825001', 'HAB-00004160-BD5Y3',
+    'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004160-BD5Y3',
     'Cereal crops', 2.780805, 5.56161,
     'Other neutral grassland', 2.780805, 23.27, 17.70839,
     8.368080466, 6.368080466,
@@ -152,7 +154,7 @@ INSERT INTO "GrossInventory" (
 ),
 (
     'Wild HordenBGS-150825001HAB-00004165-BN3D0',
-    'wild_horden', 'Wild Horden', 'BGS-150825001', 'HAB-00004165-BN3D0',
+    'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004165-BN3D0',
     'Native hedgerow', 0.2, 0.8,
     'Species-rich native hedgerow with trees', 0.2, 2.760790368, 1.960790368,
     13.80395184, 9.803951839,
@@ -161,7 +163,7 @@ INSERT INTO "GrossInventory" (
 ),
 (
     'Wild HordenBGS-150825001HAB-00004161-BS4X2',
-    'wild_horden', 'Wild Horden', 'BGS-150825001', 'HAB-00004161-BS4X2',
+    'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004161-BS4X2',
     'Native hedgerow', 0.166, 0.332,
     'Species-rich native hedgerow with trees', 0.166, 2.19194972, 1.85994972,
     13.20451639, 11.20451639,
@@ -170,7 +172,7 @@ INSERT INTO "GrossInventory" (
 ),
 (
     'Wild HordenBGS-150825001HAB-00004163-BW6X7',
-    'wild_horden', 'Wild Horden', 'BGS-150825001', 'HAB-00004163-BW6X7',
+    'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004163-BW6X7',
     NULL, 0.2984, 0,  -- No baseline habitat
     'Species-rich native hedgerow with trees', 0.2984, 2.634011039, 2.634011039,
     8.827114743, 8.827114743,
@@ -178,7 +180,6 @@ INSERT INTO "GrossInventory" (
     2.634011039, 0.2984
 )
 ON CONFLICT (unique_id) DO NOTHING;
-*/
 
 -- =====================================================
 -- Completion message

@@ -243,6 +243,7 @@ def run_gross_optimization(
     dist_levels_df: pd.DataFrame,
     tier: str = "local",
     contract_size: str = "small",
+    srm_multiplier: float = 1.0,
     max_iterations: int = 100
 ) -> Tuple[pd.DataFrame, float, str, GrossOptimizationResult]:
     """
@@ -257,6 +258,7 @@ def run_gross_optimization(
         dist_levels_df: DistinctivenessLevels table data
         tier: Geographic tier for pricing
         contract_size: Contract size for pricing
+        srm_multiplier: Spatial Risk Multiplier (1.0=local, 4/3=adjacent, 2.0=far)
         max_iterations: Maximum iterations for optimizer
         
     Returns:
@@ -322,6 +324,7 @@ def run_gross_optimization(
         dist_levels=dist_levels,
         tier=tier,
         contract_size=contract_size,
+        srm_multiplier=srm_multiplier,
         max_iterations=max_iterations
     )
     
