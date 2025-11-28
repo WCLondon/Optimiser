@@ -207,6 +207,46 @@ def fetch_trading_rules() -> pd.DataFrame:
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=600)
+def fetch_gross_inventory() -> pd.DataFrame:
+    """
+    Fetch GrossInventory table from Supabase.
+    
+    This table contains the detailed inventory of each habitat parcel at each bank,
+    including both gross units (total created) and baseline units (habitat lost).
+    
+    Expected columns:
+        - unique_id: str (unique identifier for inventory row)
+        - bank_id: str
+        - bank_name: str
+        - bgs_reference: str (Biodiversity Gain Site Reference)
+        - habitat_reference: str
+        - baseline_habitat: str (original habitat that was on site)
+        - baseline_area: float
+        - baseline_units: float
+        - new_habitat: str (habitat being created)
+        - new_area: float
+        - gross_units: float (total units created)
+        - net_units: float (gross - baseline)
+        - remaining_units: float (units available for sale)
+        - remaining_area: float
+    
+    Returns:
+        DataFrame with GrossInventory data, or empty DataFrame if table doesn't exist
+    """
+    engine = get_db_engine()
+    query = "SELECT * FROM \"GrossInventory\""
+    
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql_query(query, conn)
+        return df
+    except Exception as e:
+        logger.warning(f"GrossInventory table not found or error: {e}")
+        # Return empty DataFrame if table doesn't exist (optional table)
+        return pd.DataFrame()
+
+
 def fetch_all_reference_tables() -> Dict[str, pd.DataFrame]:
     """
     Fetch all reference/config tables from Supabase.
@@ -221,7 +261,8 @@ def fetch_all_reference_tables() -> Dict[str, pd.DataFrame]:
             "Stock": DataFrame,
             "DistinctivenessLevels": DataFrame,
             "SRM": DataFrame,
-            "TradingRules": DataFrame (optional)
+            "TradingRules": DataFrame (optional),
+            "GrossInventory": DataFrame (optional - for gross-based optimization)
         }
     """
     return {
@@ -231,7 +272,8 @@ def fetch_all_reference_tables() -> Dict[str, pd.DataFrame]:
         "Stock": fetch_stock(),
         "DistinctivenessLevels": fetch_distinctiveness_levels(),
         "SRM": fetch_srm(),
-        "TradingRules": fetch_trading_rules()
+        "TradingRules": fetch_trading_rules(),
+        "GrossInventory": fetch_gross_inventory()
     }
 
 
