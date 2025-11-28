@@ -47,11 +47,13 @@ def prepare_deficits_from_metric(
             if units <= 0 or not habitat:
                 continue
             
-            # Look up distinctiveness and broader_type from catalog
+            # Look up distinctiveness, broader_type and UmbrellaType from catalog
             cat_match = catalog_df[catalog_df["habitat_name"].str.strip() == habitat]
             if not cat_match.empty:
                 distinctiveness = str(cat_match.iloc[0].get("distinctiveness_name", "Medium"))
                 broader_type = str(cat_match.iloc[0].get("broader_type", ""))
+                # Verify ledger type from catalog's UmbrellaType
+                catalog_umbrella = str(cat_match.iloc[0].get("UmbrellaType", "area")).lower().strip()
             else:
                 # Handle Net Gain labels
                 if "net gain" in habitat.lower():
@@ -60,13 +62,15 @@ def prepare_deficits_from_metric(
                 else:
                     distinctiveness = "Medium"
                     broader_type = ""
+                catalog_umbrella = "area"
             
             deficits.append({
                 "habitat": habitat,
                 "units": units,
                 "distinctiveness": distinctiveness,
                 "broader_type": broader_type,
-                "category": "area"
+                "category": "area",  # From metric section
+                "ledger_type": catalog_umbrella if catalog_umbrella in ["area", "hedgerow", "watercourse"] else "area"
             })
     
     # Process hedgerow habitats
@@ -96,7 +100,8 @@ def prepare_deficits_from_metric(
                 "units": units,
                 "distinctiveness": distinctiveness,
                 "broader_type": broader_type,
-                "category": "hedgerow"
+                "category": "hedgerow",
+                "ledger_type": "hedgerow"  # Force hedgerow ledger
             })
     
     # Process watercourse habitats
@@ -126,7 +131,8 @@ def prepare_deficits_from_metric(
                 "units": units,
                 "distinctiveness": distinctiveness,
                 "broader_type": broader_type,
-                "category": "watercourse"
+                "category": "watercourse",
+                "ledger_type": "watercourse"  # Force watercourse ledger
             })
     
     return deficits

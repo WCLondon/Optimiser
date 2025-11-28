@@ -712,13 +712,20 @@ def _find_eligible_inventory(
         # Get ledger type from inventory (default to 'area' for backward compatibility)
         supply_ledger = str(inv_row.get("ledger_type", "area")).lower().strip()
         
-        # Look up distinctiveness from catalog
+        # Look up distinctiveness and UmbrellaType from catalog
         cat_match = catalog_df[catalog_df["habitat_name"].str.strip() == supply_habitat.strip()]
         if cat_match.empty:
             continue
         
         supply_dist = str(cat_match.iloc[0].get("distinctiveness_name", "Medium"))
         supply_broader = str(cat_match.iloc[0].get("broader_type", ""))
+        
+        # Get ledger type from HabitatCatalog's UmbrellaType (canonical source)
+        # This overrides any inventory-level ledger_type since catalog is authoritative
+        catalog_umbrella = str(cat_match.iloc[0].get("UmbrellaType", "")).lower().strip()
+        if catalog_umbrella in ["area", "hedgerow", "watercourse"]:
+            supply_ledger = catalog_umbrella
+        # Otherwise fall back to inventory ledger_type (already set above)
         
         # Check trading rules (including ledger type match)
         if not can_offset_with_trading_rules(
