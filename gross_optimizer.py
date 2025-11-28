@@ -42,6 +42,7 @@ class DeficitEntry:
     units: float
     distinctiveness: str
     broader_type: str = ""
+    ledger_type: str = "area"  # "area", "hedgerow", or "watercourse"
     source: str = "metric"  # "metric" or "baseline" 
     parent_allocation_id: Optional[str] = None  # If this is a baseline deficit, link to parent
     
@@ -56,6 +57,7 @@ class SurplusEntry:
     units_remaining: float
     distinctiveness: str
     broader_type: str = ""
+    ledger_type: str = "area"  # "area", "hedgerow", or "watercourse"
     source: str = "on_site"  # "on_site" or "bank"
 
 
@@ -101,23 +103,37 @@ def can_offset_with_trading_rules(
     supply_habitat: str,
     supply_dist: str,
     supply_broader: str,
-    dist_levels: Dict[str, float]
+    dist_levels: Dict[str, float],
+    demand_ledger: str = "area",
+    supply_ledger: str = "area"
 ) -> bool:
     """
     Check if supply can legally offset demand according to trading rules.
     
-    Trading rules for area habitats:
+    CRITICAL: No inter-ledger trading allowed!
+    - Area habitats can only offset Area habitats
+    - Hedgerow habitats can only offset Hedgerow habitats
+    - Watercourse habitats can only offset Watercourse habitats
+    
+    Trading rules within each ledger:
     - Very High: Same habitat required (like-for-like)
     - High: Same habitat required (like-for-like)
     - Medium: High/Very High can offset; Medium only if same broad group
     - Low: Same distinctiveness or better
     """
+    # FIRST CHECK: Ledger type must match (no inter-ledger trading!)
+    demand_ledger_norm = str(demand_ledger).lower().strip()
+    supply_ledger_norm = str(supply_ledger).lower().strip()
+    
+    if demand_ledger_norm != supply_ledger_norm:
+        return False  # Cannot trade between different ledgers
+    
     d_rank = get_distinctiveness_rank(demand_dist, dist_levels)
     s_rank = get_distinctiveness_rank(supply_dist, dist_levels)
     
     demand_dist_lower = str(demand_dist).lower()
     
-    # Net Gain can be offset by anything
+    # Net Gain can be offset by anything (within same ledger)
     if "net gain" in demand_habitat.lower():
         return True
     
@@ -224,6 +240,7 @@ def optimize_gross(
             units=float(d["units"]),
             distinctiveness=d.get("distinctiveness", "Medium"),
             broader_type=d.get("broader_type", ""),
+            ledger_type=d.get("ledger_type", d.get("category", "area")),  # Support both keys
             source="metric"
         )
         for d in deficits if float(d.get("units", 0)) > 0
@@ -235,6 +252,7 @@ def optimize_gross(
             units_remaining=float(s["units"]),
             distinctiveness=s.get("distinctiveness", "Medium"),
             broader_type=s.get("broader_type", ""),
+            ledger_type=s.get("ledger_type", s.get("category", "area")),  # Support both keys
             source="on_site"
         )
         for s in on_site_surplus if float(s.get("units", 0)) > 0
@@ -256,7 +274,8 @@ def optimize_gross(
     allocation_id_counter = 0
     
     # Baseline bucket - accumulates baseline losses to process at the end
-    baseline_bucket: Dict[str, float] = {}  # habitat -> total units
+    # Key is (habitat, ledger_type) tuple to track ledger separately
+    baseline_bucket: Dict[Tuple[str, str], float] = {}  # (habitat, ledger_type) -> total units
     
     allocation_log.append("=" * 60)
     allocation_log.append("PHASE 1: Processing metric deficits")
@@ -287,11 +306,13 @@ def optimize_gross(
             if surplus.units_remaining <= 1e-9:
                 continue
             
-            # Check trading rules
+            # Check trading rules (including ledger type match)
             if not can_offset_with_trading_rules(
                 current_deficit.habitat, current_deficit.distinctiveness, current_deficit.broader_type,
                 surplus.habitat, surplus.distinctiveness, surplus.broader_type,
-                dist_levels
+                dist_levels,
+                demand_ledger=current_deficit.ledger_type,
+                supply_ledger=surplus.ledger_type
             ):
                 continue
             
@@ -347,6 +368,7 @@ def optimize_gross(
             baseline_habitat = inv_info["baseline_habitat"]
             baseline_ratio = inv_info["baseline_ratio"]
             supply_habitat = inv_info["supply_habitat"]
+            supply_ledger = inv_info.get("supply_ledger", "area")  # Get ledger type
             
             remaining_gross = inventory.loc[inv_idx, "remaining_gross"]
             
@@ -438,8 +460,10 @@ def optimize_gross(
                 )
                 
                 # Add baseline to bucket (don't process yet)
+                # Key is (habitat, ledger_type) to track ledger separately
                 if baseline_habitat and baseline_units_incurred > 1e-9:
-                    baseline_bucket[baseline_habitat] = baseline_bucket.get(baseline_habitat, 0) + baseline_units_incurred
+                    bucket_key = (baseline_habitat, supply_ledger)
+                    baseline_bucket[bucket_key] = baseline_bucket.get(bucket_key, 0) + baseline_units_incurred
     
     # ========== PHASE 2: Process baseline bucket ==========
     # NOTE: SRM does NOT apply to baseline bucket - it only applies to units we supply to customer
@@ -455,13 +479,13 @@ def optimize_gross(
         
         allocation_log.append(f"\nBaseline bucket summary:")
         allocation_log.append(f"  Total baseline to cover: {total_baseline:.4f} units")
-        allocation_log.append(f"\nBaseline by habitat:")
-        for hab, units in sorted(baseline_bucket.items(), key=lambda x: -x[1]):
-            allocation_log.append(f"  - {hab}: {units:.4f} units")
+        allocation_log.append(f"\nBaseline by habitat (with ledger type):")
+        for (hab, ledger), units in sorted(baseline_bucket.items(), key=lambda x: -x[1]):
+            allocation_log.append(f"  - {hab} ({ledger}): {units:.4f} units")
         
         # Convert baseline bucket to deficit entries (NO SRM - already accounted for)
         baseline_deficits = []
-        for baseline_habitat, baseline_units in baseline_bucket.items():
+        for (baseline_habitat, baseline_ledger), baseline_units in baseline_bucket.items():
             
             # Look up baseline habitat distinctiveness
             baseline_cat = catalog_df[catalog_df["habitat_name"].str.strip() == str(baseline_habitat).strip()]
@@ -476,6 +500,7 @@ def optimize_gross(
                 units=baseline_units,  # No SRM adjustment
                 distinctiveness=baseline_dist,
                 broader_type=baseline_broader,
+                ledger_type=baseline_ledger,  # Preserve ledger type for inter-ledger check
                 source="baseline_bucket"
             ))
         
@@ -490,7 +515,7 @@ def optimize_gross(
                 continue
             
             allocation_log.append(
-                f"\nProcessing baseline: {baseline_deficit.habitat} "
+                f"\nProcessing baseline: {baseline_deficit.habitat} ({baseline_deficit.ledger_type}) "
                 f"({baseline_deficit.units:.4f} units)"
             )
             
@@ -504,11 +529,13 @@ def optimize_gross(
                 if surplus.units_remaining <= 1e-9:
                     continue
                 
-                # Check trading rules
+                # Check trading rules (including ledger type match)
                 if not can_offset_with_trading_rules(
                     baseline_deficit.habitat, baseline_deficit.distinctiveness, baseline_deficit.broader_type,
                     surplus.habitat, surplus.distinctiveness, surplus.broader_type,
-                    dist_levels
+                    dist_levels,
+                    demand_ledger=baseline_deficit.ledger_type,
+                    supply_ledger=surplus.ledger_type
                 ):
                     continue
                 
@@ -597,6 +624,7 @@ def optimize_gross(
     for d in deficits:
         habitat = d["habitat"]
         original_units = float(d["units"])
+        ledger = d.get("ledger_type", d.get("category", "area"))
         
         # Sum up what was allocated to this deficit
         allocated = sum(
@@ -611,11 +639,12 @@ def optimize_gross(
                 units=unmet,
                 distinctiveness=d.get("distinctiveness", "Medium"),
                 broader_type=d.get("broader_type", ""),
+                ledger_type=ledger,
                 source="metric_unmet"
             ))
     
     # Check baseline deficits (no SRM - already accounted for in Phase 1)
-    for baseline_habitat, baseline_units in baseline_bucket.items():
+    for (baseline_habitat, baseline_ledger), baseline_units in baseline_bucket.items():
         
         # Sum up what was allocated to this baseline
         allocated = sum(
@@ -630,6 +659,7 @@ def optimize_gross(
                 units=unmet,
                 distinctiveness="Low",
                 broader_type="",
+                ledger_type=baseline_ledger,
                 source="baseline_unmet"
             ))
     
@@ -669,6 +699,7 @@ def _find_eligible_inventory(
 ) -> List[Dict[str, Any]]:
     """
     Find eligible inventory rows for a given deficit, sorted by price (cheapest first).
+    Only returns inventory that matches the deficit's ledger type (no inter-ledger trading).
     """
     eligible = []
     
@@ -678,6 +709,9 @@ def _find_eligible_inventory(
         
         supply_habitat = str(inv_row.get("new_habitat", ""))
         
+        # Get ledger type from inventory (default to 'area' for backward compatibility)
+        supply_ledger = str(inv_row.get("ledger_type", "area")).lower().strip()
+        
         # Look up distinctiveness from catalog
         cat_match = catalog_df[catalog_df["habitat_name"].str.strip() == supply_habitat.strip()]
         if cat_match.empty:
@@ -686,11 +720,13 @@ def _find_eligible_inventory(
         supply_dist = str(cat_match.iloc[0].get("distinctiveness_name", "Medium"))
         supply_broader = str(cat_match.iloc[0].get("broader_type", ""))
         
-        # Check trading rules
+        # Check trading rules (including ledger type match)
         if not can_offset_with_trading_rules(
             deficit.habitat, deficit.distinctiveness, deficit.broader_type,
             supply_habitat, supply_dist, supply_broader,
-            dist_levels
+            dist_levels,
+            demand_ledger=deficit.ledger_type,
+            supply_ledger=supply_ledger
         ):
             continue
         
@@ -703,6 +739,7 @@ def _find_eligible_inventory(
             "supply_habitat": supply_habitat,
             "supply_dist": supply_dist,
             "supply_broader": supply_broader,
+            "supply_ledger": supply_ledger,
             "price": price,
             "baseline_habitat": inv_row.get("baseline_habitat"),
             "baseline_ratio": (

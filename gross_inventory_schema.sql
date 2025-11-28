@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS "GrossInventory" (
     bgs_reference TEXT,  -- Biodiversity Gain Site Reference (e.g., BGS-150825001)
     habitat_reference TEXT,  -- Habitat Reference (e.g., HAB-00004166-BM4S1)
     
+    -- Ledger type (CRITICAL: no inter-ledger trading allowed!)
+    ledger_type TEXT NOT NULL DEFAULT 'area',  -- 'area', 'hedgerow', or 'watercourse'
+    
     -- Baseline (original) habitat information
     baseline_habitat TEXT,  -- The habitat that was on site before (e.g., "Cereal crops")
     baseline_area FLOAT DEFAULT 0,  -- Area/Length of baseline habitat
@@ -80,6 +83,7 @@ SELECT
     gi.bank_id,
     gi.bank_name,
     gi.bank_postcode,
+    gi.ledger_type,  -- CRITICAL: needed for inter-ledger trading check
     gi.baseline_habitat,
     gi.baseline_units,
     gi.new_habitat,
@@ -110,15 +114,18 @@ WHERE gi.remaining_units > 0;
 
 INSERT INTO "GrossInventory" (
     unique_id, bank_id, bank_name, bank_postcode, bgs_reference, habitat_reference,
+    ledger_type,  -- 'area', 'hedgerow', or 'watercourse'
     baseline_habitat, baseline_area, baseline_units,
     new_habitat, new_area, gross_units, net_units,
     gross_yield_per_area, net_yield_per_area,
     reserved_units, allocated_units, allocated_area,
     remaining_units, remaining_area
 ) VALUES 
+-- Area habitats
 (
     'Wild HordenBGS-150825001HAB-00004166-BM4S1',
     'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004166-BM4S1',
+    'area',
     'Cereal crops', 2.80494, 5.60988,
     'Traditional orchards', 2.80494, 16.50635148, 10.89647148,
     5.884743162, 3.884743162,
@@ -128,6 +135,7 @@ INSERT INTO "GrossInventory" (
 (
     'Wild HordenBGS-150825001HAB-00004164-BG0N0',
     'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004164-BG0N0',
+    'area',
     'Cereal crops', 2.780805, 5.56161,
     'Mixed scrub', 2.780805, 23.36818139, 17.80657139,
     8.40338729, 6.40338729,
@@ -137,6 +145,7 @@ INSERT INTO "GrossInventory" (
 (
     'Wild HordenBGS-150825001HAB-00004162-BQ3D5',
     'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004162-BQ3D5',
+    'area',
     'Modified grassland', 0.72, 2.88,
     'Lowland calcareous grassland', 0.72, 4.022336023, 1.142336023,
     5.58657781, 1.58657781,
@@ -146,15 +155,18 @@ INSERT INTO "GrossInventory" (
 (
     'Wild HordenBGS-150825001HAB-00004160-BD5Y3',
     'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004160-BD5Y3',
+    'area',
     'Cereal crops', 2.780805, 5.56161,
     'Other neutral grassland', 2.780805, 23.27, 17.70839,
     8.368080466, 6.368080466,
     0, 0, 0,
     17.70839, 2.780805
 ),
+-- Hedgerow habitats
 (
     'Wild HordenBGS-150825001HAB-00004165-BN3D0',
     'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004165-BN3D0',
+    'hedgerow',
     'Native hedgerow', 0.2, 0.8,
     'Species-rich native hedgerow with trees', 0.2, 2.760790368, 1.960790368,
     13.80395184, 9.803951839,
@@ -164,6 +176,7 @@ INSERT INTO "GrossInventory" (
 (
     'Wild HordenBGS-150825001HAB-00004161-BS4X2',
     'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004161-BS4X2',
+    'hedgerow',
     'Native hedgerow', 0.166, 0.332,
     'Species-rich native hedgerow with trees', 0.166, 2.19194972, 1.85994972,
     13.20451639, 11.20451639,
@@ -173,6 +186,7 @@ INSERT INTO "GrossInventory" (
 (
     'Wild HordenBGS-150825001HAB-00004163-BW6X7',
     'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004163-BW6X7',
+    'hedgerow',
     NULL, 0.2984, 0,  -- No baseline habitat
     'Species-rich native hedgerow with trees', 0.2984, 2.634011039, 2.634011039,
     8.827114743, 8.827114743,

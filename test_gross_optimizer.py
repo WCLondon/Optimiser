@@ -227,6 +227,54 @@ def test_net_gain_can_be_offset_by_anything(dist_levels):
     ) == True
 
 
+def test_inter_ledger_trading_blocked(dist_levels):
+    """Area habitats cannot offset hedgerow deficits and vice versa"""
+    # Area trying to offset hedgerow - should FAIL
+    assert can_offset_with_trading_rules(
+        "Native hedgerow", "Medium", "Hedgerow",  # hedgerow deficit
+        "Mixed scrub", "Medium", "Heathland",  # area supply
+        dist_levels,
+        demand_ledger="hedgerow",
+        supply_ledger="area"
+    ) == False
+    
+    # Hedgerow trying to offset area - should FAIL
+    assert can_offset_with_trading_rules(
+        "Mixed scrub", "Medium", "Heathland",  # area deficit
+        "Species-rich native hedgerow", "High", "Hedgerow",  # hedgerow supply
+        dist_levels,
+        demand_ledger="area",
+        supply_ledger="hedgerow"
+    ) == False
+    
+    # Watercourse trying to offset area - should FAIL
+    assert can_offset_with_trading_rules(
+        "Mixed scrub", "Medium", "Heathland",  # area deficit
+        "Rivers", "High", "Rivers and streams",  # watercourse supply
+        dist_levels,
+        demand_ledger="area",
+        supply_ledger="watercourse"
+    ) == False
+    
+    # Same ledger (area to area) - should work if trading rules allow
+    assert can_offset_with_trading_rules(
+        "Cereal crops", "Low", "Cropland",  # area deficit
+        "Mixed scrub", "Medium", "Heathland",  # area supply
+        dist_levels,
+        demand_ledger="area",
+        supply_ledger="area"
+    ) == True
+    
+    # Same ledger (hedgerow to hedgerow) - should work if trading rules allow
+    assert can_offset_with_trading_rules(
+        "Native hedgerow", "Medium", "Hedgerow",  # hedgerow deficit
+        "Species-rich native hedgerow with trees", "High", "Hedgerow",  # hedgerow supply
+        dist_levels,
+        demand_ledger="hedgerow",
+        supply_ledger="hedgerow"
+    ) == True
+
+
 # ============ Basic Optimization Tests ============
 
 def test_basic_gross_optimization(sample_gross_inventory, sample_pricing, sample_catalog, dist_levels):
