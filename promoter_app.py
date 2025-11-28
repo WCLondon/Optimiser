@@ -108,6 +108,10 @@ if 'all_lpas_list' not in st.session_state:
 if 'all_ncas_list' not in st.session_state:
     st.session_state.all_ncas_list = fetch_all_ncas_from_arcgis()
 
+# Session state for additional recipients (not persisted to database)
+if 'additional_recipients' not in st.session_state:
+    st.session_state.additional_recipients = []
+
 
 def authenticate_promoter(username: str, password: str) -> Tuple[bool, Optional[dict]]:
     """
@@ -714,9 +718,54 @@ if st.session_state.get('submission_complete', False):
     if st.button("📝 Submit Another Quote", type="primary"):
         st.session_state.submission_complete = False
         st.session_state.submission_data = None
+        st.session_state.additional_recipients = []  # Clear additional recipients for new quote
         st.rerun()
     
     st.stop()
+
+# ================= ADDITIONAL RECIPIENTS SECTION =================
+# This section is outside the form to allow adding recipients without full page rerun
+st.subheader("👥 Additional Recipients (Optional)")
+st.caption("Add additional contacts to be named in the client email. These are not saved to the database.")
+
+# Display existing additional recipients with remove buttons
+if st.session_state.additional_recipients:
+    for idx, recipient in enumerate(st.session_state.additional_recipients):
+        col1, col2 = st.columns([5, 1])
+        with col1:
+            st.text(f"• {recipient}")
+        with col2:
+            if st.button("✕", key=f"remove_recipient_{idx}", help="Remove this recipient"):
+                st.session_state.additional_recipients.pop(idx)
+                st.rerun()
+
+# Input fields for new additional recipient (outside form to avoid slow rerun)
+with st.expander("➕ Add Additional Recipient", expanded=False):
+    add_col1, add_col2, add_col3 = st.columns([1, 2, 2])
+    with add_col1:
+        add_title = st.selectbox("Title", ["Mr", "Mrs", "Ms", "Dr", "Prof", "Other", "N/A"], key="add_title")
+    with add_col2:
+        add_first_name = st.text_input("First Name", key="add_fname")
+    with add_col3:
+        add_surname = st.text_input("Surname", key="add_sname")
+    
+    if st.button("Add Recipient", key="add_recipient_btn", type="secondary"):
+        if add_first_name and add_surname:
+            # Build the recipient name
+            if add_title and add_title != "N/A":
+                new_recipient = f"{add_title} {add_first_name} {add_surname}"
+            else:
+                new_recipient = f"{add_first_name} {add_surname}"
+            st.session_state.additional_recipients.append(new_recipient)
+            # Clear the input fields by updating session state
+            st.session_state.add_title = "Mr"
+            st.session_state.add_fname = ""
+            st.session_state.add_sname = ""
+            st.rerun()
+        else:
+            st.warning("Please enter both first name and surname")
+
+st.markdown("---")
 
 # ================= QUOTE REQUEST FORM =================
 with st.form("quote_form"):
@@ -831,6 +880,14 @@ if submitted:
     else:
         client_name = promoter_name  # Fallback to promoter name
     
+    # Build client name for email (includes additional recipients)
+    # Additional recipients are not persisted to database, only included in email
+    if st.session_state.additional_recipients:
+        additional_names = ", ".join(st.session_state.additional_recipients)
+        client_name_for_email = f"{client_name} & {additional_names}"
+    else:
+        client_name_for_email = client_name
+    
     # Build location string - combine address and postcode if both provided
     if site_address and postcode:
         location = f"{site_address}, {postcode}"
@@ -894,7 +951,7 @@ if submitted:
                 if reviewer_emails:
                     email_sent, email_status_message = send_email_notification(
                         to_emails=reviewer_emails,
-                        client_name=client_name,
+                        client_name=client_name_for_email,
                         quote_total=0,  # No quote generated for manual review
                         metric_file_content=metric_file.getvalue(),
                         metric_filename=f"{reference_number}_{metric_file.name}",
@@ -1192,7 +1249,7 @@ if submitted:
                     demand_df=area_df,
                     total_cost=quote_total,
                     admin_fee=admin_fee,
-                    client_name=client_name,
+                    client_name=client_name_for_email,
                     ref_number=reference_number,
                     location=postcode or site_address,
                     backend=backend,
@@ -1203,7 +1260,7 @@ if submitted:
                 )
                 
                 pdf_content, pdf_debug_message = generate_quote_pdf(
-                    client_name=client_name,
+                    client_name=client_name_for_email,
                     reference_number=reference_number,
                     site_location=location,  # Use combined location
                     quote_total=quote_total,
@@ -1228,7 +1285,7 @@ if submitted:
                     demand_df=area_df,
                     total_cost=quote_total,
                     admin_fee=admin_fee,
-                    client_name=client_name,
+                    client_name=client_name_for_email,
                     ref_number=reference_number,  # Include auto-generated reference
                     location=location,  # Use combined location
                     backend=backend,
@@ -1335,7 +1392,7 @@ if submitted:
                 # Generate CSV using the processed data - exactly like app.py
                 csv_allocation_content = sales_quotes_csv.generate_sales_quotes_csv_from_optimizer_output(
                     quote_number=reference_number,
-                    client_name=client_name,
+                    client_name=client_name_for_email,
                     development_address=location,  # Use combined location
                     base_ref=reference_number,
                     introducer=promoter_name,
@@ -1451,7 +1508,7 @@ if submitted:
                     # Send simple quote notification with metric and CSV attachments
                     email_sent, email_status_message = send_email_notification(
                         to_emails=reviewer_emails,
-                        client_name=client_name,
+                        client_name=client_name_for_email,
                         quote_total=quote_total,
                         metric_file_content=metric_file.getvalue(),
                         metric_filename=f"{reference_number}_{metric_file.name}",
@@ -1470,7 +1527,7 @@ if submitted:
                     # Send full quote email for reviewer to forward with CSV attachment
                     email_sent, email_status_message = send_email_notification(
                         to_emails=reviewer_emails,
-                        client_name=client_name,
+                        client_name=client_name_for_email,
                         quote_total=quote_total,
                         metric_file_content=metric_file.getvalue(),
                         metric_filename=f"{reference_number}_{metric_file.name}",
@@ -1562,7 +1619,7 @@ if submitted:
                     if reviewer_emails:
                         email_sent_manual, email_status_manual = send_email_notification(
                             to_emails=reviewer_emails,
-                            client_name=client_name,
+                            client_name=client_name_for_email,
                             quote_total=0,  # No quote generated for manual review
                             metric_file_content=metric_file.getvalue(),
                             metric_filename=f"{reference_number_manual}_{metric_file.name}",
