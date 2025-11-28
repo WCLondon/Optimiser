@@ -4403,7 +4403,13 @@ if run:
             present_sizes = backend["Pricing"]["contract_size"].drop_duplicates().tolist()
             chosen_size = select_contract_size(total_demand_units, present_sizes)
             
-            # Run the gross optimization
+            # Get target LPA/NCA and neighbors from session state
+            target_lpa = st.session_state.get("target_lpa_name", "")
+            target_nca = st.session_state.get("target_nca_name", "")
+            lpa_neighbors = st.session_state.get("lpa_neighbors", [])
+            nca_neighbors = st.session_state.get("nca_neighbors", [])
+            
+            # Run the gross optimization with per-bank tier calculation
             alloc_df, total_cost, size, gross_result = gross_optimizer_integration.run_gross_optimization(
                 demand_df=demand_df,
                 metric_requirements=metric_requirements,
@@ -4411,9 +4417,12 @@ if run:
                 pricing_df=backend["Pricing"],
                 catalog_df=backend["HabitatCatalog"],
                 dist_levels_df=backend["DistinctivenessLevels"],
-                tier="local",  # Default tier; individual bank tiers determined at runtime
                 contract_size=chosen_size,
-                srm_multiplier=default_srm
+                target_lpa=target_lpa,
+                target_nca=target_nca,
+                lpa_neighbors=lpa_neighbors,
+                nca_neighbors=nca_neighbors,
+                default_tier="local"
             )
             
             # Store the gross optimization result for display

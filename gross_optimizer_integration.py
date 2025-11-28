@@ -247,9 +247,12 @@ def run_gross_optimization(
     pricing_df: pd.DataFrame,
     catalog_df: pd.DataFrame,
     dist_levels_df: pd.DataFrame,
-    tier: str = "local",
     contract_size: str = "small",
-    srm_multiplier: float = 1.0,
+    target_lpa: str = "",
+    target_nca: str = "",
+    lpa_neighbors: List[str] = None,
+    nca_neighbors: List[str] = None,
+    default_tier: str = "local",
     max_iterations: int = 100
 ) -> Tuple[pd.DataFrame, float, str, GrossOptimizationResult]:
     """
@@ -258,18 +261,26 @@ def run_gross_optimization(
     Args:
         demand_df: DataFrame with habitat_name and units_required columns
         metric_requirements: Full output from parse_metric_requirements()
-        gross_inventory: GrossInventory table data
+        gross_inventory: GrossInventory table data (must include bank_lpa, bank_nca)
         pricing_df: Pricing table data
         catalog_df: HabitatCatalog table data
         dist_levels_df: DistinctivenessLevels table data
-        tier: Geographic tier for pricing
         contract_size: Contract size for pricing
-        srm_multiplier: Spatial Risk Multiplier (1.0=local, 4/3=adjacent, 2.0=far)
+        target_lpa: Target site's Local Planning Authority name
+        target_nca: Target site's National Character Area name
+        lpa_neighbors: List of LPA names neighboring the target
+        nca_neighbors: List of NCA names neighboring the target
+        default_tier: Default tier if bank LPA/NCA not available
         max_iterations: Maximum iterations for optimizer
         
     Returns:
         Tuple of (allocation_df, total_cost, contract_size, raw_result)
     """
+    if lpa_neighbors is None:
+        lpa_neighbors = []
+    if nca_neighbors is None:
+        nca_neighbors = []
+    
     # Build distinctiveness levels dict
     dist_levels = {}
     if not dist_levels_df.empty:
@@ -320,7 +331,7 @@ def run_gross_optimization(
             })
         surplus = []
     
-    # Run gross optimization
+    # Run gross optimization with per-bank tier calculation
     result = optimize_gross(
         deficits=deficits,
         on_site_surplus=surplus,
@@ -328,9 +339,12 @@ def run_gross_optimization(
         pricing_df=pricing_df,
         catalog_df=catalog_df,
         dist_levels=dist_levels,
-        tier=tier,
         contract_size=contract_size,
-        srm_multiplier=srm_multiplier,
+        target_lpa=target_lpa,
+        target_nca=target_nca,
+        lpa_neighbors=lpa_neighbors,
+        nca_neighbors=nca_neighbors,
+        default_tier=default_tier,
         max_iterations=max_iterations
     )
     
