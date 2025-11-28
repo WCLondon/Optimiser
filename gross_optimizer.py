@@ -183,10 +183,21 @@ def optimize_gross(
     dist_levels: Dict[str, float],
     tier: str = "local",
     contract_size: str = "small",
+    srm_multiplier: float = 1.0,
     max_iterations: int = 100
 ) -> GrossOptimizationResult:
     """
-    Main entry point for gross-based optimization.
+    Main entry point for gross-based optimization with deferred baseline bucket.
+    
+    Algorithm:
+    1. Process all metric deficits first using on-site surplus and gross bank units
+    2. Accumulate baseline losses into a "baseline bucket" (don't process immediately)
+    3. At the end, apply SRM to the baseline bucket and resolve with cheapest available
+    
+    This approach:
+    - Applies SRM once at the end, not repeatedly during iteration
+    - Allows baseline deficits to be batched together for efficiency
+    - Avoids SRM cascading effects
     
     Args:
         deficits: List of deficit dicts with keys: habitat, units, distinctiveness, broader_type
@@ -197,13 +208,14 @@ def optimize_gross(
         dist_levels: Distinctiveness level mapping (name -> numeric value)
         tier: Geographic tier for pricing (local/adjacent/far)
         contract_size: Contract size for pricing
+        srm_multiplier: Spatial Risk Multiplier (1.0 = local, 4/3 = adjacent, 2.0 = far)
         max_iterations: Maximum iterations to prevent infinite loops
         
     Returns:
         GrossOptimizationResult with allocations and remaining deficits
     """
-    # Initialize working lists
-    working_deficits = [
+    # Initialize working lists for metric deficits (Phase 1)
+    metric_deficits = [
         DeficitEntry(
             habitat=d["habitat"],
             units=float(d["units"]),
@@ -240,30 +252,31 @@ def optimize_gross(
     allocation_log: List[str] = []
     allocation_id_counter = 0
     
-    iteration = 0
+    # Baseline bucket - accumulates baseline losses to process at the end
+    baseline_bucket: Dict[str, float] = {}  # habitat -> total units
     
-    while working_deficits and iteration < max_iterations:
-        iteration += 1
-        
-        # Sort deficits by cost (most expensive first = most efficient for us)
-        working_deficits.sort(
-            key=lambda d: -estimate_offset_cost(d.habitat, d.distinctiveness, pricing_df, tier, contract_size)
-        )
-        
-        # Take the most expensive deficit
-        current_deficit = working_deficits.pop(0)
-        
+    allocation_log.append("=" * 60)
+    allocation_log.append("PHASE 1: Processing metric deficits")
+    allocation_log.append("=" * 60)
+    
+    # ========== PHASE 1: Process all metric deficits ==========
+    # Sort deficits by cost (most expensive first = most efficient for us)
+    metric_deficits.sort(
+        key=lambda d: -estimate_offset_cost(d.habitat, d.distinctiveness, pricing_df, tier, contract_size)
+    )
+    
+    for current_deficit in metric_deficits:
         if current_deficit.units <= 1e-9:
             continue
             
         allocation_log.append(
-            f"Iteration {iteration}: Processing deficit {current_deficit.habitat} "
+            f"\nProcessing: {current_deficit.habitat} "
             f"({current_deficit.units:.4f} units, {current_deficit.distinctiveness})"
         )
         
         units_needed = current_deficit.units
         
-        # Step 1: Try to offset with on-site surplus first
+        # Step 1: Try to offset with on-site surplus first (FREE, no SRM)
         for surplus in working_surplus:
             if units_needed <= 1e-9:
                 break
@@ -296,8 +309,7 @@ def optimize_gross(
             ))
             
             allocation_log.append(
-                f"  -> Used {units_to_use:.4f} on-site surplus ({surplus.habitat}) "
-                f"to offset {current_deficit.habitat}"
+                f"  -> Used {units_to_use:.4f} on-site surplus ({surplus.habitat}) - FREE"
             )
         
         if units_needed <= 1e-9:
@@ -305,56 +317,14 @@ def optimize_gross(
         
         # Step 2: Allocate from bank gross inventory
         # Find eligible inventory rows
-        eligible_inventory = []
-        
-        for _, inv_row in inventory.iterrows():
-            if inv_row.get("remaining_gross", 0) <= 1e-9:
-                continue
-            
-            supply_habitat = str(inv_row.get("new_habitat", ""))
-            
-            # Look up distinctiveness from catalog
-            cat_match = catalog_df[catalog_df["habitat_name"].str.strip() == supply_habitat.strip()]
-            if cat_match.empty:
-                continue
-            
-            supply_dist = str(cat_match.iloc[0].get("distinctiveness_name", "Medium"))
-            supply_broader = str(cat_match.iloc[0].get("broader_type", ""))
-            
-            # Check trading rules
-            if not can_offset_with_trading_rules(
-                current_deficit.habitat, current_deficit.distinctiveness, current_deficit.broader_type,
-                supply_habitat, supply_dist, supply_broader,
-                dist_levels
-            ):
-                continue
-            
-            # Get price for this inventory
-            price = estimate_offset_cost(supply_habitat, supply_dist, pricing_df, tier, contract_size)
-            
-            eligible_inventory.append({
-                "index": inv_row.name,
-                "row": inv_row,
-                "supply_habitat": supply_habitat,
-                "supply_dist": supply_dist,
-                "supply_broader": supply_broader,
-                "price": price,
-                "baseline_habitat": inv_row.get("baseline_habitat"),
-                "baseline_ratio": (
-                    float(inv_row.get("baseline_units", 0)) / float(inv_row.get("gross_units", 1))
-                    if float(inv_row.get("gross_units", 0)) > 0 else 0
-                )
-            })
+        eligible_inventory = _find_eligible_inventory(
+            current_deficit, inventory, catalog_df, pricing_df, dist_levels, tier, contract_size
+        )
         
         if not eligible_inventory:
-            # No eligible inventory - put deficit back (will remain unmet)
-            current_deficit.units = units_needed
-            working_deficits.append(current_deficit)
             allocation_log.append(f"  -> No eligible inventory found for {current_deficit.habitat}")
+            # Will remain as unmet deficit
             continue
-        
-        # Sort by price (cheapest first)
-        eligible_inventory.sort(key=lambda x: x["price"])
         
         # Allocate from cheapest eligible inventory
         for inv_info in eligible_inventory:
@@ -378,7 +348,7 @@ def optimize_gross(
             if same_habitat:
                 # Use NET units instead to avoid infinite loop
                 net_available = float(inv_row.get("net_units", 0)) - float(inv_row.get("allocated_units", 0))
-                net_available = max(0, net_available)
+                net_available = max(0, min(net_available, remaining_gross))
                 
                 if net_available <= 1e-9:
                     continue
@@ -408,10 +378,10 @@ def optimize_gross(
                 
                 allocation_log.append(
                     f"  -> Used {units_to_use:.4f} NET units ({supply_habitat}) from {inv_row.get('bank_name')} "
-                    f"(baseline=supply, avoiding loop) | Cost: £{cost:,.2f}"
+                    f"(baseline=supply, using NET) | Cost: £{cost:,.2f}"
                 )
             else:
-                # Use GROSS units and add baseline as new deficit
+                # Use GROSS units and add baseline to bucket
                 if remaining_gross <= 1e-9:
                     continue
                 
@@ -442,38 +412,207 @@ def optimize_gross(
                 
                 allocation_log.append(
                     f"  -> Used {units_to_use:.4f} GROSS units ({supply_habitat}) from {inv_row.get('bank_name')} "
-                    f"| Cost: £{cost:,.2f} | Baseline incurred: {baseline_units_incurred:.4f} units ({baseline_habitat})"
+                    f"| Cost: £{cost:,.2f} | Baseline: {baseline_units_incurred:.4f} ({baseline_habitat})"
                 )
                 
-                # Add baseline as new deficit if there's a baseline habitat
+                # Add baseline to bucket (don't process yet)
                 if baseline_habitat and baseline_units_incurred > 1e-9:
-                    # Look up baseline habitat distinctiveness
-                    baseline_cat = catalog_df[catalog_df["habitat_name"].str.strip() == str(baseline_habitat).strip()]
-                    baseline_dist = "Low"  # Default for baseline habitats (typically low-value crops, etc.)
-                    baseline_broader = ""
-                    if not baseline_cat.empty:
-                        baseline_dist = str(baseline_cat.iloc[0].get("distinctiveness_name", "Low"))
-                        baseline_broader = str(baseline_cat.iloc[0].get("broader_type", ""))
-                    
-                    new_baseline_deficit = DeficitEntry(
-                        habitat=baseline_habitat,
-                        units=baseline_units_incurred,
-                        distinctiveness=baseline_dist,
-                        broader_type=baseline_broader,
-                        source="baseline",
-                        parent_allocation_id=f"alloc_{allocation_id_counter}"
-                    )
-                    working_deficits.append(new_baseline_deficit)
-                    
-                    allocation_log.append(
-                        f"  -> Added new baseline deficit: {baseline_habitat} "
-                        f"({baseline_units_incurred:.4f} units, {baseline_dist})"
-                    )
+                    baseline_bucket[baseline_habitat] = baseline_bucket.get(baseline_habitat, 0) + baseline_units_incurred
+    
+    # ========== PHASE 2: Process baseline bucket with SRM ==========
+    allocation_log.append("")
+    allocation_log.append("=" * 60)
+    allocation_log.append(f"PHASE 2: Processing baseline bucket (SRM = {srm_multiplier:.4f})")
+    allocation_log.append("=" * 60)
+    
+    if baseline_bucket:
+        total_baseline_raw = sum(baseline_bucket.values())
+        total_baseline_with_srm = total_baseline_raw * srm_multiplier
         
-        # If still have unmet need, put back on list
-        if units_needed > 1e-9:
-            current_deficit.units = units_needed
-            working_deficits.append(current_deficit)
+        allocation_log.append(f"\nBaseline bucket summary:")
+        allocation_log.append(f"  Raw baseline total: {total_baseline_raw:.4f} units")
+        allocation_log.append(f"  SRM multiplier: {srm_multiplier:.4f}")
+        allocation_log.append(f"  Adjusted baseline total: {total_baseline_with_srm:.4f} units")
+        allocation_log.append(f"\nBaseline by habitat:")
+        for hab, units in sorted(baseline_bucket.items(), key=lambda x: -x[1]):
+            adjusted = units * srm_multiplier
+            allocation_log.append(f"  - {hab}: {units:.4f} raw -> {adjusted:.4f} adjusted")
+        
+        # Convert baseline bucket to deficit entries with SRM applied
+        baseline_deficits = []
+        for baseline_habitat, raw_units in baseline_bucket.items():
+            adjusted_units = raw_units * srm_multiplier
+            
+            # Look up baseline habitat distinctiveness
+            baseline_cat = catalog_df[catalog_df["habitat_name"].str.strip() == str(baseline_habitat).strip()]
+            baseline_dist = "Low"  # Default for baseline habitats
+            baseline_broader = ""
+            if not baseline_cat.empty:
+                baseline_dist = str(baseline_cat.iloc[0].get("distinctiveness_name", "Low"))
+                baseline_broader = str(baseline_cat.iloc[0].get("broader_type", ""))
+            
+            baseline_deficits.append(DeficitEntry(
+                habitat=baseline_habitat,
+                units=adjusted_units,
+                distinctiveness=baseline_dist,
+                broader_type=baseline_broader,
+                source="baseline_bucket"
+            ))
+        
+        # Sort baseline deficits by cost (most expensive first)
+        baseline_deficits.sort(
+            key=lambda d: -estimate_offset_cost(d.habitat, d.distinctiveness, pricing_df, tier, contract_size)
+        )
+        
+        # Process baseline deficits
+        for baseline_deficit in baseline_deficits:
+            if baseline_deficit.units <= 1e-9:
+                continue
+            
+            allocation_log.append(
+                f"\nProcessing baseline: {baseline_deficit.habitat} "
+                f"({baseline_deficit.units:.4f} units after SRM)"
+            )
+            
+            units_needed = baseline_deficit.units
+            
+            # First try on-site surplus (still available, free)
+            for surplus in working_surplus:
+                if units_needed <= 1e-9:
+                    break
+                    
+                if surplus.units_remaining <= 1e-9:
+                    continue
+                
+                # Check trading rules
+                if not can_offset_with_trading_rules(
+                    baseline_deficit.habitat, baseline_deficit.distinctiveness, baseline_deficit.broader_type,
+                    surplus.habitat, surplus.distinctiveness, surplus.broader_type,
+                    dist_levels
+                ):
+                    continue
+                
+                # Allocate from surplus
+                units_to_use = min(units_needed, surplus.units_remaining)
+                surplus.units_remaining -= units_to_use
+                units_needed -= units_to_use
+                
+                allocation_id_counter += 1
+                allocations.append(AllocationRecord(
+                    allocation_id=f"alloc_{allocation_id_counter}",
+                    deficit_habitat=baseline_deficit.habitat,
+                    deficit_units=units_to_use,
+                    supply_habitat=surplus.habitat,
+                    supply_units=units_to_use,
+                    supply_source="on_site_surplus_baseline",
+                    cost=0.0
+                ))
+                
+                allocation_log.append(
+                    f"  -> Used {units_to_use:.4f} on-site surplus ({surplus.habitat}) to cover baseline - FREE"
+                )
+            
+            if units_needed <= 1e-9:
+                continue
+            
+            # Then use bank inventory (NET only for baselines to avoid more baselines)
+            eligible_inventory = _find_eligible_inventory(
+                baseline_deficit, inventory, catalog_df, pricing_df, dist_levels, tier, contract_size
+            )
+            
+            for inv_info in eligible_inventory:
+                if units_needed <= 1e-9:
+                    break
+                
+                inv_idx = inv_info["index"]
+                inv_row = inv_info["row"]
+                supply_habitat = inv_info["supply_habitat"]
+                
+                # For baseline bucket, always use NET to avoid creating more baselines
+                remaining = inventory.loc[inv_idx, "remaining_gross"]
+                net_available = float(inv_row.get("net_units", 0)) - float(inv_row.get("allocated_units", 0))
+                net_available = max(0, min(net_available, remaining))
+                
+                if net_available <= 1e-9:
+                    continue
+                
+                units_to_use = min(units_needed, net_available)
+                inventory.loc[inv_idx, "remaining_gross"] -= units_to_use
+                units_needed -= units_to_use
+                
+                allocation_id_counter += 1
+                cost = units_to_use * inv_info["price"]
+                
+                allocations.append(AllocationRecord(
+                    allocation_id=f"alloc_{allocation_id_counter}",
+                    deficit_habitat=baseline_deficit.habitat,
+                    deficit_units=units_to_use,
+                    supply_habitat=supply_habitat,
+                    supply_units=units_to_use,
+                    supply_source="bank_net_baseline",
+                    bank_id=str(inv_row.get("bank_id", "")),
+                    bank_name=str(inv_row.get("bank_name", "")),
+                    inventory_id=str(inv_row.get("unique_id", "")),
+                    unit_price=inv_info["price"],
+                    cost=cost,
+                    baseline_habitat=None,
+                    baseline_units_incurred=0
+                ))
+                
+                allocation_log.append(
+                    f"  -> Used {units_to_use:.4f} NET units ({supply_habitat}) from {inv_row.get('bank_name')} "
+                    f"to cover baseline | Cost: £{cost:,.2f}"
+                )
+            
+            # Track remaining unmet baseline
+            if units_needed > 1e-9:
+                allocation_log.append(f"  -> UNMET: {units_needed:.4f} units of {baseline_deficit.habitat}")
+    else:
+        allocation_log.append("\nNo baseline bucket to process (all allocations used NET or on-site surplus)")
+    
+    # ========== Calculate remaining deficits ==========
+    remaining_deficits = []
+    
+    # Check original metric deficits
+    for d in deficits:
+        habitat = d["habitat"]
+        original_units = float(d["units"])
+        
+        # Sum up what was allocated to this deficit
+        allocated = sum(
+            a.deficit_units for a in allocations 
+            if a.deficit_habitat == habitat and a.supply_source in ("on_site_surplus", "bank_gross", "bank_net")
+        )
+        
+        unmet = original_units - allocated
+        if unmet > 1e-9:
+            remaining_deficits.append(DeficitEntry(
+                habitat=habitat,
+                units=unmet,
+                distinctiveness=d.get("distinctiveness", "Medium"),
+                broader_type=d.get("broader_type", ""),
+                source="metric_unmet"
+            ))
+    
+    # Check baseline deficits
+    for baseline_habitat, raw_units in baseline_bucket.items():
+        adjusted_units = raw_units * srm_multiplier
+        
+        # Sum up what was allocated to this baseline
+        allocated = sum(
+            a.deficit_units for a in allocations 
+            if a.deficit_habitat == baseline_habitat and a.supply_source in ("on_site_surplus_baseline", "bank_net_baseline")
+        )
+        
+        unmet = adjusted_units - allocated
+        if unmet > 1e-9:
+            remaining_deficits.append(DeficitEntry(
+                habitat=baseline_habitat,
+                units=unmet,
+                distinctiveness="Low",
+                broader_type="",
+                source="baseline_unmet"
+            ))
     
     # Clean up remaining surplus
     remaining_surplus = [s for s in working_surplus if s.units_remaining > 1e-9]
@@ -481,14 +620,82 @@ def optimize_gross(
     # Calculate total cost
     total_cost = sum(a.cost for a in allocations)
     
+    allocation_log.append("")
+    allocation_log.append("=" * 60)
+    allocation_log.append(f"OPTIMIZATION COMPLETE")
+    allocation_log.append(f"Total allocations: {len(allocations)}")
+    allocation_log.append(f"Total cost: £{total_cost:,.2f}")
+    if remaining_deficits:
+        allocation_log.append(f"Remaining unmet deficits: {len(remaining_deficits)}")
+    allocation_log.append("=" * 60)
+    
     return GrossOptimizationResult(
         allocations=allocations,
-        remaining_deficits=working_deficits,
+        remaining_deficits=remaining_deficits,
         remaining_surplus=remaining_surplus,
         total_cost=total_cost,
-        iterations=iteration,
+        iterations=1,  # Single pass with deferred baseline
         allocation_log=allocation_log
     )
+
+
+def _find_eligible_inventory(
+    deficit: DeficitEntry,
+    inventory: pd.DataFrame,
+    catalog_df: pd.DataFrame,
+    pricing_df: pd.DataFrame,
+    dist_levels: Dict[str, float],
+    tier: str,
+    contract_size: str
+) -> List[Dict[str, Any]]:
+    """
+    Find eligible inventory rows for a given deficit, sorted by price (cheapest first).
+    """
+    eligible = []
+    
+    for _, inv_row in inventory.iterrows():
+        if inv_row.get("remaining_gross", 0) <= 1e-9:
+            continue
+        
+        supply_habitat = str(inv_row.get("new_habitat", ""))
+        
+        # Look up distinctiveness from catalog
+        cat_match = catalog_df[catalog_df["habitat_name"].str.strip() == supply_habitat.strip()]
+        if cat_match.empty:
+            continue
+        
+        supply_dist = str(cat_match.iloc[0].get("distinctiveness_name", "Medium"))
+        supply_broader = str(cat_match.iloc[0].get("broader_type", ""))
+        
+        # Check trading rules
+        if not can_offset_with_trading_rules(
+            deficit.habitat, deficit.distinctiveness, deficit.broader_type,
+            supply_habitat, supply_dist, supply_broader,
+            dist_levels
+        ):
+            continue
+        
+        # Get price for this inventory
+        price = estimate_offset_cost(supply_habitat, supply_dist, pricing_df, tier, contract_size)
+        
+        eligible.append({
+            "index": inv_row.name,
+            "row": inv_row,
+            "supply_habitat": supply_habitat,
+            "supply_dist": supply_dist,
+            "supply_broader": supply_broader,
+            "price": price,
+            "baseline_habitat": inv_row.get("baseline_habitat"),
+            "baseline_ratio": (
+                float(inv_row.get("baseline_units", 0)) / float(inv_row.get("gross_units", 1))
+                if float(inv_row.get("gross_units", 0)) > 0 else 0
+            )
+        })
+    
+    # Sort by price (cheapest first)
+    eligible.sort(key=lambda x: x["price"])
+    
+    return eligible
 
 
 def format_allocation_summary(result: GrossOptimizationResult) -> pd.DataFrame:

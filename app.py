@@ -45,8 +45,9 @@ import repo
 # BNG Metric reader
 import metric_reader
 
-# Surplus Uplift Offset (SUO)
-import suo
+# Gross-based optimization (replaces SUO)
+import gross_optimizer
+import gross_optimizer_integration
 
 # ================= Config / constants =================
 ADMIN_FEE_GBP = 500.0  # Standard admin fee
@@ -139,10 +140,11 @@ def init_session_state():
         "all_ncas_list": None,   # Cache for complete NCA list from ArcGIS
         "enriched_banks_cache": None,  # Cache for enriched banks data with LPA/NCA
         "enriched_banks_timestamp": None,  # Timestamp when banks were last enriched
-        "suo_enabled": True,  # SUO toggle (enabled by default)
-        "suo_results": None,  # SUO computation results
-        "suo_applicable": False,  # Whether SUO can be applied
-        "metric_surplus": None,  # Surplus from metric file
+        "use_gross_optimization": True,  # Use gross-based optimization (default: True)
+        "gross_optimization_result": None,  # Raw result from gross optimizer
+        "gross_optimization_log": None,  # Allocation log from gross optimizer
+        "metric_surplus": None,  # Surplus from metric file (used for gross optimization)
+        "metric_requirements": None,  # Full metric requirements (for gross optimization)
         "felled_woodland_price_per_unit": {},  # Prices for Felled Woodland manual entries
     }
     
@@ -2698,7 +2700,9 @@ with st.expander("📄 Import from BNG Metric File", expanded=False):
                     st.session_state._next_row_id = next_id
                     st.session_state["_last_imported_file"] = uploaded_file_name
                     
-                    # Store surplus for SUO and check if usable
+                    # Store full requirements and surplus for gross optimization
+                    st.session_state["metric_requirements"] = requirements
+                    
                     if "surplus" in requirements and not requirements["surplus"].empty:
                         st.session_state["metric_surplus"] = requirements["surplus"].copy()
                         
@@ -2712,17 +2716,16 @@ with st.expander("📄 Import from BNG Metric File", expanded=False):
                         
                         if not eligible_surplus.empty:
                             total_eligible = eligible_surplus["units_surplus"].sum()
-                            usable_surplus = total_eligible * 0.5  # 50% headroom
                             st.success(
-                                f"🎯 **Surplus Uplift Offset Available!** "
+                                f"🎯 **On-Site Surplus Detected!** "
                                 f"{total_eligible:.2f} units of Medium+ surplus found. "
-                                f"Up to {usable_surplus:.2f} units (50% headroom) can provide a cost discount after optimization."
+                                f"This surplus will be used to offset baseline costs in gross optimization."
                             )
                         else:
-                            st.info(f"ℹ️ Found {len(requirements['surplus'])} surplus habitat(s), but none are Medium+ distinctiveness (no SUO discount available)")
+                            st.info(f"ℹ️ Found {len(requirements['surplus'])} surplus habitat(s), but none are Medium+ distinctiveness")
                     else:
                         st.session_state["metric_surplus"] = None
-                        st.info("ℹ️ No surplus found in metric file (no SUO discount available)")
+                        st.info("ℹ️ No surplus found in metric file")
                     
                     if st.session_state.demand_rows:
                         st.info(f"ℹ️ Automatically populated {len(st.session_state.demand_rows)} requirements in demand table below.")
@@ -4297,72 +4300,11 @@ with st.expander("💷 Pricing completeness (this contract size)", expanded=Fals
     except Exception as e:
         st.error(f"Pricing completeness error: {e}")
 
-# ================= SUO Helper Function =================
-def compute_suo_discount(alloc_df: pd.DataFrame, backend: Dict[str, pd.DataFrame]) -> Optional[Dict]:
-    """
-    Compute Surplus Uplift Offset (SUO) discount after optimization.
-    
-    SUO provides a cost discount based on surplus habitat from the metric file.
-    The discount accounts for:
-    - Only Medium+ distinctiveness surplus (50% headroom)
-    - SRMs of the actual banks used in the allocation
-    
-    Returns dict with:
-        - applicable: bool - whether SUO discount can be applied
-        - discount_fraction: float - percentage discount (0.0 to 1.0)
-        - eligible_surplus: float - total eligible surplus units
-        - usable_surplus: float - surplus after 50% headroom
-        - effective_offset: float - surplus adjusted for bank SRMs
-        - total_units_purchased: float - total units allocated
-        - cost_saving: float - estimated cost savings
-    """
-    try:
-        # Get surplus from metric (stored in session state when metric was uploaded)
-        metric_surplus = st.session_state.get("metric_surplus")
-        
-        if metric_surplus is None or metric_surplus.empty:
-            return {"applicable": False, "reason": "No surplus from metric file"}
-        
-        # Filter to Medium+ distinctiveness only
-        distinctiveness_order = {"Very Low": 0, "Low": 1, "Medium": 2, "High": 3, "Very High": 4}
-        eligible_surplus = metric_surplus[
-            metric_surplus["distinctiveness"].apply(
-                lambda d: distinctiveness_order.get(str(d), 0) >= 2
-            )
-        ].copy()
-        
-        if eligible_surplus.empty:
-            return {"applicable": False, "reason": "No Medium+ distinctiveness surplus"}
-        
-        # Calculate total eligible surplus
-        total_eligible = eligible_surplus["units_surplus"].sum()
-        
-        # Apply 50% headroom
-        usable_surplus = total_eligible * 0.5
-        
-        # Calculate total units purchased (this is what we need to mitigate)
-        total_units = alloc_df["units_supplied"].sum()
-        
-        # Calculate discount fraction: usable_surplus / total_units_to_mitigate
-        # Maximum discount capped at 60%
-        discount_fraction = min(usable_surplus / total_units, 0.60) if total_units > 0 else 0.0
-        
-        if discount_fraction > 0:
-            return {
-                "applicable": True,
-                "discount_fraction": discount_fraction,
-                "eligible_surplus": total_eligible,
-                "usable_surplus": usable_surplus,
-                "total_units_purchased": total_units
-            }
-        else:
-            return {"applicable": False, "reason": "No discount possible (insufficient surplus)"}
-            
-    except Exception as e:
-        st.warning(f"SUO computation error: {e}")
-        import traceback
-        traceback.print_exc()
-        return {"applicable": False, "reason": f"Error: {e}"}
+# ================= Note: SUO Removed =================
+# The Surplus Uplift Offset (SUO) functionality has been replaced by gross-based optimization.
+# On-site surplus is now used directly in the optimization algorithm to offset baseline costs
+# from habitat bank inventory, rather than being applied as a post-hoc discount.
+# See gross_optimizer.py and gross_optimizer_integration.py for the new implementation.
 
 # ================= Run optimiser & compute results =================
 # ================= Run optimiser & compute results =================
@@ -4614,17 +4556,8 @@ if run:
             {"Item": "Grand total",      "Amount £": round(total_with_admin, 2)},
         ])
         
-        # Compute SUO (Surplus Uplift Offset) discount after optimization
-        suo_results = compute_suo_discount(alloc_df, backend)
-        if suo_results and suo_results.get("applicable", False):
-            st.session_state["suo_results"] = suo_results
-            st.session_state["suo_applicable"] = True
-            # Initialize discount for report (defaults to enabled since checkbox defaults to True)
-            st.session_state["suo_discount_for_report"] = suo_results.get("discount_fraction", 0.0)
-        else:
-            st.session_state["suo_results"] = None
-            st.session_state["suo_applicable"] = False
-            st.session_state["suo_discount_for_report"] = 0.0
+        # Note: SUO has been replaced by gross-based optimization
+        # On-site surplus is now used directly in the optimization to offset baseline costs
         
         # Save summary data to session state for persistence
         st.session_state["site_hab_totals"] = site_hab_totals.copy()

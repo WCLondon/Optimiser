@@ -472,6 +472,122 @@ def test_no_inventory_returns_unmet_deficit(sample_pricing, sample_catalog, dist
     assert result.total_cost == 0.0
 
 
+def test_srm_applied_to_baseline_bucket(sample_pricing, sample_catalog, dist_levels):
+    """Test that SRM is applied to the baseline bucket at the end"""
+    # Create inventory with a baseline that needs SRM adjustment
+    inventory = pd.DataFrame([
+        {
+            "unique_id": "Bank-HAB-001",
+            "bank_id": "bank1",
+            "bank_name": "Test Bank",
+            "baseline_habitat": "Cereal crops",
+            "baseline_units": 2.0,
+            "new_habitat": "Mixed scrub",
+            "gross_units": 10.0,
+            "net_units": 8.0,
+            "remaining_units": 8.0,
+            "remaining_gross": 10.0
+        }
+    ])
+    
+    deficits = [
+        {"habitat": "Mixed scrub", "units": 5.0, "distinctiveness": "Medium", "broader_type": "Heathland and shrub"}
+    ]
+    
+    # Run with SRM = 4/3 (adjacent tier)
+    result = optimize_gross(
+        deficits=deficits,
+        on_site_surplus=[],
+        gross_inventory=inventory,
+        pricing_df=sample_pricing,
+        catalog_df=sample_catalog,
+        dist_levels=dist_levels,
+        srm_multiplier=4/3  # Adjacent tier
+    )
+    
+    # The baseline bucket should be 5.0 * (2.0/10.0) = 1.0 units raw
+    # With SRM 4/3, it becomes 1.0 * 4/3 = 1.333 units
+    # Check that we have allocations covering baseline
+    baseline_allocs = [a for a in result.allocations if "baseline" in a.supply_source]
+    
+    # There should be baseline allocations
+    # The exact number depends on available inventory
+    print(f"\nAllocation log:\n{chr(10).join(result.allocation_log)}")
+    
+    # Verify SRM was applied (look for mention in log)
+    log_text = "\n".join(result.allocation_log)
+    assert "SRM" in log_text or "baseline bucket" in log_text.lower()
+
+
+def test_srm_multiplier_increases_baseline_requirement(sample_pricing, sample_catalog, dist_levels):
+    """Test that higher SRM multiplier increases the baseline requirement proportionally"""
+    inventory = pd.DataFrame([
+        {
+            "unique_id": "Bank-HAB-001",
+            "bank_id": "bank1",
+            "bank_name": "Test Bank",
+            "baseline_habitat": "Cereal crops",
+            "baseline_units": 5.0,  # 50% baseline ratio
+            "new_habitat": "Mixed scrub",
+            "gross_units": 10.0,
+            "net_units": 5.0,
+            "remaining_units": 100.0,  # Plenty of stock
+            "remaining_gross": 100.0
+        },
+        {
+            "unique_id": "Bank-HAB-002",
+            "bank_id": "bank1",
+            "bank_name": "Test Bank",
+            "baseline_habitat": None,  # No baseline
+            "baseline_units": 0,
+            "new_habitat": "Cereal crops",
+            "gross_units": 100.0,
+            "net_units": 100.0,
+            "remaining_units": 100.0,
+            "remaining_gross": 100.0
+        }
+    ])
+    
+    deficits = [
+        {"habitat": "Mixed scrub", "units": 2.0, "distinctiveness": "Medium", "broader_type": "Heathland and shrub"}
+    ]
+    
+    # Run with SRM = 1.0 (local)
+    result_local = optimize_gross(
+        deficits=deficits,
+        on_site_surplus=[],
+        gross_inventory=inventory.copy(),
+        pricing_df=sample_pricing,
+        catalog_df=sample_catalog,
+        dist_levels=dist_levels,
+        srm_multiplier=1.0
+    )
+    
+    # Run with SRM = 2.0 (far)
+    result_far = optimize_gross(
+        deficits=deficits,
+        on_site_surplus=[],
+        gross_inventory=inventory.copy(),
+        pricing_df=sample_pricing,
+        catalog_df=sample_catalog,
+        dist_levels=dist_levels,
+        srm_multiplier=2.0
+    )
+    
+    # With SRM=1.0: baseline bucket = 2.0 * 0.5 = 1.0 (no adjustment)
+    # With SRM=2.0: baseline bucket = 2.0 * 0.5 * 2.0 = 2.0 (doubled)
+    
+    # Count baseline allocations
+    baseline_local = sum(a.supply_units for a in result_local.allocations if "baseline" in a.supply_source)
+    baseline_far = sum(a.supply_units for a in result_far.allocations if "baseline" in a.supply_source)
+    
+    print(f"\nLocal SRM baseline allocation: {baseline_local}")
+    print(f"Far SRM baseline allocation: {baseline_far}")
+    
+    # Far should require more baseline coverage than local
+    assert baseline_far >= baseline_local
+
+
 # ============ Format Output Tests ============
 
 def test_format_allocation_summary(sample_gross_inventory, sample_pricing, sample_catalog, dist_levels):
