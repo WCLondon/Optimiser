@@ -472,9 +472,9 @@ def test_no_inventory_returns_unmet_deficit(sample_pricing, sample_catalog, dist
     assert result.total_cost == 0.0
 
 
-def test_srm_applied_to_baseline_bucket(sample_pricing, sample_catalog, dist_levels):
-    """Test that SRM is applied to the baseline bucket at the end"""
-    # Create inventory with a baseline that needs SRM adjustment
+def test_srm_applied_to_supply_units(sample_pricing, sample_catalog, dist_levels):
+    """Test that SRM is applied to the supply units (penalty on what WE provide)"""
+    # Create inventory with a baseline
     inventory = pd.DataFrame([
         {
             "unique_id": "Bank-HAB-001",
@@ -485,16 +485,17 @@ def test_srm_applied_to_baseline_bucket(sample_pricing, sample_catalog, dist_lev
             "new_habitat": "Mixed scrub",
             "gross_units": 10.0,
             "net_units": 8.0,
-            "remaining_units": 8.0,
-            "remaining_gross": 10.0
+            "remaining_units": 100.0,  # Plenty available
+            "remaining_gross": 100.0
         }
     ])
     
     deficits = [
-        {"habitat": "Mixed scrub", "units": 5.0, "distinctiveness": "Medium", "broader_type": "Heathland and shrub"}
+        {"habitat": "Mixed scrub", "units": 3.0, "distinctiveness": "Medium", "broader_type": "Heathland and shrub"}
     ]
     
     # Run with SRM = 4/3 (adjacent tier)
+    # To cover 3 units of deficit, we need to provide 3 * 4/3 = 4 units from our bank
     result = optimize_gross(
         deficits=deficits,
         on_site_surplus=[],
@@ -502,25 +503,27 @@ def test_srm_applied_to_baseline_bucket(sample_pricing, sample_catalog, dist_lev
         pricing_df=sample_pricing,
         catalog_df=sample_catalog,
         dist_levels=dist_levels,
-        srm_multiplier=4/3  # Adjacent tier
+        srm_multiplier=4/3  # Adjacent tier: provide 4/3 units per 1 unit deficit
     )
     
-    # The baseline bucket should be 5.0 * (2.0/10.0) = 1.0 units raw
-    # With SRM 4/3, it becomes 1.0 * 4/3 = 1.333 units
-    # Check that we have allocations covering baseline
-    baseline_allocs = [a for a in result.allocations if "baseline" in a.supply_source]
+    # Check that we supplied MORE units than the deficit required (due to SRM penalty)
+    bank_allocs = [a for a in result.allocations if a.supply_source in ("bank_gross", "bank_net")]
     
-    # There should be baseline allocations
-    # The exact number depends on available inventory
-    print(f"\nAllocation log:\n{chr(10).join(result.allocation_log)}")
+    total_deficit_covered = sum(a.deficit_units for a in bank_allocs)
+    total_supply_used = sum(a.supply_units for a in bank_allocs)
     
-    # Verify SRM was applied (look for mention in log)
-    log_text = "\n".join(result.allocation_log)
-    assert "SRM" in log_text or "baseline bucket" in log_text.lower()
+    print(f"\nDeficit to cover: 3.0 units")
+    print(f"Total deficit covered: {total_deficit_covered:.4f}")
+    print(f"Total supply used: {total_supply_used:.4f}")
+    print(f"Expected supply with SRM 4/3: {3.0 * 4/3:.4f}")
+    
+    # Verify SRM penalty was applied
+    assert total_deficit_covered == pytest.approx(3.0, rel=0.01)
+    assert total_supply_used == pytest.approx(3.0 * 4/3, rel=0.01)  # 4 units supplied for 3 units deficit
 
 
-def test_srm_multiplier_increases_baseline_requirement(sample_pricing, sample_catalog, dist_levels):
-    """Test that higher SRM multiplier increases the baseline requirement proportionally"""
+def test_srm_multiplier_increases_supply_requirement(sample_pricing, sample_catalog, dist_levels):
+    """Test that higher SRM multiplier increases the supply requirement proportionally"""
     inventory = pd.DataFrame([
         {
             "unique_id": "Bank-HAB-001",
@@ -552,7 +555,7 @@ def test_srm_multiplier_increases_baseline_requirement(sample_pricing, sample_ca
         {"habitat": "Mixed scrub", "units": 2.0, "distinctiveness": "Medium", "broader_type": "Heathland and shrub"}
     ]
     
-    # Run with SRM = 1.0 (local)
+    # Run with SRM = 1.0 (local - no penalty)
     result_local = optimize_gross(
         deficits=deficits,
         on_site_surplus=[],
@@ -563,7 +566,7 @@ def test_srm_multiplier_increases_baseline_requirement(sample_pricing, sample_ca
         srm_multiplier=1.0
     )
     
-    # Run with SRM = 2.0 (far)
+    # Run with SRM = 2.0 (far - 2x penalty)
     result_far = optimize_gross(
         deficits=deficits,
         on_site_surplus=[],
@@ -574,18 +577,20 @@ def test_srm_multiplier_increases_baseline_requirement(sample_pricing, sample_ca
         srm_multiplier=2.0
     )
     
-    # With SRM=1.0: baseline bucket = 2.0 * 0.5 = 1.0 (no adjustment)
-    # With SRM=2.0: baseline bucket = 2.0 * 0.5 * 2.0 = 2.0 (doubled)
+    # With SRM=1.0: to cover 2 units deficit, we supply 2 units
+    # With SRM=2.0: to cover 2 units deficit, we supply 4 units (2x penalty)
     
-    # Count baseline allocations
-    baseline_local = sum(a.supply_units for a in result_local.allocations if "baseline" in a.supply_source)
-    baseline_far = sum(a.supply_units for a in result_far.allocations if "baseline" in a.supply_source)
+    # Count supply units used
+    supply_local = sum(a.supply_units for a in result_local.allocations if a.supply_source in ("bank_gross", "bank_net"))
+    supply_far = sum(a.supply_units for a in result_far.allocations if a.supply_source in ("bank_gross", "bank_net"))
     
-    print(f"\nLocal SRM baseline allocation: {baseline_local}")
-    print(f"Far SRM baseline allocation: {baseline_far}")
+    print(f"\nLocal SRM supply used: {supply_local}")
+    print(f"Far SRM supply used: {supply_far}")
+    print(f"Expected local: 2.0, Expected far: 4.0")
     
-    # Far should require more baseline coverage than local
-    assert baseline_far >= baseline_local
+    # Far should require double the supply (2x SRM penalty)
+    assert supply_local == pytest.approx(2.0, rel=0.01)
+    assert supply_far == pytest.approx(4.0, rel=0.01)
 
 
 # ============ Format Output Tests ============

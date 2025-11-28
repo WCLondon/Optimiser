@@ -190,14 +190,14 @@ def optimize_gross(
     Main entry point for gross-based optimization with deferred baseline bucket.
     
     Algorithm:
-    1. Process all metric deficits first using on-site surplus and gross bank units
-    2. Accumulate baseline losses into a "baseline bucket" (don't process immediately)
-    3. At the end, apply SRM to the baseline bucket and resolve with cheapest available
-    
-    This approach:
-    - Applies SRM once at the end, not repeatedly during iteration
-    - Allows baseline deficits to be batched together for efficiency
-    - Avoids SRM cascading effects
+    1. Process all metric deficits using on-site surplus first (no SRM - it's customer's own)
+    2. For remaining deficits, allocate bank GROSS units with SRM penalty applied to supply
+       - SRM is a penalty on what WE provide: to cover 1 unit of deficit, we provide SRM units
+       - local (SRM=1): 1 unit covers 1 unit deficit
+       - adjacent (SRM=4/3): 4/3 units covers 1 unit deficit  
+       - far (SRM=2): 2 units covers 1 unit deficit
+    3. Accumulate baseline losses from GROSS allocations into a "baseline bucket"
+    4. At the end, resolve baseline bucket with cheapest available (using on-site surplus or NET)
     
     Args:
         deficits: List of deficit dicts with keys: habitat, units, distinctiveness, broader_type
@@ -208,7 +208,10 @@ def optimize_gross(
         dist_levels: Distinctiveness level mapping (name -> numeric value)
         tier: Geographic tier for pricing (local/adjacent/far)
         contract_size: Contract size for pricing
-        srm_multiplier: Spatial Risk Multiplier (1.0 = local, 4/3 = adjacent, 2.0 = far)
+        srm_multiplier: Spatial Risk Multiplier applied to units WE supply
+            - 1.0 = local (no penalty)
+            - 4/3 = adjacent (we provide 4/3 units per 1 unit of deficit)
+            - 2.0 = far (we provide 2 units per 1 unit of deficit)
         max_iterations: Maximum iterations to prevent infinite loops
         
     Returns:
@@ -315,7 +318,13 @@ def optimize_gross(
         if units_needed <= 1e-9:
             continue
         
-        # Step 2: Allocate from bank gross inventory
+        # Step 2: Allocate from bank inventory
+        # SRM applies as a PENALTY on what WE supply:
+        # - To cover 1 unit of deficit, we must provide (1 * SRM) units from our bank
+        # - local (SRM=1): provide 1 unit to cover 1 unit deficit
+        # - adjacent (SRM=4/3): provide 4/3 units to cover 1 unit deficit
+        # - far (SRM=2): provide 2 units to cover 1 unit deficit
+        
         # Find eligible inventory rows
         eligible_inventory = _find_eligible_inventory(
             current_deficit, inventory, catalog_df, pricing_df, dist_levels, tier, contract_size
@@ -325,6 +334,8 @@ def optimize_gross(
             allocation_log.append(f"  -> No eligible inventory found for {current_deficit.habitat}")
             # Will remain as unmet deficit
             continue
+        
+        allocation_log.append(f"  -> SRM penalty: {srm_multiplier:.4f}x (need {units_needed * srm_multiplier:.4f} supply units to cover {units_needed:.4f} deficit)")
         
         # Allocate from cheapest eligible inventory
         for inv_info in eligible_inventory:
@@ -353,19 +364,24 @@ def optimize_gross(
                 if net_available <= 1e-9:
                     continue
                 
-                units_to_use = min(units_needed, net_available)
-                inventory.loc[inv_idx, "remaining_gross"] -= units_to_use
-                units_needed -= units_to_use
+                # Calculate how much deficit we can cover with available NET units
+                # We have `net_available` supply units, which covers `net_available / srm_multiplier` deficit units
+                deficit_coverable = net_available / srm_multiplier
+                deficit_to_cover = min(units_needed, deficit_coverable)
+                supply_units_to_use = deficit_to_cover * srm_multiplier
+                
+                inventory.loc[inv_idx, "remaining_gross"] -= supply_units_to_use
+                units_needed -= deficit_to_cover
                 
                 allocation_id_counter += 1
-                cost = units_to_use * inv_info["price"]
+                cost = supply_units_to_use * inv_info["price"]
                 
                 allocations.append(AllocationRecord(
                     allocation_id=f"alloc_{allocation_id_counter}",
                     deficit_habitat=current_deficit.habitat,
-                    deficit_units=units_to_use,
+                    deficit_units=deficit_to_cover,
                     supply_habitat=supply_habitat,
-                    supply_units=units_to_use,
+                    supply_units=supply_units_to_use,
                     supply_source="bank_net",  # Using NET because baseline = supply
                     bank_id=str(inv_row.get("bank_id", "")),
                     bank_name=str(inv_row.get("bank_name", "")),
@@ -377,29 +393,35 @@ def optimize_gross(
                 ))
                 
                 allocation_log.append(
-                    f"  -> Used {units_to_use:.4f} NET units ({supply_habitat}) from {inv_row.get('bank_name')} "
-                    f"(baseline=supply, using NET) | Cost: £{cost:,.2f}"
+                    f"  -> Used {supply_units_to_use:.4f} NET units ({supply_habitat}) from {inv_row.get('bank_name')} "
+                    f"to cover {deficit_to_cover:.4f} deficit (SRM={srm_multiplier:.2f}) | Cost: £{cost:,.2f}"
                 )
             else:
                 # Use GROSS units and add baseline to bucket
                 if remaining_gross <= 1e-9:
                     continue
                 
-                units_to_use = min(units_needed, remaining_gross)
-                baseline_units_incurred = units_to_use * baseline_ratio
+                # Calculate how much deficit we can cover with available GROSS units
+                # We have `remaining_gross` supply units, which covers `remaining_gross / srm_multiplier` deficit units
+                deficit_coverable = remaining_gross / srm_multiplier
+                deficit_to_cover = min(units_needed, deficit_coverable)
+                supply_units_to_use = deficit_to_cover * srm_multiplier
                 
-                inventory.loc[inv_idx, "remaining_gross"] -= units_to_use
-                units_needed -= units_to_use
+                # Baseline incurred is based on supply units used (what we actually take from inventory)
+                baseline_units_incurred = supply_units_to_use * baseline_ratio
+                
+                inventory.loc[inv_idx, "remaining_gross"] -= supply_units_to_use
+                units_needed -= deficit_to_cover
                 
                 allocation_id_counter += 1
-                cost = units_to_use * inv_info["price"]
+                cost = supply_units_to_use * inv_info["price"]
                 
                 allocations.append(AllocationRecord(
                     allocation_id=f"alloc_{allocation_id_counter}",
                     deficit_habitat=current_deficit.habitat,
-                    deficit_units=units_to_use,
+                    deficit_units=deficit_to_cover,
                     supply_habitat=supply_habitat,
-                    supply_units=units_to_use,
+                    supply_units=supply_units_to_use,
                     supply_source="bank_gross",
                     bank_id=str(inv_row.get("bank_id", "")),
                     bank_name=str(inv_row.get("bank_name", "")),
@@ -411,37 +433,35 @@ def optimize_gross(
                 ))
                 
                 allocation_log.append(
-                    f"  -> Used {units_to_use:.4f} GROSS units ({supply_habitat}) from {inv_row.get('bank_name')} "
-                    f"| Cost: £{cost:,.2f} | Baseline: {baseline_units_incurred:.4f} ({baseline_habitat})"
+                    f"  -> Used {supply_units_to_use:.4f} GROSS units ({supply_habitat}) from {inv_row.get('bank_name')} "
+                    f"to cover {deficit_to_cover:.4f} deficit (SRM={srm_multiplier:.2f}) | Cost: £{cost:,.2f} | Baseline: {baseline_units_incurred:.4f} ({baseline_habitat})"
                 )
                 
                 # Add baseline to bucket (don't process yet)
                 if baseline_habitat and baseline_units_incurred > 1e-9:
                     baseline_bucket[baseline_habitat] = baseline_bucket.get(baseline_habitat, 0) + baseline_units_incurred
     
-    # ========== PHASE 2: Process baseline bucket with SRM ==========
+    # ========== PHASE 2: Process baseline bucket ==========
+    # NOTE: SRM does NOT apply to baseline bucket - it only applies to units we supply to customer
+    # The baseline bucket is our internal tracking of habitat we've "consumed" from our bank
     allocation_log.append("")
     allocation_log.append("=" * 60)
-    allocation_log.append(f"PHASE 2: Processing baseline bucket (SRM = {srm_multiplier:.4f})")
+    allocation_log.append("PHASE 2: Processing baseline bucket")
+    allocation_log.append("(Note: SRM already applied in Phase 1 to supply units)")
     allocation_log.append("=" * 60)
     
     if baseline_bucket:
-        total_baseline_raw = sum(baseline_bucket.values())
-        total_baseline_with_srm = total_baseline_raw * srm_multiplier
+        total_baseline = sum(baseline_bucket.values())
         
         allocation_log.append(f"\nBaseline bucket summary:")
-        allocation_log.append(f"  Raw baseline total: {total_baseline_raw:.4f} units")
-        allocation_log.append(f"  SRM multiplier: {srm_multiplier:.4f}")
-        allocation_log.append(f"  Adjusted baseline total: {total_baseline_with_srm:.4f} units")
+        allocation_log.append(f"  Total baseline to cover: {total_baseline:.4f} units")
         allocation_log.append(f"\nBaseline by habitat:")
         for hab, units in sorted(baseline_bucket.items(), key=lambda x: -x[1]):
-            adjusted = units * srm_multiplier
-            allocation_log.append(f"  - {hab}: {units:.4f} raw -> {adjusted:.4f} adjusted")
+            allocation_log.append(f"  - {hab}: {units:.4f} units")
         
-        # Convert baseline bucket to deficit entries with SRM applied
+        # Convert baseline bucket to deficit entries (NO SRM - already accounted for)
         baseline_deficits = []
-        for baseline_habitat, raw_units in baseline_bucket.items():
-            adjusted_units = raw_units * srm_multiplier
+        for baseline_habitat, baseline_units in baseline_bucket.items():
             
             # Look up baseline habitat distinctiveness
             baseline_cat = catalog_df[catalog_df["habitat_name"].str.strip() == str(baseline_habitat).strip()]
@@ -453,7 +473,7 @@ def optimize_gross(
             
             baseline_deficits.append(DeficitEntry(
                 habitat=baseline_habitat,
-                units=adjusted_units,
+                units=baseline_units,  # No SRM adjustment
                 distinctiveness=baseline_dist,
                 broader_type=baseline_broader,
                 source="baseline_bucket"
@@ -471,7 +491,7 @@ def optimize_gross(
             
             allocation_log.append(
                 f"\nProcessing baseline: {baseline_deficit.habitat} "
-                f"({baseline_deficit.units:.4f} units after SRM)"
+                f"({baseline_deficit.units:.4f} units)"
             )
             
             units_needed = baseline_deficit.units
@@ -594,9 +614,8 @@ def optimize_gross(
                 source="metric_unmet"
             ))
     
-    # Check baseline deficits
-    for baseline_habitat, raw_units in baseline_bucket.items():
-        adjusted_units = raw_units * srm_multiplier
+    # Check baseline deficits (no SRM - already accounted for in Phase 1)
+    for baseline_habitat, baseline_units in baseline_bucket.items():
         
         # Sum up what was allocated to this baseline
         allocated = sum(
@@ -604,7 +623,7 @@ def optimize_gross(
             if a.deficit_habitat == baseline_habitat and a.supply_source in ("on_site_surplus_baseline", "bank_net_baseline")
         )
         
-        unmet = adjusted_units - allocated
+        unmet = baseline_units - allocated  # No SRM adjustment
         if unmet > 1e-9:
             remaining_deficits.append(DeficitEntry(
                 habitat=baseline_habitat,
