@@ -27,7 +27,9 @@ CREATE TABLE IF NOT EXISTS "GrossInventory" (
     -- Bank identification
     bank_id TEXT NOT NULL,
     bank_name TEXT NOT NULL,
-    bank_postcode TEXT,  -- Postcode for geocoding and tier calculations
+    bank_postcode TEXT,  -- Postcode (optional, for reference)
+    bank_lpa TEXT,  -- Local Planning Authority name (for tier calculation)
+    bank_nca TEXT,  -- National Character Area name (for tier calculation)
     bgs_reference TEXT,  -- Biodiversity Gain Site Reference (e.g., BGS-150825001)
     habitat_reference TEXT,  -- Habitat Reference (e.g., HAB-00004166-BM4S1)
     
@@ -71,6 +73,8 @@ CREATE INDEX IF NOT EXISTS idx_gross_inventory_postcode ON "GrossInventory"(bank
 CREATE INDEX IF NOT EXISTS idx_gross_inventory_baseline_habitat ON "GrossInventory"(baseline_habitat);
 CREATE INDEX IF NOT EXISTS idx_gross_inventory_unique_id ON "GrossInventory"(unique_id);
 CREATE INDEX IF NOT EXISTS idx_gross_inventory_remaining ON "GrossInventory"(remaining_units);
+CREATE INDEX IF NOT EXISTS idx_gross_inventory_lpa ON "GrossInventory"(bank_lpa);
+CREATE INDEX IF NOT EXISTS idx_gross_inventory_nca ON "GrossInventory"(bank_nca);
 
 -- Trigger to update updated_at timestamp
 CREATE TRIGGER update_gross_inventory_updated_at BEFORE UPDATE ON "GrossInventory"
@@ -83,6 +87,8 @@ SELECT
     gi.bank_id,
     gi.bank_name,
     gi.bank_postcode,
+    gi.bank_lpa,  -- LPA for tier calculation
+    gi.bank_nca,  -- NCA for tier calculation
     gi.ledger_type,  -- CRITICAL: needed for inter-ledger trading check
     gi.baseline_habitat,
     gi.baseline_units,
@@ -100,11 +106,8 @@ SELECT
     CASE 
         WHEN gi.gross_units > 0 THEN gi.baseline_units / gi.gross_units
         ELSE 0
-    END AS baseline_ratio,
-    b.lpa_name,
-    b.nca_name
+    END AS baseline_ratio
 FROM "GrossInventory" gi
-LEFT JOIN "Banks" b ON gi.bank_id = b.bank_id
 WHERE gi.remaining_units > 0;
 
 -- =====================================================
@@ -113,7 +116,7 @@ WHERE gi.remaining_units > 0;
 -- Run this INSERT statement to populate the GrossInventory table with sample data
 
 INSERT INTO "GrossInventory" (
-    unique_id, bank_id, bank_name, bank_postcode, bgs_reference, habitat_reference,
+    unique_id, bank_id, bank_name, bank_postcode, bank_lpa, bank_nca, bgs_reference, habitat_reference,
     ledger_type,  -- 'area', 'hedgerow', or 'watercourse'
     baseline_habitat, baseline_area, baseline_units,
     new_habitat, new_area, gross_units, net_units,
@@ -124,7 +127,7 @@ INSERT INTO "GrossInventory" (
 -- Area habitats
 (
     'Wild HordenBGS-150825001HAB-00004166-BM4S1',
-    'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004166-BM4S1',
+    'wild_horden', 'Wild Horden', 'TS21 1AA', 'County Durham', 'Durham Coalfield Pennine Fringe', 'BGS-150825001', 'HAB-00004166-BM4S1',
     'area',
     'Cereal crops', 2.80494, 5.60988,
     'Traditional orchards', 2.80494, 16.50635148, 10.89647148,
@@ -134,7 +137,7 @@ INSERT INTO "GrossInventory" (
 ),
 (
     'Wild HordenBGS-150825001HAB-00004164-BG0N0',
-    'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004164-BG0N0',
+    'wild_horden', 'Wild Horden', 'TS21 1AA', 'County Durham', 'Durham Coalfield Pennine Fringe', 'BGS-150825001', 'HAB-00004164-BG0N0',
     'area',
     'Cereal crops', 2.780805, 5.56161,
     'Mixed scrub', 2.780805, 23.36818139, 17.80657139,
@@ -144,7 +147,7 @@ INSERT INTO "GrossInventory" (
 ),
 (
     'Wild HordenBGS-150825001HAB-00004162-BQ3D5',
-    'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004162-BQ3D5',
+    'wild_horden', 'Wild Horden', 'TS21 1AA', 'County Durham', 'Durham Coalfield Pennine Fringe', 'BGS-150825001', 'HAB-00004162-BQ3D5',
     'area',
     'Modified grassland', 0.72, 2.88,
     'Lowland calcareous grassland', 0.72, 4.022336023, 1.142336023,
@@ -154,7 +157,7 @@ INSERT INTO "GrossInventory" (
 ),
 (
     'Wild HordenBGS-150825001HAB-00004160-BD5Y3',
-    'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004160-BD5Y3',
+    'wild_horden', 'Wild Horden', 'TS21 1AA', 'County Durham', 'Durham Coalfield Pennine Fringe', 'BGS-150825001', 'HAB-00004160-BD5Y3',
     'area',
     'Cereal crops', 2.780805, 5.56161,
     'Other neutral grassland', 2.780805, 23.27, 17.70839,
@@ -165,7 +168,7 @@ INSERT INTO "GrossInventory" (
 -- Hedgerow habitats
 (
     'Wild HordenBGS-150825001HAB-00004165-BN3D0',
-    'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004165-BN3D0',
+    'wild_horden', 'Wild Horden', 'TS21 1AA', 'County Durham', 'Durham Coalfield Pennine Fringe', 'BGS-150825001', 'HAB-00004165-BN3D0',
     'hedgerow',
     'Native hedgerow', 0.2, 0.8,
     'Species-rich native hedgerow with trees', 0.2, 2.760790368, 1.960790368,
@@ -175,7 +178,7 @@ INSERT INTO "GrossInventory" (
 ),
 (
     'Wild HordenBGS-150825001HAB-00004161-BS4X2',
-    'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004161-BS4X2',
+    'wild_horden', 'Wild Horden', 'TS21 1AA', 'County Durham', 'Durham Coalfield Pennine Fringe', 'BGS-150825001', 'HAB-00004161-BS4X2',
     'hedgerow',
     'Native hedgerow', 0.166, 0.332,
     'Species-rich native hedgerow with trees', 0.166, 2.19194972, 1.85994972,
@@ -185,7 +188,7 @@ INSERT INTO "GrossInventory" (
 ),
 (
     'Wild HordenBGS-150825001HAB-00004163-BW6X7',
-    'wild_horden', 'Wild Horden', 'TS21 1AA', 'BGS-150825001', 'HAB-00004163-BW6X7',
+    'wild_horden', 'Wild Horden', 'TS21 1AA', 'County Durham', 'Durham Coalfield Pennine Fringe', 'BGS-150825001', 'HAB-00004163-BW6X7',
     'hedgerow',
     NULL, 0.2984, 0,  -- No baseline habitat
     'Species-rich native hedgerow with trees', 0.2984, 2.634011039, 2.634011039,

@@ -534,7 +534,9 @@ def test_srm_applied_to_supply_units(sample_pricing, sample_catalog, dist_levels
             "gross_units": 10.0,
             "net_units": 8.0,
             "remaining_units": 100.0,  # Plenty available
-            "remaining_gross": 100.0
+            "remaining_gross": 100.0,
+            "bank_lpa": "Test LPA",  # Different from target = adjacent
+            "bank_nca": "Test NCA"
         }
     ])
     
@@ -542,7 +544,7 @@ def test_srm_applied_to_supply_units(sample_pricing, sample_catalog, dist_levels
         {"habitat": "Mixed scrub", "units": 3.0, "distinctiveness": "Medium", "broader_type": "Heathland and shrub"}
     ]
     
-    # Run with SRM = 4/3 (adjacent tier)
+    # Run with adjacent tier (bank LPA is neighbor of target)
     # To cover 3 units of deficit, we need to provide 3 * 4/3 = 4 units from our bank
     result = optimize_gross(
         deficits=deficits,
@@ -551,7 +553,10 @@ def test_srm_applied_to_supply_units(sample_pricing, sample_catalog, dist_levels
         pricing_df=sample_pricing,
         catalog_df=sample_catalog,
         dist_levels=dist_levels,
-        srm_multiplier=4/3  # Adjacent tier: provide 4/3 units per 1 unit deficit
+        target_lpa="Target LPA",
+        target_nca="Target NCA",
+        lpa_neighbors=["test lpa"],  # Bank LPA is neighbor
+        nca_neighbors=[]
     )
     
     # Check that we supplied MORE units than the deficit required (due to SRM penalty)
@@ -572,7 +577,7 @@ def test_srm_applied_to_supply_units(sample_pricing, sample_catalog, dist_levels
 
 def test_srm_multiplier_increases_supply_requirement(sample_pricing, sample_catalog, dist_levels):
     """Test that higher SRM multiplier increases the supply requirement proportionally"""
-    inventory = pd.DataFrame([
+    inventory_local = pd.DataFrame([
         {
             "unique_id": "Bank-HAB-001",
             "bank_id": "bank1",
@@ -583,7 +588,9 @@ def test_srm_multiplier_increases_supply_requirement(sample_pricing, sample_cata
             "gross_units": 10.0,
             "net_units": 5.0,
             "remaining_units": 100.0,  # Plenty of stock
-            "remaining_gross": 100.0
+            "remaining_gross": 100.0,
+            "bank_lpa": "Target LPA",  # Same as target = local
+            "bank_nca": "Target NCA"
         },
         {
             "unique_id": "Bank-HAB-002",
@@ -595,7 +602,40 @@ def test_srm_multiplier_increases_supply_requirement(sample_pricing, sample_cata
             "gross_units": 100.0,
             "net_units": 100.0,
             "remaining_units": 100.0,
-            "remaining_gross": 100.0
+            "remaining_gross": 100.0,
+            "bank_lpa": "Target LPA",
+            "bank_nca": "Target NCA"
+        }
+    ])
+    
+    inventory_far = pd.DataFrame([
+        {
+            "unique_id": "Bank-HAB-001",
+            "bank_id": "bank1",
+            "bank_name": "Test Bank",
+            "baseline_habitat": "Cereal crops",
+            "baseline_units": 5.0,
+            "new_habitat": "Mixed scrub",
+            "gross_units": 10.0,
+            "net_units": 5.0,
+            "remaining_units": 100.0,
+            "remaining_gross": 100.0,
+            "bank_lpa": "Far LPA",  # Not same or neighbor = far
+            "bank_nca": "Far NCA"
+        },
+        {
+            "unique_id": "Bank-HAB-002",
+            "bank_id": "bank1",
+            "bank_name": "Test Bank",
+            "baseline_habitat": None,
+            "baseline_units": 0,
+            "new_habitat": "Cereal crops",
+            "gross_units": 100.0,
+            "net_units": 100.0,
+            "remaining_units": 100.0,
+            "remaining_gross": 100.0,
+            "bank_lpa": "Far LPA",
+            "bank_nca": "Far NCA"
         }
     ])
     
@@ -603,30 +643,32 @@ def test_srm_multiplier_increases_supply_requirement(sample_pricing, sample_cata
         {"habitat": "Mixed scrub", "units": 2.0, "distinctiveness": "Medium", "broader_type": "Heathland and shrub"}
     ]
     
-    # Run with SRM = 1.0 (local - no penalty)
+    # Run with local tier (same LPA = no penalty)
     result_local = optimize_gross(
         deficits=deficits,
         on_site_surplus=[],
-        gross_inventory=inventory.copy(),
+        gross_inventory=inventory_local,
         pricing_df=sample_pricing,
         catalog_df=sample_catalog,
         dist_levels=dist_levels,
-        srm_multiplier=1.0
+        target_lpa="Target LPA",
+        target_nca="Target NCA"
     )
     
-    # Run with SRM = 2.0 (far - 2x penalty)
+    # Run with far tier (2x penalty)
     result_far = optimize_gross(
         deficits=deficits,
         on_site_surplus=[],
-        gross_inventory=inventory.copy(),
+        gross_inventory=inventory_far,
         pricing_df=sample_pricing,
         catalog_df=sample_catalog,
         dist_levels=dist_levels,
-        srm_multiplier=2.0
+        target_lpa="Target LPA",
+        target_nca="Target NCA"
     )
     
-    # With SRM=1.0: to cover 2 units deficit, we supply 2 units
-    # With SRM=2.0: to cover 2 units deficit, we supply 4 units (2x penalty)
+    # With local tier (SRM=1.0): to cover 2 units deficit, we supply 2 units
+    # With far tier (SRM=2.0): to cover 2 units deficit, we supply 4 units (2x penalty)
     
     # Count supply units used
     supply_local = sum(a.supply_units for a in result_local.allocations if a.supply_source in ("bank_gross", "bank_net"))

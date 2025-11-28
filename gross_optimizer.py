@@ -197,9 +197,12 @@ def optimize_gross(
     pricing_df: pd.DataFrame,
     catalog_df: pd.DataFrame,
     dist_levels: Dict[str, float],
-    tier: str = "local",
     contract_size: str = "small",
-    srm_multiplier: float = 1.0,
+    target_lpa: str = "",
+    target_nca: str = "",
+    lpa_neighbors: List[str] = None,
+    nca_neighbors: List[str] = None,
+    default_tier: str = "local",
     max_iterations: int = 100
 ) -> GrossOptimizationResult:
     """
@@ -209,6 +212,7 @@ def optimize_gross(
     1. Process all metric deficits using on-site surplus first (no SRM - it's customer's own)
     2. For remaining deficits, allocate bank GROSS units with SRM penalty applied to supply
        - SRM is a penalty on what WE provide: to cover 1 unit of deficit, we provide SRM units
+       - Tier is calculated per bank based on bank LPA/NCA vs target LPA/NCA
        - local (SRM=1): 1 unit covers 1 unit deficit
        - adjacent (SRM=4/3): 4/3 units covers 1 unit deficit  
        - far (SRM=2): 2 units covers 1 unit deficit
@@ -218,21 +222,30 @@ def optimize_gross(
     Args:
         deficits: List of deficit dicts with keys: habitat, units, distinctiveness, broader_type
         on_site_surplus: List of surplus dicts with keys: habitat, units, distinctiveness, broader_type
-        gross_inventory: DataFrame with columns from GrossInventory table
+        gross_inventory: DataFrame with columns from GrossInventory table (incl. bank_lpa, bank_nca)
         pricing_df: Pricing data for cost calculations
         catalog_df: Habitat catalog for trading rule lookups
         dist_levels: Distinctiveness level mapping (name -> numeric value)
-        tier: Geographic tier for pricing (local/adjacent/far)
         contract_size: Contract size for pricing
-        srm_multiplier: Spatial Risk Multiplier applied to units WE supply
-            - 1.0 = local (no penalty)
-            - 4/3 = adjacent (we provide 4/3 units per 1 unit of deficit)
-            - 2.0 = far (we provide 2 units per 1 unit of deficit)
+        target_lpa: Target site's Local Planning Authority name
+        target_nca: Target site's National Character Area name
+        lpa_neighbors: List of LPA names neighboring the target
+        nca_neighbors: List of NCA names neighboring the target
+        default_tier: Default tier if bank LPA/NCA not available
         max_iterations: Maximum iterations to prevent infinite loops
         
     Returns:
         GrossOptimizationResult with allocations and remaining deficits
     """
+    # Normalize neighbor lists for matching
+    if lpa_neighbors is None:
+        lpa_neighbors = []
+    if nca_neighbors is None:
+        nca_neighbors = []
+    
+    lpa_neighbors_norm = [str(n).strip().lower() for n in lpa_neighbors]
+    nca_neighbors_norm = [str(n).strip().lower() for n in nca_neighbors]
+    
     # Initialize working lists for metric deficits (Phase 1)
     metric_deficits = [
         DeficitEntry(
@@ -284,7 +297,7 @@ def optimize_gross(
     # ========== PHASE 1: Process all metric deficits ==========
     # Sort deficits by cost (most expensive first = most efficient for us)
     metric_deficits.sort(
-        key=lambda d: -estimate_offset_cost(d.habitat, d.distinctiveness, pricing_df, tier, contract_size)
+        key=lambda d: -estimate_offset_cost(d.habitat, d.distinctiveness, pricing_df, default_tier, contract_size)
     )
     
     for current_deficit in metric_deficits:
@@ -346,17 +359,18 @@ def optimize_gross(
         # - adjacent (SRM=4/3): provide 4/3 units to cover 1 unit deficit
         # - far (SRM=2): provide 2 units to cover 1 unit deficit
         
-        # Find eligible inventory rows
+        # Find eligible inventory rows (with per-bank tier calculation)
         eligible_inventory = _find_eligible_inventory(
-            current_deficit, inventory, catalog_df, pricing_df, dist_levels, tier, contract_size
+            current_deficit, inventory, catalog_df, pricing_df, dist_levels, contract_size,
+            target_lpa=target_lpa, target_nca=target_nca,
+            lpa_neighbors_norm=lpa_neighbors_norm, nca_neighbors_norm=nca_neighbors_norm,
+            default_tier=default_tier
         )
         
         if not eligible_inventory:
             allocation_log.append(f"  -> No eligible inventory found for {current_deficit.habitat}")
             # Will remain as unmet deficit
             continue
-        
-        allocation_log.append(f"  -> SRM penalty: {srm_multiplier:.4f}x (need {units_needed * srm_multiplier:.4f} supply units to cover {units_needed:.4f} deficit)")
         
         # Allocate from cheapest eligible inventory
         for inv_info in eligible_inventory:
@@ -369,6 +383,10 @@ def optimize_gross(
             baseline_ratio = inv_info["baseline_ratio"]
             supply_habitat = inv_info["supply_habitat"]
             supply_ledger = inv_info.get("supply_ledger", "area")  # Get ledger type
+            inv_tier = inv_info.get("tier", default_tier)  # Per-bank tier
+            srm_multiplier = inv_info.get("srm", 1.0)  # Per-bank SRM
+            
+            allocation_log.append(f"  -> Using {supply_habitat} from bank (tier={inv_tier}, SRM={srm_multiplier:.4f}x)")
             
             remaining_gross = inventory.loc[inv_idx, "remaining_gross"]
             
@@ -506,7 +524,7 @@ def optimize_gross(
         
         # Sort baseline deficits by cost (most expensive first)
         baseline_deficits.sort(
-            key=lambda d: -estimate_offset_cost(d.habitat, d.distinctiveness, pricing_df, tier, contract_size)
+            key=lambda d: -estimate_offset_cost(d.habitat, d.distinctiveness, pricing_df, default_tier, contract_size)
         )
         
         # Process baseline deficits
@@ -564,7 +582,10 @@ def optimize_gross(
             
             # Then use bank inventory (NET only for baselines to avoid more baselines)
             eligible_inventory = _find_eligible_inventory(
-                baseline_deficit, inventory, catalog_df, pricing_df, dist_levels, tier, contract_size
+                baseline_deficit, inventory, catalog_df, pricing_df, dist_levels, contract_size,
+                target_lpa=target_lpa, target_nca=target_nca,
+                lpa_neighbors_norm=lpa_neighbors_norm, nca_neighbors_norm=nca_neighbors_norm,
+                default_tier=default_tier
             )
             
             for inv_info in eligible_inventory:
@@ -574,6 +595,7 @@ def optimize_gross(
                 inv_idx = inv_info["index"]
                 inv_row = inv_info["row"]
                 supply_habitat = inv_info["supply_habitat"]
+                inv_tier = inv_info.get("tier", default_tier)
                 
                 # For baseline bucket, always use NET to avoid creating more baselines
                 remaining = inventory.loc[inv_idx, "remaining_gross"]
@@ -688,19 +710,71 @@ def optimize_gross(
     )
 
 
+def _calculate_tier_and_srm(
+    bank_lpa: str,
+    bank_nca: str,
+    target_lpa: str,
+    target_nca: str,
+    lpa_neighbors_norm: List[str],
+    nca_neighbors_norm: List[str]
+) -> Tuple[str, float]:
+    """
+    Calculate tier and SRM multiplier for a bank relative to target location.
+    
+    Returns:
+        (tier, srm_multiplier) where:
+        - tier: "local", "adjacent", or "far"
+        - srm_multiplier: 1.0 (local), 4/3 (adjacent), or 2.0 (far)
+    """
+    def norm_name(s: str) -> str:
+        return str(s).strip().lower() if s else ""
+    
+    blpa_norm = norm_name(bank_lpa)
+    bnca_norm = norm_name(bank_nca)
+    tlpa_norm = norm_name(target_lpa)
+    tnca_norm = norm_name(target_nca)
+    
+    # Evaluate LPA axis
+    lpa_same = blpa_norm and tlpa_norm and blpa_norm == tlpa_norm
+    lpa_neighbour = blpa_norm and blpa_norm in lpa_neighbors_norm
+    
+    # Evaluate NCA axis
+    nca_same = bnca_norm and tnca_norm and bnca_norm == tnca_norm
+    nca_neighbour = bnca_norm and bnca_norm in nca_neighbors_norm
+    
+    # Return best tier (local > adjacent > far)
+    if lpa_same or nca_same:
+        return "local", 1.0
+    elif lpa_neighbour or nca_neighbour:
+        return "adjacent", 4/3
+    else:
+        return "far", 2.0
+
+
 def _find_eligible_inventory(
     deficit: DeficitEntry,
     inventory: pd.DataFrame,
     catalog_df: pd.DataFrame,
     pricing_df: pd.DataFrame,
     dist_levels: Dict[str, float],
-    tier: str,
-    contract_size: str
+    contract_size: str,
+    target_lpa: str = "",
+    target_nca: str = "",
+    lpa_neighbors_norm: List[str] = None,
+    nca_neighbors_norm: List[str] = None,
+    default_tier: str = "local"
 ) -> List[Dict[str, Any]]:
     """
     Find eligible inventory rows for a given deficit, sorted by price (cheapest first).
     Only returns inventory that matches the deficit's ledger type (no inter-ledger trading).
+    
+    Calculates tier per inventory row based on bank LPA/NCA vs target LPA/NCA.
     """
+    if lpa_neighbors_norm is None:
+        lpa_neighbors_norm = []
+    if nca_neighbors_norm is None:
+        nca_neighbors_norm = []
+    
     eligible = []
     
     for _, inv_row in inventory.iterrows():
@@ -737,7 +811,20 @@ def _find_eligible_inventory(
         ):
             continue
         
-        # Get price for this inventory
+        # Calculate tier based on bank LPA/NCA vs target
+        bank_lpa = str(inv_row.get("bank_lpa", ""))
+        bank_nca = str(inv_row.get("bank_nca", ""))
+        
+        if bank_lpa or bank_nca:
+            tier, srm = _calculate_tier_and_srm(
+                bank_lpa, bank_nca, target_lpa, target_nca,
+                lpa_neighbors_norm, nca_neighbors_norm
+            )
+        else:
+            tier = default_tier
+            srm = {"local": 1.0, "adjacent": 4/3, "far": 2.0}.get(tier, 1.0)
+        
+        # Get price for this inventory (based on calculated tier)
         price = estimate_offset_cost(supply_habitat, supply_dist, pricing_df, tier, contract_size)
         
         eligible.append({
@@ -747,6 +834,8 @@ def _find_eligible_inventory(
             "supply_dist": supply_dist,
             "supply_broader": supply_broader,
             "supply_ledger": supply_ledger,
+            "tier": tier,
+            "srm": srm,
             "price": price,
             "baseline_habitat": inv_row.get("baseline_habitat"),
             "baseline_ratio": (
