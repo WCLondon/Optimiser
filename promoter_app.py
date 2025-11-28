@@ -728,6 +728,9 @@ if st.session_state.get('submission_complete', False):
 st.subheader("👥 Additional Recipients (Optional)")
 st.caption("Add additional contacts to be named in the client email. These are not saved to the database.")
 
+# Default title for additional recipients
+DEFAULT_ADD_TITLE = "Mr"
+
 # Display existing additional recipients with remove buttons
 if st.session_state.additional_recipients:
     for idx, recipient in enumerate(st.session_state.additional_recipients):
@@ -736,14 +739,17 @@ if st.session_state.additional_recipients:
             st.text(f"• {recipient}")
         with col2:
             if st.button("✕", key=f"remove_recipient_{idx}", help="Remove this recipient"):
-                st.session_state.additional_recipients.pop(idx)
+                # Store index to remove and handle after loop to avoid stale index issues
+                st.session_state.additional_recipients = [
+                    r for i, r in enumerate(st.session_state.additional_recipients) if i != idx
+                ]
                 st.rerun()
 
 # Input fields for new additional recipient (outside form to avoid slow rerun)
 with st.expander("➕ Add Additional Recipient", expanded=False):
     add_col1, add_col2, add_col3 = st.columns([1, 2, 2])
     with add_col1:
-        add_title = st.selectbox("Title", ["Mr", "Mrs", "Ms", "Dr", "Prof", "Other", "N/A"], key="add_title")
+        add_title = st.selectbox("Title", [DEFAULT_ADD_TITLE, "Mrs", "Ms", "Dr", "Prof", "Other", "N/A"], key="add_title")
     with add_col2:
         add_first_name = st.text_input("First Name", key="add_fname")
     with add_col3:
@@ -758,7 +764,7 @@ with st.expander("➕ Add Additional Recipient", expanded=False):
                 new_recipient = f"{add_first_name} {add_surname}"
             st.session_state.additional_recipients.append(new_recipient)
             # Clear the input fields by updating session state
-            st.session_state.add_title = "Mr"
+            st.session_state.add_title = DEFAULT_ADD_TITLE
             st.session_state.add_fname = ""
             st.session_state.add_sname = ""
             st.rerun()
