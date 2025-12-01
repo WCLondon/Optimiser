@@ -723,6 +723,91 @@ if st.session_state.get('submission_complete', False):
     
     st.stop()
 
+# ================= QUOTE REQUEST FORM =================
+with st.form("quote_form"):
+    # Metric Type Selection at the top
+    st.subheader("📊 Metric Type")
+    metric_type = st.radio(
+        "Select the type of BNG metric file you are uploading:",
+        options=["Standard Metric", "Small Sites Metric", "Nutrient Neutrality Metric"],
+        index=0,
+        key="metric_type",
+        help="Select 'Standard Metric' for automatic quote generation. Small Sites and Nutrient Neutrality metrics require manual processing."
+    )
+    
+    # Show info message for manual processing types
+    if metric_type in ["Small Sites Metric", "Nutrient Neutrality Metric"]:
+        st.info(f"ℹ️ **{metric_type}** requires manual processing. Your request will be sent to our team for a manual quote.")
+    
+    st.markdown("---")
+    
+    st.subheader("👤 Client Details")
+    
+    col1, col2, col3 = st.columns([1, 2, 2])
+    with col1:
+        title = st.selectbox("Title", ["Mr", "Mrs", "Ms", "Dr", "Prof", "Other", "N/A"], key="title")
+    with col2:
+        first_name = st.text_input("First Name", key="fname", 
+                                   help="Optional - leave blank if client details not available")
+    with col3:
+        surname = st.text_input("Surname", key="sname",
+                               help="Optional - leave blank if client details not available")
+    
+    # Contact email and phone inline to save vertical space
+    contact_col1, contact_col2 = st.columns(2)
+    with contact_col1:
+        contact_email = st.text_input("Contact Email", key="email", 
+                                       help="Optional - leave blank if client details not available")
+    with contact_col2:
+        contact_number = st.text_input("Contact Number", key="phone",
+                                       help="Optional - client phone number for follow-up")
+    
+    # Display added additional recipients (read-only inside form)
+    if st.session_state.additional_recipients:
+        st.caption("**Additional Recipients:** " + ", ".join(st.session_state.additional_recipients))
+    
+    st.subheader("📍 Site Location")
+    st.caption("Provide address/postcode OR select LPA/NCA")
+    
+    site_address = st.text_input("Site Address (First Line)", key="addr", 
+                                  help="First line of address (optional)")
+    postcode = st.text_input("Postcode", key="pc", 
+                             help="Site postcode (optional)")
+    
+    st.markdown("**OR use LPA/NCA if address not available:**")
+    
+    # LPA/NCA selection with autocomplete dropdowns
+    lpa_options = [""] + st.session_state.all_lpas_list
+    nca_options = [""] + st.session_state.all_ncas_list
+    
+    manual_lpa = st.selectbox(
+        "Local Planning Authority", 
+        options=lpa_options,
+        index=0,
+        key="manual_lpa",
+        help="Select LPA if address/postcode not available (type to search)"
+    )
+    manual_nca = st.selectbox(
+        "National Character Area", 
+        options=nca_options,
+        index=0,
+        key="manual_nca",
+        help="Select NCA if address/postcode not available (type to search)"
+    )
+    
+    st.subheader("📝 Additional Details")
+    notes = st.text_area("Notes (optional)", key="notes", 
+                         help="Any additional information about the project")
+    
+    st.subheader("📄 BNG Metric File")
+    metric_file = st.file_uploader("Upload Metric File *", type=['xlsx', 'xlsm', 'xlsb'], key="metric",
+                                    help="Upload the BNG Metric 4.0 file for this project")
+    
+    st.markdown("---")
+    consent = st.checkbox("✓ I have permission to share this data *", key="consent")
+    
+    submitted = st.form_submit_button("🚀 Submit Quote Request", type="primary")
+
 # ================= ADDITIONAL RECIPIENTS SECTION =================
 # This section is outside the form to allow adding recipients without full page rerun
 st.subheader("👥 Additional Recipients (Optional)")
@@ -769,85 +854,6 @@ with st.expander("➕ Add Additional Recipient", expanded=False):
             st.warning("Please enter both first name and surname")
 
 st.markdown("---")
-
-# ================= QUOTE REQUEST FORM =================
-with st.form("quote_form"):
-    # Metric Type Selection at the top
-    st.subheader("📊 Metric Type")
-    metric_type = st.radio(
-        "Select the type of BNG metric file you are uploading:",
-        options=["Standard Metric", "Small Sites Metric", "Nutrient Neutrality Metric"],
-        index=0,
-        key="metric_type",
-        help="Select 'Standard Metric' for automatic quote generation. Small Sites and Nutrient Neutrality metrics require manual processing."
-    )
-    
-    # Show info message for manual processing types
-    if metric_type in ["Small Sites Metric", "Nutrient Neutrality Metric"]:
-        st.info(f"ℹ️ **{metric_type}** requires manual processing. Your request will be sent to our team for a manual quote.")
-    
-    st.markdown("---")
-    
-    st.subheader("👤 Client Details")
-    
-    col1, col2, col3 = st.columns([1, 2, 2])
-    with col1:
-        title = st.selectbox("Title", ["Mr", "Mrs", "Ms", "Dr", "Prof", "Other", "N/A"], key="title")
-    with col2:
-        first_name = st.text_input("First Name", key="fname", 
-                                   help="Optional - leave blank if client details not available")
-    with col3:
-        surname = st.text_input("Surname", key="sname",
-                               help="Optional - leave blank if client details not available")
-    
-    contact_email = st.text_input("Contact Email", key="email", 
-                                   help="Optional - leave blank if client details not available")
-    
-    contact_number = st.text_input("Contact Number", key="phone",
-                                   help="Optional - client phone number for follow-up")
-    
-    st.subheader("📍 Site Location")
-    st.caption("Provide address/postcode OR select LPA/NCA")
-    
-    site_address = st.text_input("Site Address (First Line)", key="addr", 
-                                  help="First line of address (optional)")
-    postcode = st.text_input("Postcode", key="pc", 
-                             help="Site postcode (optional)")
-    
-    st.markdown("**OR use LPA/NCA if address not available:**")
-    
-    # LPA/NCA selection with autocomplete dropdowns
-    lpa_options = [""] + st.session_state.all_lpas_list
-    nca_options = [""] + st.session_state.all_ncas_list
-    
-    manual_lpa = st.selectbox(
-        "Local Planning Authority", 
-        options=lpa_options,
-        index=0,
-        key="manual_lpa",
-        help="Select LPA if address/postcode not available (type to search)"
-    )
-    manual_nca = st.selectbox(
-        "National Character Area", 
-        options=nca_options,
-        index=0,
-        key="manual_nca",
-        help="Select NCA if address/postcode not available (type to search)"
-    )
-    
-    st.subheader("📝 Additional Details")
-    notes = st.text_area("Notes (optional)", key="notes", 
-                         help="Any additional information about the project")
-    
-    st.subheader("📄 BNG Metric File")
-    metric_file = st.file_uploader("Upload Metric File *", type=['xlsx', 'xlsm', 'xlsb'], key="metric",
-                                    help="Upload the BNG Metric 4.0 file for this project")
-    
-    st.markdown("---")
-    consent = st.checkbox("✓ I have permission to share this data *", key="consent")
-    
-    submitted = st.form_submit_button("🚀 Submit Quote Request", type="primary")
-
 
 # ================= FORM SUBMISSION PROCESSING =================
 if submitted:
