@@ -344,6 +344,25 @@ class SubmissionsDB:
             # Columns might already exist
             pass
         
+        # Add status column if it doesn't exist
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'submissions' 
+                            AND column_name = 'status'
+                        ) THEN
+                            ALTER TABLE submissions ADD COLUMN status TEXT DEFAULT 'Pending';
+                        END IF;
+                    END $$;
+                """))
+        except Exception:
+            # Column might already exist
+            pass
+        
         # Drop the old view if it exists (replaced with physical table)
         try:
             with engine.begin() as conn:
@@ -1091,6 +1110,29 @@ class SubmissionsDB:
                 params={"submission_id": submission_id}
             )
         return df
+    
+    def update_submission_status(self, submission_id: int, status: str) -> bool:
+        """
+        Update the status of a submission.
+        
+        Args:
+            submission_id: The ID of the submission to update
+            status: The new status (e.g., 'Pending', 'Quote Accepted', 'Declined')
+            
+        Returns:
+            True if update was successful, False otherwise
+        """
+        engine = self._get_connection()
+        try:
+            with engine.begin() as conn:
+                result = conn.execute(
+                    text("UPDATE submissions SET status = :status WHERE id = :id"),
+                    {"status": status, "id": submission_id}
+                )
+                return result.rowcount > 0
+        except Exception as e:
+            print(f"Error updating submission status: {e}")
+            return False
     
     def filter_submissions(self,
                           start_date: Optional[str] = None,

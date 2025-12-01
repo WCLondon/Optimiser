@@ -457,9 +457,9 @@ if st.session_state.show_my_quotes:
     if results_df is not None and not results_df.empty:
         st.markdown(f"### 📄 Your Quotes ({len(results_df)} found)")
         
-        # Display columns - always include submitted_by_display_name 
+        # Display columns - always include submitted_by_display_name and status
         display_cols = ["id", "submission_date", "client_name", "reference_number", 
-                       "site_location", "target_lpa", "contract_size", "total_with_admin"]
+                       "site_location", "target_lpa", "contract_size", "total_with_admin", "status"]
         
         # Add submitted_by_display_name column if available (always show, not just for admin)
         if "submitted_by_display_name" in results_df.columns:
@@ -474,6 +474,9 @@ if st.session_state.show_my_quotes:
             df_display["total_with_admin"] = df_display["total_with_admin"].apply(
                 lambda x: f"£{x:,.0f}" if pd.notna(x) else "Pending"
             )
+        # Fill empty status values with 'Pending'
+        if "status" in df_display.columns:
+            df_display["status"] = df_display["status"].fillna("Pending")
         
         # Rename columns for display
         rename_map = {
@@ -485,7 +488,8 @@ if st.session_state.show_my_quotes:
             "site_location": "Location",
             "target_lpa": "LPA",
             "contract_size": "Size",
-            "total_with_admin": "Total"
+            "total_with_admin": "Total",
+            "status": "Status"
         }
         df_display = df_display.rename(columns=rename_map)
         
@@ -631,8 +635,20 @@ if st.session_state.show_my_quotes:
                             )
                             
                             if email_sent:
-                                st.success("✅ Quote acceptance notification sent to our team! They will contact you shortly to proceed.")
+                                # Update submission status to 'Quote Accepted'
+                                db = SubmissionsDB()
+                                status_updated = db.update_submission_status(
+                                    st.session_state.selected_quote_id, 
+                                    'Quote Accepted'
+                                )
+                                if status_updated:
+                                    st.success("✅ Quote acceptance notification sent to our team! Status updated to 'Quote Accepted'. They will contact you shortly to proceed.")
+                                else:
+                                    st.success("✅ Quote acceptance notification sent to our team! They will contact you shortly to proceed.")
+                                    st.warning("Note: Status could not be updated in the system.")
                                 st.balloons()
+                                # Clear the search results to force a refresh
+                                st.session_state.quote_search_results = None
                             else:
                                 st.error(f"Failed to send notification: {email_message}")
                                 st.info("Please contact our team directly to inform them of the quote acceptance.")
