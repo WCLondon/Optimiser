@@ -594,11 +594,23 @@ if st.session_state.show_my_quotes:
                         if not reviewer_emails:
                             st.error("No team email addresses configured. Please contact support.")
                         else:
-                            # Build allocation summary
+                            # Build allocation summary from submission data
                             allocation_summary = ""
-                            if not allocations.empty:
-                                for _, row in allocations.iterrows():
-                                    allocation_summary += f"- {row['supply_habitat']}: {row['units_supplied']:.2f} units @ £{row['unit_price']:,.0f}/unit = £{row['cost']:,.0f}\n"
+                            if submission.get('allocation_results'):
+                                try:
+                                    allocation_data = submission['allocation_results']
+                                    if isinstance(allocation_data, str):
+                                        allocation_data = json.loads(allocation_data)
+                                    if allocation_data and isinstance(allocation_data, list):
+                                        allocations = pd.DataFrame(allocation_data)
+                                        if not allocations.empty and 'supply_habitat' in allocations.columns:
+                                            for _, row in allocations.iterrows():
+                                                units = row.get('units_supplied', 0) or 0
+                                                price = row.get('unit_price', 0) or 0
+                                                cost = row.get('cost', 0) or 0
+                                                allocation_summary += f"- {row.get('supply_habitat', 'Unknown')}: {units:.2f} units @ £{price:,.0f}/unit = £{cost:,.0f}\n"
+                                except (json.JSONDecodeError, TypeError, KeyError):
+                                    pass  # Skip allocation summary if parsing fails
                             
                             # Send acceptance notification email
                             email_sent, email_message = send_email_notification(
