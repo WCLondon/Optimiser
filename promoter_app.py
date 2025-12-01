@@ -573,89 +573,98 @@ if st.session_state.show_my_quotes:
                 
                 # Quote acceptance section
                 st.markdown("---")
-                st.markdown("### ✅ Accept Quote & Notify Team")
-                st.info("If the client has accepted this quote, click the button below to notify our team. They will contact you to proceed with the Allocation Agreement.")
                 
-                acceptance_notes = st.text_area(
-                    "Additional notes for our team (optional):",
-                    key="acceptance_notes_input",
-                    help="Add any additional information or instructions for our team"
-                )
+                # Check if quote has already been accepted
+                current_status = submission.get('status', 'Pending') or 'Pending'
+                is_already_accepted = current_status == 'Quote Accepted'
                 
-                if st.button("🎉 Mark Quote as Accepted & Notify Team", key="accept_quote_btn", type="primary"):
-                    try:
-                        # Get reviewer emails from secrets
-                        reviewer_emails = []
+                if is_already_accepted:
+                    st.markdown("### ✅ Quote Already Accepted")
+                    st.success(f"This quote has already been marked as accepted. Status: **{current_status}**")
+                else:
+                    st.markdown("### ✅ Accept Quote & Notify Team")
+                    st.info("If the client has accepted this quote, click the button below to notify our team. They will contact you to proceed with the Allocation Agreement.")
+                    
+                    acceptance_notes = st.text_area(
+                        "Additional notes for our team (optional):",
+                        key="acceptance_notes_input",
+                        help="Add any additional information or instructions for our team"
+                    )
+                    
+                    if st.button("🎉 Mark Quote as Accepted & Notify Team", key="accept_quote_btn", type="primary"):
                         try:
-                            reviewer_emails_raw = st.secrets["REVIEWER_EMAILS"]
-                            if isinstance(reviewer_emails_raw, list):
-                                reviewer_emails = [e.strip() for e in reviewer_emails_raw if e and e.strip()]
-                            elif isinstance(reviewer_emails_raw, str):
-                                reviewer_emails = [e.strip() for e in reviewer_emails_raw.split(",") if e.strip()]
-                        except KeyError:
-                            pass
-                        
-                        if not reviewer_emails:
-                            st.error("No team email addresses configured. Please contact support.")
-                        else:
-                            # Build allocation summary from submission data
-                            allocation_summary = ""
-                            if submission.get('allocation_results'):
-                                try:
-                                    allocation_data = submission['allocation_results']
-                                    if isinstance(allocation_data, str):
-                                        allocation_data = json.loads(allocation_data)
-                                    if allocation_data and isinstance(allocation_data, list):
-                                        allocations = pd.DataFrame(allocation_data)
-                                        if not allocations.empty and 'supply_habitat' in allocations.columns:
-                                            for _, row in allocations.iterrows():
-                                                units = row.get('units_supplied', 0) or 0
-                                                price = row.get('unit_price', 0) or 0
-                                                cost = row.get('cost', 0) or 0
-                                                allocation_summary += f"- {row.get('supply_habitat', 'Unknown')}: {units:.2f} units @ £{price:,.0f}/unit = £{cost:,.0f}\n"
-                                except (json.JSONDecodeError, TypeError, KeyError):
-                                    pass  # Skip allocation summary if parsing fails
+                            # Get reviewer emails from secrets
+                            reviewer_emails = []
+                            try:
+                                reviewer_emails_raw = st.secrets["REVIEWER_EMAILS"]
+                                if isinstance(reviewer_emails_raw, list):
+                                    reviewer_emails = [e.strip() for e in reviewer_emails_raw if e and e.strip()]
+                                elif isinstance(reviewer_emails_raw, str):
+                                    reviewer_emails = [e.strip() for e in reviewer_emails_raw.split(",") if e.strip()]
+                            except KeyError:
+                                pass
                             
-                            # Send acceptance notification email
-                            email_sent, email_message = send_email_notification(
-                                to_emails=reviewer_emails,
-                                client_name=submission['client_name'],
-                                quote_total=submission.get('total_with_admin', 0) or 0,
-                                metric_file_content=None,  # No metric file needed for acceptance
-                                email_type='quote_accepted',
-                                reference_number=submission['reference_number'],
-                                site_location=submission['site_location'],
-                                promoter_name=promoter_name,
-                                submitted_by_name=submitted_by_name,
-                                contact_email=submission.get('contact_email', ''),
-                                contact_number=submission.get('contact_number', ''),
-                                notes=acceptance_notes,
-                                allocation_summary=allocation_summary,
-                                accepted_by=submitted_by_name
-                            )
-                            
-                            if email_sent:
-                                # Update submission status to 'Quote Accepted'
-                                db = SubmissionsDB()
-                                status_updated = db.update_submission_status(
-                                    st.session_state.selected_quote_id, 
-                                    'Quote Accepted'
-                                )
-                                if status_updated:
-                                    st.success("✅ Quote acceptance notification sent to our team! Status updated to 'Quote Accepted'. They will contact you shortly to proceed.")
-                                else:
-                                    st.success("✅ Quote acceptance notification sent to our team! They will contact you shortly to proceed.")
-                                    st.warning("Note: Status could not be updated in the system.")
-                                st.balloons()
-                                # Clear the search results to force a refresh
-                                st.session_state.quote_search_results = None
+                            if not reviewer_emails:
+                                st.error("No team email addresses configured. Please contact support.")
                             else:
-                                st.error(f"Failed to send notification: {email_message}")
-                                st.info("Please contact our team directly to inform them of the quote acceptance.")
+                                # Build allocation summary from submission data
+                                allocation_summary = ""
+                                if submission.get('allocation_results'):
+                                    try:
+                                        allocation_data = submission['allocation_results']
+                                        if isinstance(allocation_data, str):
+                                            allocation_data = json.loads(allocation_data)
+                                        if allocation_data and isinstance(allocation_data, list):
+                                            allocations = pd.DataFrame(allocation_data)
+                                            if not allocations.empty and 'supply_habitat' in allocations.columns:
+                                                for _, row in allocations.iterrows():
+                                                    units = row.get('units_supplied', 0) or 0
+                                                    price = row.get('unit_price', 0) or 0
+                                                    cost = row.get('cost', 0) or 0
+                                                    allocation_summary += f"- {row.get('supply_habitat', 'Unknown')}: {units:.2f} units @ £{price:,.0f}/unit = £{cost:,.0f}\n"
+                                    except (json.JSONDecodeError, TypeError, KeyError):
+                                        pass  # Skip allocation summary if parsing fails
                                 
-                    except Exception as e:
-                        st.error(f"Error sending acceptance notification: {e}")
-                        st.info("Please contact our team directly to inform them of the quote acceptance.")
+                                # Send acceptance notification email
+                                email_sent, email_message = send_email_notification(
+                                    to_emails=reviewer_emails,
+                                    client_name=submission['client_name'],
+                                    quote_total=submission.get('total_with_admin', 0) or 0,
+                                    metric_file_content=None,  # No metric file needed for acceptance
+                                    email_type='quote_accepted',
+                                    reference_number=submission['reference_number'],
+                                    site_location=submission['site_location'],
+                                    promoter_name=promoter_name,
+                                    submitted_by_name=submitted_by_name,
+                                    contact_email=submission.get('contact_email', ''),
+                                    contact_number=submission.get('contact_number', ''),
+                                    notes=acceptance_notes,
+                                    allocation_summary=allocation_summary,
+                                    accepted_by=submitted_by_name
+                                )
+                                
+                                if email_sent:
+                                    # Update submission status to 'Quote Accepted'
+                                    db = SubmissionsDB()
+                                    status_updated = db.update_submission_status(
+                                        st.session_state.selected_quote_id, 
+                                        'Quote Accepted'
+                                    )
+                                    if status_updated:
+                                        st.success("✅ Quote acceptance notification sent to our team! Status updated to 'Quote Accepted'. They will contact you shortly to proceed.")
+                                    else:
+                                        st.success("✅ Quote acceptance notification sent to our team! They will contact you shortly to proceed.")
+                                        st.warning("Note: Status could not be updated in the system.")
+                                    st.balloons()
+                                    # Clear the search results to force a refresh
+                                    st.session_state.quote_search_results = None
+                                else:
+                                    st.error(f"Failed to send notification: {email_message}")
+                                    st.info("Please contact our team directly to inform them of the quote acceptance.")
+                                    
+                        except Exception as e:
+                            st.error(f"Error sending acceptance notification: {e}")
+                            st.info("Please contact our team directly to inform them of the quote acceptance.")
                 
             else:
                 st.error("Quote not found.")
