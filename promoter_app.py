@@ -871,7 +871,6 @@ if submitted:
         client_name = promoter_name  # Fallback to promoter name
     
     # Collect additional recipient data (single static section)
-    additional_recipients_list = []
     # Get values from the single additional recipient section
     add_type = add_recipient_type  # Already defined in form
     add_title_val = add_title  # Already defined in form
@@ -880,28 +879,26 @@ if submitted:
     add_email_val = add_email  # Already defined in form
     add_phone_val = add_phone  # Already defined in form
     
+    # Build additional recipient name and details (separate columns for Attio)
+    additional_recipient_name = None
+    additional_recipient_type = None
+    additional_recipient_email = None
+    additional_recipient_phone = None
+    
     # Only include if at least name is provided
     if add_fname_val and add_sname_val:
         # Build recipient name
         if add_title_val and add_title_val != "N/A":
-            recipient_name = f"{add_title_val} {add_fname_val} {add_sname_val}"
+            additional_recipient_name = f"{add_title_val} {add_fname_val} {add_sname_val}"
         else:
-            recipient_name = f"{add_fname_val} {add_sname_val}"
-        
-        additional_recipients_list.append({
-            "type": add_type,
-            "name": recipient_name,
-            "title": add_title_val,
-            "first_name": add_fname_val,
-            "surname": add_sname_val,
-            "email": add_email_val,
-            "phone": add_phone_val
-        })
+            additional_recipient_name = f"{add_fname_val} {add_sname_val}"
+        additional_recipient_type = add_type
+        additional_recipient_email = add_email_val if add_email_val else None
+        additional_recipient_phone = add_phone_val if add_phone_val else None
     
     # Build client name for email (includes additional recipients)
-    if additional_recipients_list:
-        additional_names = ", ".join([f"{r['name']} ({r['type']})" for r in additional_recipients_list])
-        client_name_for_email = f"{client_name} & {additional_names}"
+    if additional_recipient_name:
+        client_name_for_email = f"{client_name} & {additional_recipient_name} ({additional_recipient_type})"
     else:
         client_name_for_email = client_name
     
@@ -1457,7 +1454,10 @@ if submitted:
                 submitted_by_username=submitted_by_username,  # Track individual submitter
                 contact_email=contact_email,
                 contact_number=contact_number,
-                additional_recipients=additional_recipients_list  # Save additional recipients to DB
+                additional_recipient_type=additional_recipient_type,
+                additional_recipient_name=additional_recipient_name,
+                additional_recipient_email=additional_recipient_email,
+                additional_recipient_phone=additional_recipient_phone
             )
         except Exception as e:
             pass  # Database save failed, but continue
@@ -1538,7 +1538,10 @@ if submitted:
                         contact_number=contact_number,
                         notes=notes,
                         email_type='quote_notification',
-                        csv_allocation_content=csv_allocation_content
+                        csv_allocation_content=csv_allocation_content,
+                        additional_recipient_name=additional_recipient_name,
+                        additional_recipient_type=additional_recipient_type,
+                        additional_recipient_email=additional_recipient_email
                     )
                     email_debug_info.append(f"Quote notification email sent (< £50k): {email_sent}")
                 else:
@@ -1558,6 +1561,9 @@ if submitted:
                         notes=notes,
                         email_type='full_quote',
                         email_html_body=email_html_content,
+                        additional_recipient_name=additional_recipient_name,
+                        additional_recipient_type=additional_recipient_type,
+                        additional_recipient_email=additional_recipient_email,
                         admin_fee=admin_fee,
                         csv_allocation_content=csv_allocation_content
                     )
