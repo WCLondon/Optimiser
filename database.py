@@ -1124,6 +1124,22 @@ class SubmissionsDB:
         """
         engine = self._get_connection()
         try:
+            # First ensure the status column exists
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'submissions' 
+                            AND column_name = 'status'
+                        ) THEN
+                            ALTER TABLE submissions ADD COLUMN status TEXT DEFAULT 'Pending';
+                        END IF;
+                    END $$;
+                """))
+            
+            # Now update the status
             with engine.begin() as conn:
                 result = conn.execute(
                     text("UPDATE submissions SET status = :status WHERE id = :id"),
