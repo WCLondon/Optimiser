@@ -302,6 +302,13 @@ if st.session_state.show_my_quotes:
     st.title("📋 My Quotes")
     st.markdown("Search and manage your submitted quotes.")
     
+    # Determine if user is admin (Viktoria) - can see all quotes for their promoter
+    # Viktoria's username should be checked - she can see all Arbtech quotes
+    is_admin = submitted_by_username.lower() in ['viktoria@arbtech.co.uk', 'viktoria@arbtech.com']
+    
+    if is_admin:
+        st.info("👑 **Admin View**: You can see all quotes submitted by your organisation.")
+    
     # Search filters
     with st.expander("🔎 Search Filters", expanded=True):
         col1, col2 = st.columns(2)
@@ -316,6 +323,16 @@ if st.session_state.show_my_quotes:
             search_lpa = st.text_input("LPA", key="quote_search_lpa",
                                       help="Search by Local Planning Authority (partial match)")
         
+        # Date range filter
+        st.markdown("**📅 Date Range**")
+        date_col1, date_col2 = st.columns(2)
+        with date_col1:
+            from datetime import datetime, timedelta
+            default_start = datetime.now() - timedelta(days=90)  # Default to last 90 days
+            date_from = st.date_input("From Date", value=default_start, key="quote_date_from")
+        with date_col2:
+            date_to = st.date_input("To Date", value=datetime.now(), key="quote_date_to")
+        
         search_btn = st.button("🔍 Search Quotes", key="quote_search_btn", type="primary")
     
     # Perform search
@@ -324,23 +341,49 @@ if st.session_state.show_my_quotes:
             db = SubmissionsDB()
             engine = db._get_connection()
             
-            query = "SELECT * FROM submissions WHERE promoter_name = %(promoter_name)s"
-            params = {"promoter_name": promoter_name}
+            # Build query - join with introducers to get actual names
+            # Filter by user's submissions unless admin
+            if is_admin:
+                # Admin sees all quotes for the promoter
+                query = """
+                    SELECT s.*, i.name as submitted_by_display_name
+                    FROM submissions s
+                    LEFT JOIN introducers i ON s.submitted_by_username = i.username
+                    WHERE s.promoter_name = %(promoter_name)s
+                """
+            else:
+                # Regular users see only their own quotes
+                query = """
+                    SELECT s.*, i.name as submitted_by_display_name
+                    FROM submissions s
+                    LEFT JOIN introducers i ON s.submitted_by_username = i.username
+                    WHERE s.promoter_name = %(promoter_name)s
+                    AND s.submitted_by_username = %(submitted_by_username)s
+                """
+            params = {"promoter_name": promoter_name, "submitted_by_username": submitted_by_username}
+            
+            # Date range filter
+            if date_from:
+                query += " AND s.submission_date >= %(date_from)s"
+                params["date_from"] = date_from
+            if date_to:
+                query += " AND s.submission_date <= %(date_to)s::date + interval '1 day'"
+                params["date_to"] = date_to
             
             if search_client:
-                query += " AND client_name ILIKE %(client_name)s"
+                query += " AND s.client_name ILIKE %(client_name)s"
                 params["client_name"] = f"%{search_client}%"
             if search_ref:
-                query += " AND reference_number ILIKE %(reference_number)s"
+                query += " AND s.reference_number ILIKE %(reference_number)s"
                 params["reference_number"] = f"%{search_ref}%"
             if search_location:
-                query += " AND site_location ILIKE %(location)s"
+                query += " AND s.site_location ILIKE %(location)s"
                 params["location"] = f"%{search_location}%"
             if search_lpa:
-                query += " AND target_lpa ILIKE %(lpa)s"
+                query += " AND s.target_lpa ILIKE %(lpa)s"
                 params["lpa"] = f"%{search_lpa}%"
             
-            query += " ORDER BY submission_date DESC LIMIT 50"
+            query += " ORDER BY s.submission_date DESC LIMIT 100"
             
             with engine.connect() as conn:
                 results_df = pd.read_sql_query(query, conn, params=params)
@@ -356,8 +399,26 @@ if st.session_state.show_my_quotes:
             db = SubmissionsDB()
             engine = db._get_connection()
             
-            query = "SELECT * FROM submissions WHERE promoter_name = %(promoter_name)s ORDER BY submission_date DESC LIMIT 20"
-            params = {"promoter_name": promoter_name}
+            # Build query with user filtering
+            if is_admin:
+                query = """
+                    SELECT s.*, i.name as submitted_by_display_name
+                    FROM submissions s
+                    LEFT JOIN introducers i ON s.submitted_by_username = i.username
+                    WHERE s.promoter_name = %(promoter_name)s
+                    ORDER BY s.submission_date DESC LIMIT 20
+                """
+                params = {"promoter_name": promoter_name}
+            else:
+                query = """
+                    SELECT s.*, i.name as submitted_by_display_name
+                    FROM submissions s
+                    LEFT JOIN introducers i ON s.submitted_by_username = i.username
+                    WHERE s.promoter_name = %(promoter_name)s
+                    AND s.submitted_by_username = %(submitted_by_username)s
+                    ORDER BY s.submission_date DESC LIMIT 20
+                """
+                params = {"promoter_name": promoter_name, "submitted_by_username": submitted_by_username}
             
             with engine.connect() as conn:
                 results_df = pd.read_sql_query(query, conn, params=params)
@@ -372,9 +433,14 @@ if st.session_state.show_my_quotes:
     if results_df is not None and not results_df.empty:
         st.markdown(f"### 📄 Your Quotes ({len(results_df)} found)")
         
-        # Display columns
+        # Display columns - include submitted_by_display_name for admin view
         display_cols = ["id", "submission_date", "client_name", "reference_number", 
                        "site_location", "target_lpa", "contract_size", "total_with_admin"]
+        
+        # Add submitted_by_display_name column for admin users
+        if is_admin and "submitted_by_display_name" in results_df.columns:
+            display_cols.insert(2, "submitted_by_display_name")  # Insert after submission_date
+        
         display_cols = [c for c in display_cols if c in results_df.columns]
         
         df_display = results_df[display_cols].copy()
@@ -386,16 +452,18 @@ if st.session_state.show_my_quotes:
             )
         
         # Rename columns for display
-        df_display = df_display.rename(columns={
+        rename_map = {
             "id": "ID",
             "submission_date": "Date",
+            "submitted_by_display_name": "Submitted By",
             "client_name": "Client",
             "reference_number": "Reference",
             "site_location": "Location",
             "target_lpa": "LPA",
             "contract_size": "Size",
             "total_with_admin": "Total"
-        })
+        }
+        df_display = df_display.rename(columns=rename_map)
         
         st.dataframe(df_display, use_container_width=True, hide_index=True)
         
