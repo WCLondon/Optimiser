@@ -304,6 +304,65 @@ class SubmissionsDB:
             # Columns might already exist
             pass
         
+        # Add additional recipient columns (separate columns instead of JSONB for Attio compatibility)
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'submissions' 
+                            AND column_name = 'additional_recipient_type'
+                        ) THEN
+                            ALTER TABLE submissions ADD COLUMN additional_recipient_type TEXT;
+                        END IF;
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'submissions' 
+                            AND column_name = 'additional_recipient_name'
+                        ) THEN
+                            ALTER TABLE submissions ADD COLUMN additional_recipient_name TEXT;
+                        END IF;
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'submissions' 
+                            AND column_name = 'additional_recipient_email'
+                        ) THEN
+                            ALTER TABLE submissions ADD COLUMN additional_recipient_email TEXT;
+                        END IF;
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'submissions' 
+                            AND column_name = 'additional_recipient_phone'
+                        ) THEN
+                            ALTER TABLE submissions ADD COLUMN additional_recipient_phone TEXT;
+                        END IF;
+                    END $$;
+                """))
+        except Exception:
+            # Columns might already exist
+            pass
+        
+        # Add status column if it doesn't exist
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'submissions' 
+                            AND column_name = 'status'
+                        ) THEN
+                            ALTER TABLE submissions ADD COLUMN status TEXT DEFAULT 'Pending';
+                        END IF;
+                    END $$;
+                """))
+        except Exception:
+            # Column might already exist
+            pass
+        
         # Drop the old view if it exists (replaced with physical table)
         try:
             with engine.begin() as conn:
@@ -843,7 +902,11 @@ class SubmissionsDB:
                         suo_total_units: Optional[float] = None,
                         submitted_by_username: Optional[str] = None,
                         contact_email: Optional[str] = None,
-                        contact_number: Optional[str] = None) -> int:
+                        contact_number: Optional[str] = None,
+                        additional_recipient_type: Optional[str] = None,
+                        additional_recipient_name: Optional[str] = None,
+                        additional_recipient_email: Optional[str] = None,
+                        additional_recipient_phone: Optional[str] = None) -> int:
         """
         Store a complete submission to the database.
         Returns the submission_id for reference.
@@ -854,6 +917,10 @@ class SubmissionsDB:
                                    (may differ from promoter_name for child accounts)
             contact_email: Client's email address for contact
             contact_number: Client's phone number for contact
+            additional_recipient_type: Type of additional recipient (Ecologist, Consultant, etc.)
+            additional_recipient_name: Name of additional recipient
+            additional_recipient_email: Email of additional recipient
+            additional_recipient_phone: Phone of additional recipient
         
         Uses transactions and automatic retry on transient failures.
         """
@@ -910,7 +977,8 @@ class SubmissionsDB:
                         promoter_name, promoter_discount_type, promoter_discount_value,
                         customer_id,
                         suo_enabled, suo_discount_fraction, suo_eligible_surplus, suo_usable_surplus, suo_total_units,
-                        submitted_by_username, contact_email, contact_number
+                        submitted_by_username, contact_email, contact_number,
+                        additional_recipient_type, additional_recipient_name, additional_recipient_email, additional_recipient_phone
                     ) VALUES (
                         :submission_date, :client_name, :reference_number, :site_location,
                         :target_lpa, :target_nca, :target_lat, :target_lon,
@@ -922,7 +990,8 @@ class SubmissionsDB:
                         :promoter_name, :promoter_discount_type, :promoter_discount_value,
                         :customer_id,
                         :suo_enabled, :suo_discount_fraction, :suo_eligible_surplus, :suo_usable_surplus, :suo_total_units,
-                        :submitted_by_username, :contact_email, :contact_number
+                        :submitted_by_username, :contact_email, :contact_number,
+                        :additional_recipient_type, :additional_recipient_name, :additional_recipient_email, :additional_recipient_phone
                     ) RETURNING id
                 """), {
                     "submission_date": submission_date,
@@ -958,7 +1027,11 @@ class SubmissionsDB:
                     "suo_total_units": float(suo_total_units) if suo_total_units is not None else None,
                     "submitted_by_username": submitted_by_username,
                     "contact_email": contact_email,
-                    "contact_number": contact_number
+                    "contact_number": contact_number,
+                    "additional_recipient_type": additional_recipient_type,
+                    "additional_recipient_name": additional_recipient_name,
+                    "additional_recipient_email": additional_recipient_email,
+                    "additional_recipient_phone": additional_recipient_phone
                 })
                 
                 submission_id = result.fetchone()[0]
@@ -1037,6 +1110,45 @@ class SubmissionsDB:
                 params={"submission_id": submission_id}
             )
         return df
+    
+    def update_submission_status(self, submission_id: int, status: str) -> bool:
+        """
+        Update the status of a submission.
+        
+        Args:
+            submission_id: The ID of the submission to update
+            status: The new status (e.g., 'Pending', 'Quote Accepted', 'Declined')
+            
+        Returns:
+            True if update was successful, False otherwise
+        """
+        engine = self._get_connection()
+        try:
+            # First ensure the status column exists
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'submissions' 
+                            AND column_name = 'status'
+                        ) THEN
+                            ALTER TABLE submissions ADD COLUMN status TEXT DEFAULT 'Pending';
+                        END IF;
+                    END $$;
+                """))
+            
+            # Now update the status
+            with engine.begin() as conn:
+                result = conn.execute(
+                    text("UPDATE submissions SET status = :status WHERE id = :id"),
+                    {"status": status, "id": submission_id}
+                )
+                return result.rowcount > 0
+        except Exception as e:
+            print(f"Error updating submission status: {e}")
+            return False
     
     def filter_submissions(self,
                           start_date: Optional[str] = None,

@@ -108,6 +108,10 @@ if 'all_lpas_list' not in st.session_state:
 if 'all_ncas_list' not in st.session_state:
     st.session_state.all_ncas_list = fetch_all_ncas_from_arcgis()
 
+# Session state for additional recipients (will be persisted to database)
+if 'additional_recipients' not in st.session_state:
+    st.session_state.additional_recipients = []
+
 
 def authenticate_promoter(username: str, password: str) -> Tuple[bool, Optional[dict]]:
     """
@@ -298,6 +302,31 @@ if st.session_state.show_my_quotes:
     st.title("📋 My Quotes")
     st.markdown("Search and manage your submitted quotes.")
     
+    # Determine if user is admin (Viktoria) - can see all quotes for their promoter
+    # Viktoria's username is viktoriakossmann@arbtech.co.uk
+    is_admin = submitted_by_username.lower() == 'viktoriakossmann@arbtech.co.uk'
+    
+    # List of valid Arbtech user emails (for filtering out generic Arbtech login submissions)
+    ARBTECH_USER_EMAILS = [
+        'bethellison-perrett@arbtech.co.uk',
+        'craigwilliams@arbtech.co.uk',
+        'faybrotherhood@arbtech.co.uk',
+        'georginarennie@arbtech.co.uk',
+        'harleystone@arbtech.co.uk',
+        'harrybrindle@arbtech.co.uk',
+        'jamie-leeanderson@arbtech.co.uk',
+        'jeremygrout@arbtech.co.uk',
+        'jonathanstuttard@arbtech.co.uk',
+        'leoplevin@arbtech.co.uk',
+        'kellyclarke@arbtech.co.uk',
+        'natalieevans@arbtech.co.uk',
+        'robbiemackenzie@arbtech.co.uk',
+        'viktoriakossmann@arbtech.co.uk'
+    ]
+    
+    if is_admin:
+        st.info("👑 **Admin View**: You can see all quotes submitted by your organisation.")
+    
     # Search filters
     with st.expander("🔎 Search Filters", expanded=True):
         col1, col2 = st.columns(2)
@@ -312,6 +341,16 @@ if st.session_state.show_my_quotes:
             search_lpa = st.text_input("LPA", key="quote_search_lpa",
                                       help="Search by Local Planning Authority (partial match)")
         
+        # Date range filter
+        st.markdown("**📅 Date Range**")
+        date_col1, date_col2 = st.columns(2)
+        with date_col1:
+            from datetime import datetime, timedelta
+            default_start = datetime.now() - timedelta(days=90)  # Default to last 90 days
+            date_from = st.date_input("From Date", value=default_start, key="quote_date_from")
+        with date_col2:
+            date_to = st.date_input("To Date", value=datetime.now(), key="quote_date_to")
+        
         search_btn = st.button("🔍 Search Quotes", key="quote_search_btn", type="primary")
     
     # Perform search
@@ -320,23 +359,52 @@ if st.session_state.show_my_quotes:
             db = SubmissionsDB()
             engine = db._get_connection()
             
-            query = "SELECT * FROM submissions WHERE promoter_name = %(promoter_name)s"
-            params = {"promoter_name": promoter_name}
+            # Build query - join with introducers to get actual names
+            # Filter by user's submissions unless admin
+            if is_admin:
+                # Admin sees quotes from all valid Arbtech user accounts (not generic login)
+                # Use LOWER() for case-insensitive matching
+                arbtech_emails_list = ", ".join([f"'{email}'" for email in ARBTECH_USER_EMAILS])
+                query = f"""
+                    SELECT s.*, i.name as submitted_by_display_name
+                    FROM submissions s
+                    LEFT JOIN introducers i ON LOWER(s.submitted_by_username) = LOWER(i.username)
+                    WHERE s.promoter_name = %(promoter_name)s
+                    AND LOWER(s.submitted_by_username) IN ({arbtech_emails_list})
+                """
+            else:
+                # Regular users see only their own quotes
+                query = """
+                    SELECT s.*, i.name as submitted_by_display_name
+                    FROM submissions s
+                    LEFT JOIN introducers i ON LOWER(s.submitted_by_username) = LOWER(i.username)
+                    WHERE s.promoter_name = %(promoter_name)s
+                    AND LOWER(s.submitted_by_username) = LOWER(%(submitted_by_username)s)
+                """
+            params = {"promoter_name": promoter_name, "submitted_by_username": submitted_by_username}
+            
+            # Date range filter
+            if date_from:
+                query += " AND s.submission_date >= %(date_from)s"
+                params["date_from"] = date_from
+            if date_to:
+                query += " AND s.submission_date <= %(date_to)s::date + interval '1 day'"
+                params["date_to"] = date_to
             
             if search_client:
-                query += " AND client_name ILIKE %(client_name)s"
+                query += " AND s.client_name ILIKE %(client_name)s"
                 params["client_name"] = f"%{search_client}%"
             if search_ref:
-                query += " AND reference_number ILIKE %(reference_number)s"
+                query += " AND s.reference_number ILIKE %(reference_number)s"
                 params["reference_number"] = f"%{search_ref}%"
             if search_location:
-                query += " AND site_location ILIKE %(location)s"
+                query += " AND s.site_location ILIKE %(location)s"
                 params["location"] = f"%{search_location}%"
             if search_lpa:
-                query += " AND target_lpa ILIKE %(lpa)s"
+                query += " AND s.target_lpa ILIKE %(lpa)s"
                 params["lpa"] = f"%{search_lpa}%"
             
-            query += " ORDER BY submission_date DESC LIMIT 50"
+            query += " ORDER BY s.submission_date DESC LIMIT 100"
             
             with engine.connect() as conn:
                 results_df = pd.read_sql_query(query, conn, params=params)
@@ -352,8 +420,29 @@ if st.session_state.show_my_quotes:
             db = SubmissionsDB()
             engine = db._get_connection()
             
-            query = "SELECT * FROM submissions WHERE promoter_name = %(promoter_name)s ORDER BY submission_date DESC LIMIT 20"
-            params = {"promoter_name": promoter_name}
+            # Build query with user filtering
+            if is_admin:
+                # Admin sees quotes from all valid Arbtech user accounts (not generic login)
+                arbtech_emails_list = ", ".join([f"'{email}'" for email in ARBTECH_USER_EMAILS])
+                query = f"""
+                    SELECT s.*, i.name as submitted_by_display_name
+                    FROM submissions s
+                    LEFT JOIN introducers i ON LOWER(s.submitted_by_username) = LOWER(i.username)
+                    WHERE s.promoter_name = %(promoter_name)s
+                    AND LOWER(s.submitted_by_username) IN ({arbtech_emails_list})
+                    ORDER BY s.submission_date DESC LIMIT 50
+                """
+                params = {"promoter_name": promoter_name}
+            else:
+                query = """
+                    SELECT s.*, i.name as submitted_by_display_name
+                    FROM submissions s
+                    LEFT JOIN introducers i ON LOWER(s.submitted_by_username) = LOWER(i.username)
+                    WHERE s.promoter_name = %(promoter_name)s
+                    AND LOWER(s.submitted_by_username) = LOWER(%(submitted_by_username)s)
+                    ORDER BY s.submission_date DESC LIMIT 20
+                """
+                params = {"promoter_name": promoter_name, "submitted_by_username": submitted_by_username}
             
             with engine.connect() as conn:
                 results_df = pd.read_sql_query(query, conn, params=params)
@@ -368,9 +457,14 @@ if st.session_state.show_my_quotes:
     if results_df is not None and not results_df.empty:
         st.markdown(f"### 📄 Your Quotes ({len(results_df)} found)")
         
-        # Display columns
+        # Display columns - always include submitted_by_display_name and status
         display_cols = ["id", "submission_date", "client_name", "reference_number", 
-                       "site_location", "target_lpa", "contract_size", "total_with_admin"]
+                       "site_location", "target_lpa", "contract_size", "total_with_admin", "status"]
+        
+        # Add submitted_by_display_name column if available (always show, not just for admin)
+        if "submitted_by_display_name" in results_df.columns:
+            display_cols.insert(2, "submitted_by_display_name")  # Insert after submission_date
+        
         display_cols = [c for c in display_cols if c in results_df.columns]
         
         df_display = results_df[display_cols].copy()
@@ -380,18 +474,24 @@ if st.session_state.show_my_quotes:
             df_display["total_with_admin"] = df_display["total_with_admin"].apply(
                 lambda x: f"£{x:,.0f}" if pd.notna(x) else "Pending"
             )
+        # Fill empty status values with 'Pending'
+        if "status" in df_display.columns:
+            df_display["status"] = df_display["status"].fillna("Pending")
         
         # Rename columns for display
-        df_display = df_display.rename(columns={
+        rename_map = {
             "id": "ID",
             "submission_date": "Date",
+            "submitted_by_display_name": "Submitted By",
             "client_name": "Client",
             "reference_number": "Reference",
             "site_location": "Location",
             "target_lpa": "LPA",
             "contract_size": "Size",
-            "total_with_admin": "Total"
-        })
+            "total_with_admin": "Total",
+            "status": "Status"
+        }
+        df_display = df_display.rename(columns=rename_map)
         
         st.dataframe(df_display, use_container_width=True, hide_index=True)
         
@@ -473,65 +573,98 @@ if st.session_state.show_my_quotes:
                 
                 # Quote acceptance section
                 st.markdown("---")
-                st.markdown("### ✅ Accept Quote & Notify Team")
-                st.info("If the client has accepted this quote, click the button below to notify our team. They will contact you to proceed with the Allocation Agreement.")
                 
-                acceptance_notes = st.text_area(
-                    "Additional notes for our team (optional):",
-                    key="acceptance_notes_input",
-                    help="Add any additional information or instructions for our team"
-                )
+                # Check if quote has already been accepted
+                current_status = submission.get('status', 'Pending') or 'Pending'
+                is_already_accepted = current_status == 'Quote Accepted'
                 
-                if st.button("🎉 Mark Quote as Accepted & Notify Team", key="accept_quote_btn", type="primary"):
-                    try:
-                        # Get reviewer emails from secrets
-                        reviewer_emails = []
+                if is_already_accepted:
+                    st.markdown("### ✅ Quote Already Accepted")
+                    st.success(f"This quote has already been marked as accepted. Status: **{current_status}**")
+                else:
+                    st.markdown("### ✅ Accept Quote & Notify Team")
+                    st.info("If the client has accepted this quote, click the button below to notify our team. They will contact you to proceed with the Allocation Agreement.")
+                    
+                    acceptance_notes = st.text_area(
+                        "Additional notes for our team (optional):",
+                        key="acceptance_notes_input",
+                        help="Add any additional information or instructions for our team"
+                    )
+                    
+                    if st.button("🎉 Mark Quote as Accepted & Notify Team", key="accept_quote_btn", type="primary"):
                         try:
-                            reviewer_emails_raw = st.secrets["REVIEWER_EMAILS"]
-                            if isinstance(reviewer_emails_raw, list):
-                                reviewer_emails = [e.strip() for e in reviewer_emails_raw if e and e.strip()]
-                            elif isinstance(reviewer_emails_raw, str):
-                                reviewer_emails = [e.strip() for e in reviewer_emails_raw.split(",") if e.strip()]
-                        except KeyError:
-                            pass
-                        
-                        if not reviewer_emails:
-                            st.error("No team email addresses configured. Please contact support.")
-                        else:
-                            # Build allocation summary
-                            allocation_summary = ""
-                            if not allocations.empty:
-                                for _, row in allocations.iterrows():
-                                    allocation_summary += f"- {row['supply_habitat']}: {row['units_supplied']:.2f} units @ £{row['unit_price']:,.0f}/unit = £{row['cost']:,.0f}\n"
+                            # Get reviewer emails from secrets
+                            reviewer_emails = []
+                            try:
+                                reviewer_emails_raw = st.secrets["REVIEWER_EMAILS"]
+                                if isinstance(reviewer_emails_raw, list):
+                                    reviewer_emails = [e.strip() for e in reviewer_emails_raw if e and e.strip()]
+                                elif isinstance(reviewer_emails_raw, str):
+                                    reviewer_emails = [e.strip() for e in reviewer_emails_raw.split(",") if e.strip()]
+                            except KeyError:
+                                pass
                             
-                            # Send acceptance notification email
-                            email_sent, email_message = send_email_notification(
-                                to_emails=reviewer_emails,
-                                client_name=submission['client_name'],
-                                quote_total=submission.get('total_with_admin', 0) or 0,
-                                metric_file_content=None,  # No metric file needed for acceptance
-                                email_type='quote_accepted',
-                                reference_number=submission['reference_number'],
-                                site_location=submission['site_location'],
-                                promoter_name=promoter_name,
-                                submitted_by_name=submitted_by_name,
-                                contact_email=submission.get('contact_email', ''),
-                                contact_number=submission.get('contact_number', ''),
-                                notes=acceptance_notes,
-                                allocation_summary=allocation_summary,
-                                accepted_by=submitted_by_name
-                            )
-                            
-                            if email_sent:
-                                st.success("✅ Quote acceptance notification sent to our team! They will contact you shortly to proceed.")
-                                st.balloons()
+                            if not reviewer_emails:
+                                st.error("No team email addresses configured. Please contact support.")
                             else:
-                                st.error(f"Failed to send notification: {email_message}")
-                                st.info("Please contact our team directly to inform them of the quote acceptance.")
+                                # Build allocation summary from submission data
+                                allocation_summary = ""
+                                if submission.get('allocation_results'):
+                                    try:
+                                        allocation_data = submission['allocation_results']
+                                        if isinstance(allocation_data, str):
+                                            allocation_data = json.loads(allocation_data)
+                                        if allocation_data and isinstance(allocation_data, list):
+                                            allocations = pd.DataFrame(allocation_data)
+                                            if not allocations.empty and 'supply_habitat' in allocations.columns:
+                                                for _, row in allocations.iterrows():
+                                                    units = row.get('units_supplied', 0) or 0
+                                                    price = row.get('unit_price', 0) or 0
+                                                    cost = row.get('cost', 0) or 0
+                                                    allocation_summary += f"- {row.get('supply_habitat', 'Unknown')}: {units:.2f} units @ £{price:,.0f}/unit = £{cost:,.0f}\n"
+                                    except (json.JSONDecodeError, TypeError, KeyError):
+                                        pass  # Skip allocation summary if parsing fails
                                 
-                    except Exception as e:
-                        st.error(f"Error sending acceptance notification: {e}")
-                        st.info("Please contact our team directly to inform them of the quote acceptance.")
+                                # Send acceptance notification email
+                                email_sent, email_message = send_email_notification(
+                                    to_emails=reviewer_emails,
+                                    client_name=submission['client_name'],
+                                    quote_total=submission.get('total_with_admin', 0) or 0,
+                                    metric_file_content=None,  # No metric file needed for acceptance
+                                    email_type='quote_accepted',
+                                    reference_number=submission['reference_number'],
+                                    site_location=submission['site_location'],
+                                    promoter_name=promoter_name,
+                                    submitted_by_name=submitted_by_name,
+                                    contact_email=submission.get('contact_email', ''),
+                                    contact_number=submission.get('contact_number', ''),
+                                    notes=acceptance_notes,
+                                    allocation_summary=allocation_summary,
+                                    accepted_by=submitted_by_name
+                                )
+                                
+                                if email_sent:
+                                    # Update submission status to 'Quote Accepted'
+                                    db = SubmissionsDB()
+                                    status_updated = db.update_submission_status(
+                                        st.session_state.selected_quote_id, 
+                                        'Quote Accepted'
+                                    )
+                                    if status_updated:
+                                        st.success("✅ Quote acceptance notification sent to our team! Status updated to 'Quote Accepted'. They will contact you shortly to proceed.")
+                                    else:
+                                        st.success("✅ Quote acceptance notification sent to our team! They will contact you shortly to proceed.")
+                                        st.warning("Note: Status could not be updated in the system.")
+                                    st.balloons()
+                                    # Clear the search results to force a refresh
+                                    st.session_state.quote_search_results = None
+                                else:
+                                    st.error(f"Failed to send notification: {email_message}")
+                                    st.info("Please contact our team directly to inform them of the quote acceptance.")
+                                    
+                        except Exception as e:
+                            st.error(f"Error sending acceptance notification: {e}")
+                            st.info("Please contact our team directly to inform them of the quote acceptance.")
                 
             else:
                 st.error("Quote not found.")
@@ -714,6 +847,7 @@ if st.session_state.get('submission_complete', False):
     if st.button("📝 Submit Another Quote", type="primary"):
         st.session_state.submission_complete = False
         st.session_state.submission_data = None
+        st.session_state.additional_recipients = []  # Clear additional recipients for new quote
         st.rerun()
     
     st.stop()
@@ -736,7 +870,7 @@ with st.form("quote_form"):
     
     st.markdown("---")
     
-    st.subheader("👤 Client Details")
+    st.subheader("👤 Primary Recipient")
     
     col1, col2, col3 = st.columns([1, 2, 2])
     with col1:
@@ -748,11 +882,46 @@ with st.form("quote_form"):
         surname = st.text_input("Surname", key="sname",
                                help="Optional - leave blank if client details not available")
     
-    contact_email = st.text_input("Contact Email", key="email", 
-                                   help="Optional - leave blank if client details not available")
+    # Contact email and phone inline to save vertical space
+    contact_col1, contact_col2 = st.columns(2)
+    with contact_col1:
+        contact_email = st.text_input("Contact Email", key="email", 
+                                       help="Optional - leave blank if client details not available")
+    with contact_col2:
+        contact_number = st.text_input("Contact Number", key="phone",
+                                       help="Optional - client phone number for follow-up")
     
-    contact_number = st.text_input("Contact Number", key="phone",
-                                   help="Optional - client phone number for follow-up")
+    # ================= ADDITIONAL RECIPIENT (STATIC SECTION) =================
+    st.markdown("---")
+    st.subheader("👥 Additional Recipient")
+    st.caption("Leave empty if no additional recipient. Details will be saved to the database.")
+    
+    # Recipient type options
+    RECIPIENT_TYPES = ["Ecologist", "Consultant", "Advisor", "Joint Applicant"]
+    
+    # Recipient type radio
+    add_recipient_type = st.radio(
+        "Recipient Type",
+        options=RECIPIENT_TYPES,
+        key="add_recipient_type",
+        horizontal=True
+    )
+    
+    # Name fields
+    add_col1, add_col2, add_col3 = st.columns([1, 2, 2])
+    with add_col1:
+        add_title = st.selectbox("Title", ["Mr", "Mrs", "Ms", "Dr", "Prof", "Other", "N/A"], key="add_title")
+    with add_col2:
+        add_first_name = st.text_input("First Name", key="add_fname")
+    with add_col3:
+        add_surname = st.text_input("Surname", key="add_sname")
+    
+    # Contact info inline
+    add_contact_col1, add_contact_col2 = st.columns(2)
+    with add_contact_col1:
+        add_email = st.text_input("Contact Email", key="add_email")
+    with add_contact_col2:
+        add_phone = st.text_input("Contact Number", key="add_phone")
     
     st.subheader("📍 Site Location")
     st.caption("Provide address/postcode OR select LPA/NCA")
@@ -796,7 +965,6 @@ with st.form("quote_form"):
     
     submitted = st.form_submit_button("🚀 Submit Quote Request", type="primary")
 
-
 # ================= FORM SUBMISSION PROCESSING =================
 if submitted:
     # ===== VALIDATION =====
@@ -830,6 +998,38 @@ if submitted:
         client_name = f"{title} {first_name} {surname}" if title and title != "N/A" else f"{first_name} {surname}"
     else:
         client_name = promoter_name  # Fallback to promoter name
+    
+    # Collect additional recipient data (single static section)
+    # Get values from the single additional recipient section
+    add_type = add_recipient_type  # Already defined in form
+    add_title_val = add_title  # Already defined in form
+    add_fname_val = add_first_name  # Already defined in form
+    add_sname_val = add_surname  # Already defined in form
+    add_email_val = add_email  # Already defined in form
+    add_phone_val = add_phone  # Already defined in form
+    
+    # Build additional recipient name and details (separate columns for Attio)
+    additional_recipient_name = None
+    additional_recipient_type = None
+    additional_recipient_email = None
+    additional_recipient_phone = None
+    
+    # Only include if at least name is provided
+    if add_fname_val and add_sname_val:
+        # Build recipient name
+        if add_title_val and add_title_val != "N/A":
+            additional_recipient_name = f"{add_title_val} {add_fname_val} {add_sname_val}"
+        else:
+            additional_recipient_name = f"{add_fname_val} {add_sname_val}"
+        additional_recipient_type = add_type
+        additional_recipient_email = add_email_val if add_email_val else None
+        additional_recipient_phone = add_phone_val if add_phone_val else None
+    
+    # Build client name for email (includes additional recipients)
+    if additional_recipient_name:
+        client_name_for_email = f"{client_name} & {additional_recipient_name} ({additional_recipient_type})"
+    else:
+        client_name_for_email = client_name
     
     # Build location string - combine address and postcode if both provided
     if site_address and postcode:
@@ -894,7 +1094,7 @@ if submitted:
                 if reviewer_emails:
                     email_sent, email_status_message = send_email_notification(
                         to_emails=reviewer_emails,
-                        client_name=client_name,
+                        client_name=client_name_for_email,
                         quote_total=0,  # No quote generated for manual review
                         metric_file_content=metric_file.getvalue(),
                         metric_filename=f"{reference_number}_{metric_file.name}",
@@ -1192,7 +1392,7 @@ if submitted:
                     demand_df=area_df,
                     total_cost=quote_total,
                     admin_fee=admin_fee,
-                    client_name=client_name,
+                    client_name=client_name_for_email,
                     ref_number=reference_number,
                     location=postcode or site_address,
                     backend=backend,
@@ -1203,7 +1403,7 @@ if submitted:
                 )
                 
                 pdf_content, pdf_debug_message = generate_quote_pdf(
-                    client_name=client_name,
+                    client_name=client_name_for_email,
                     reference_number=reference_number,
                     site_location=location,  # Use combined location
                     quote_total=quote_total,
@@ -1228,7 +1428,7 @@ if submitted:
                     demand_df=area_df,
                     total_cost=quote_total,
                     admin_fee=admin_fee,
-                    client_name=client_name,
+                    client_name=client_name_for_email,
                     ref_number=reference_number,  # Include auto-generated reference
                     location=location,  # Use combined location
                     backend=backend,
@@ -1335,7 +1535,7 @@ if submitted:
                 # Generate CSV using the processed data - exactly like app.py
                 csv_allocation_content = sales_quotes_csv.generate_sales_quotes_csv_from_optimizer_output(
                     quote_number=reference_number,
-                    client_name=client_name,
+                    client_name=client_name_for_email,
                     development_address=location,  # Use combined location
                     base_ref=reference_number,
                     introducer=promoter_name,
@@ -1382,7 +1582,11 @@ if submitted:
                 promoter_discount_value=discount_value,
                 submitted_by_username=submitted_by_username,  # Track individual submitter
                 contact_email=contact_email,
-                contact_number=contact_number
+                contact_number=contact_number,
+                additional_recipient_type=additional_recipient_type,
+                additional_recipient_name=additional_recipient_name,
+                additional_recipient_email=additional_recipient_email,
+                additional_recipient_phone=additional_recipient_phone
             )
         except Exception as e:
             pass  # Database save failed, but continue
@@ -1451,7 +1655,7 @@ if submitted:
                     # Send simple quote notification with metric and CSV attachments
                     email_sent, email_status_message = send_email_notification(
                         to_emails=reviewer_emails,
-                        client_name=client_name,
+                        client_name=client_name_for_email,
                         quote_total=quote_total,
                         metric_file_content=metric_file.getvalue(),
                         metric_filename=f"{reference_number}_{metric_file.name}",
@@ -1463,14 +1667,17 @@ if submitted:
                         contact_number=contact_number,
                         notes=notes,
                         email_type='quote_notification',
-                        csv_allocation_content=csv_allocation_content
+                        csv_allocation_content=csv_allocation_content,
+                        additional_recipient_name=additional_recipient_name,
+                        additional_recipient_type=additional_recipient_type,
+                        additional_recipient_email=additional_recipient_email
                     )
                     email_debug_info.append(f"Quote notification email sent (< £50k): {email_sent}")
                 else:
                     # Send full quote email for reviewer to forward with CSV attachment
                     email_sent, email_status_message = send_email_notification(
                         to_emails=reviewer_emails,
-                        client_name=client_name,
+                        client_name=client_name_for_email,
                         quote_total=quote_total,
                         metric_file_content=metric_file.getvalue(),
                         metric_filename=f"{reference_number}_{metric_file.name}",
@@ -1483,6 +1690,9 @@ if submitted:
                         notes=notes,
                         email_type='full_quote',
                         email_html_body=email_html_content,
+                        additional_recipient_name=additional_recipient_name,
+                        additional_recipient_type=additional_recipient_type,
+                        additional_recipient_email=additional_recipient_email,
                         admin_fee=admin_fee,
                         csv_allocation_content=csv_allocation_content
                     )
@@ -1562,7 +1772,7 @@ if submitted:
                     if reviewer_emails:
                         email_sent_manual, email_status_manual = send_email_notification(
                             to_emails=reviewer_emails,
-                            client_name=client_name,
+                            client_name=client_name_for_email,
                             quote_total=0,  # No quote generated for manual review
                             metric_file_content=metric_file.getvalue(),
                             metric_filename=f"{reference_number_manual}_{metric_file.name}",

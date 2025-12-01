@@ -110,10 +110,27 @@ def send_email_notification(to_emails: List[str],
         contact_number = kwargs.get('contact_number', '')
         notes = kwargs.get('notes', '')
         
+        # Additional recipient details
+        additional_recipient_name = kwargs.get('additional_recipient_name', None)
+        additional_recipient_type = kwargs.get('additional_recipient_type', None)
+        additional_recipient_email = kwargs.get('additional_recipient_email', None)
+        
         # Create message
         msg = MIMEMultipart()
         msg['From'] = f"{from_name} <{from_email}>"
         msg['To'] = ', '.join(to_emails)
+        
+        # Build additional recipient section for emails
+        additional_recipient_text = ""
+        additional_recipient_html = ""
+        if additional_recipient_name:
+            additional_recipient_text = f"\n- Additional Recipient ({additional_recipient_type}): {additional_recipient_name}"
+            if additional_recipient_email:
+                additional_recipient_text += f" ({additional_recipient_email})"
+            additional_recipient_html = f"<li><strong>Additional Recipient ({additional_recipient_type}):</strong> {additional_recipient_name}"
+            if additional_recipient_email:
+                additional_recipient_html += f" ({additional_recipient_email})"
+            additional_recipient_html += "</li>"
         
         # Different email content based on type
         if email_type == 'full_quote':
@@ -143,7 +160,7 @@ QUOTE READY FOR REVIEW AND FORWARDING
 
 CUSTOMER DETAILS:
 - Client Name: {client_name}
-- Contact Email: {contact_email}{contact_number_text}
+- Contact Email: {contact_email}{contact_number_text}{additional_recipient_text}
 - Location: {site_location}
 - Quote Total: £{total_with_admin:,.0f} + VAT
 - Reference Number: {reference_number}
@@ -234,6 +251,7 @@ Wild Capital Team
         <ul style="list-style: none; padding-left: 0;">
             <li><strong>Client Name:</strong> {client_name}</li>
             <li><strong>Contact Email:</strong> {contact_email}</li>{contact_number_html}
+            {additional_recipient_html}
             <li><strong>Location:</strong> {site_location}</li>
             <li><strong>Quote Total:</strong> £{total_with_admin:,.0f} + VAT</li>
             <li><strong>Reference Number:</strong> <span style="background-color: #90EE90; padding: 2px 8px;">{reference_number}</span></li>
@@ -314,7 +332,7 @@ CLIENT DETAILS:
 - Client Name: {client_name}
 - Reference: {reference_number}
 - Location: {site_location}
-- Contact Email: {contact_email}{contact_number_line}
+- Contact Email: {contact_email}{contact_number_line}{additional_recipient_text}
 
 PROMOTER DETAILS:
 {promoter_section}
@@ -424,7 +442,7 @@ CLIENT DETAILS:
 - Client Name: {client_name}
 - Reference: {reference_number}
 - Location: {site_location}
-- Contact Email: {contact_email}{contact_number_line}
+- Contact Email: {contact_email}{contact_number_line}{additional_recipient_text}
 - Quote Total: £{quote_total:,.2f}
 
 PROMOTER DETAILS:
