@@ -306,6 +306,24 @@ if st.session_state.show_my_quotes:
     # Viktoria's username is viktoriakossmann@arbtech.co.uk
     is_admin = submitted_by_username.lower() == 'viktoriakossmann@arbtech.co.uk'
     
+    # List of valid Arbtech user emails (for filtering out generic Arbtech login submissions)
+    ARBTECH_USER_EMAILS = [
+        'bethellison-perrett@arbtech.co.uk',
+        'craigwilliams@arbtech.co.uk',
+        'faybrotherhood@arbtech.co.uk',
+        'georginarennie@arbtech.co.uk',
+        'harleystone@arbtech.co.uk',
+        'harrybrindle@arbtech.co.uk',
+        'jamie-leeanderson@arbtech.co.uk',
+        'jeremygrout@arbtech.co.uk',
+        'jonathanstuttard@arbtech.co.uk',
+        'leoplevin@arbtech.co.uk',
+        'kellyclarke@arbtech.co.uk',
+        'natalieevans@arbtech.co.uk',
+        'robbiemackenzie@arbtech.co.uk',
+        'viktoriakossmann@arbtech.co.uk'
+    ]
+    
     if is_admin:
         st.info("👑 **Admin View**: You can see all quotes submitted by your organisation.")
     
@@ -344,21 +362,24 @@ if st.session_state.show_my_quotes:
             # Build query - join with introducers to get actual names
             # Filter by user's submissions unless admin
             if is_admin:
-                # Admin sees all quotes for the promoter
-                query = """
+                # Admin sees quotes from all valid Arbtech user accounts (not generic login)
+                # Use LOWER() for case-insensitive matching
+                arbtech_emails_list = ", ".join([f"'{email}'" for email in ARBTECH_USER_EMAILS])
+                query = f"""
                     SELECT s.*, i.name as submitted_by_display_name
                     FROM submissions s
-                    LEFT JOIN introducers i ON s.submitted_by_username = i.username
+                    LEFT JOIN introducers i ON LOWER(s.submitted_by_username) = LOWER(i.username)
                     WHERE s.promoter_name = %(promoter_name)s
+                    AND LOWER(s.submitted_by_username) IN ({arbtech_emails_list})
                 """
             else:
                 # Regular users see only their own quotes
                 query = """
                     SELECT s.*, i.name as submitted_by_display_name
                     FROM submissions s
-                    LEFT JOIN introducers i ON s.submitted_by_username = i.username
+                    LEFT JOIN introducers i ON LOWER(s.submitted_by_username) = LOWER(i.username)
                     WHERE s.promoter_name = %(promoter_name)s
-                    AND s.submitted_by_username = %(submitted_by_username)s
+                    AND LOWER(s.submitted_by_username) = LOWER(%(submitted_by_username)s)
                 """
             params = {"promoter_name": promoter_name, "submitted_by_username": submitted_by_username}
             
@@ -401,21 +422,24 @@ if st.session_state.show_my_quotes:
             
             # Build query with user filtering
             if is_admin:
-                query = """
+                # Admin sees quotes from all valid Arbtech user accounts (not generic login)
+                arbtech_emails_list = ", ".join([f"'{email}'" for email in ARBTECH_USER_EMAILS])
+                query = f"""
                     SELECT s.*, i.name as submitted_by_display_name
                     FROM submissions s
-                    LEFT JOIN introducers i ON s.submitted_by_username = i.username
+                    LEFT JOIN introducers i ON LOWER(s.submitted_by_username) = LOWER(i.username)
                     WHERE s.promoter_name = %(promoter_name)s
-                    ORDER BY s.submission_date DESC LIMIT 20
+                    AND LOWER(s.submitted_by_username) IN ({arbtech_emails_list})
+                    ORDER BY s.submission_date DESC LIMIT 50
                 """
                 params = {"promoter_name": promoter_name}
             else:
                 query = """
                     SELECT s.*, i.name as submitted_by_display_name
                     FROM submissions s
-                    LEFT JOIN introducers i ON s.submitted_by_username = i.username
+                    LEFT JOIN introducers i ON LOWER(s.submitted_by_username) = LOWER(i.username)
                     WHERE s.promoter_name = %(promoter_name)s
-                    AND s.submitted_by_username = %(submitted_by_username)s
+                    AND LOWER(s.submitted_by_username) = LOWER(%(submitted_by_username)s)
                     ORDER BY s.submission_date DESC LIMIT 20
                 """
                 params = {"promoter_name": promoter_name, "submitted_by_username": submitted_by_username}
