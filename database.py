@@ -304,6 +304,25 @@ class SubmissionsDB:
             # Columns might already exist
             pass
         
+        # Add additional_recipients column if it doesn't exist
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'submissions' 
+                            AND column_name = 'additional_recipients'
+                        ) THEN
+                            ALTER TABLE submissions ADD COLUMN additional_recipients JSONB;
+                        END IF;
+                    END $$;
+                """))
+        except Exception:
+            # Column might already exist
+            pass
+        
         # Drop the old view if it exists (replaced with physical table)
         try:
             with engine.begin() as conn:
@@ -843,7 +862,8 @@ class SubmissionsDB:
                         suo_total_units: Optional[float] = None,
                         submitted_by_username: Optional[str] = None,
                         contact_email: Optional[str] = None,
-                        contact_number: Optional[str] = None) -> int:
+                        contact_number: Optional[str] = None,
+                        additional_recipients: Optional[List[Dict]] = None) -> int:
         """
         Store a complete submission to the database.
         Returns the submission_id for reference.
@@ -854,6 +874,7 @@ class SubmissionsDB:
                                    (may differ from promoter_name for child accounts)
             contact_email: Client's email address for contact
             contact_number: Client's phone number for contact
+            additional_recipients: List of additional recipient dicts with type, name, email, phone
         
         Uses transactions and automatic retry on transient failures.
         """
@@ -910,7 +931,7 @@ class SubmissionsDB:
                         promoter_name, promoter_discount_type, promoter_discount_value,
                         customer_id,
                         suo_enabled, suo_discount_fraction, suo_eligible_surplus, suo_usable_surplus, suo_total_units,
-                        submitted_by_username, contact_email, contact_number
+                        submitted_by_username, contact_email, contact_number, additional_recipients
                     ) VALUES (
                         :submission_date, :client_name, :reference_number, :site_location,
                         :target_lpa, :target_nca, :target_lat, :target_lon,
@@ -922,7 +943,7 @@ class SubmissionsDB:
                         :promoter_name, :promoter_discount_type, :promoter_discount_value,
                         :customer_id,
                         :suo_enabled, :suo_discount_fraction, :suo_eligible_surplus, :suo_usable_surplus, :suo_total_units,
-                        :submitted_by_username, :contact_email, :contact_number
+                        :submitted_by_username, :contact_email, :contact_number, :additional_recipients
                     ) RETURNING id
                 """), {
                     "submission_date": submission_date,
@@ -958,7 +979,8 @@ class SubmissionsDB:
                     "suo_total_units": float(suo_total_units) if suo_total_units is not None else None,
                     "submitted_by_username": submitted_by_username,
                     "contact_email": contact_email,
-                    "contact_number": contact_number
+                    "contact_number": contact_number,
+                    "additional_recipients": json.dumps(additional_recipients) if additional_recipients else None
                 })
                 
                 submission_id = result.fetchone()[0]

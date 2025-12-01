@@ -108,9 +108,13 @@ if 'all_lpas_list' not in st.session_state:
 if 'all_ncas_list' not in st.session_state:
     st.session_state.all_ncas_list = fetch_all_ncas_from_arcgis()
 
-# Session state for additional recipients (not persisted to database)
+# Session state for additional recipients (will be persisted to database)
 if 'additional_recipients' not in st.session_state:
     st.session_state.additional_recipients = []
+
+# Track number of additional recipient forms to show
+if 'num_additional_recipients' not in st.session_state:
+    st.session_state.num_additional_recipients = 0
 
 
 def authenticate_promoter(username: str, password: str) -> Tuple[bool, Optional[dict]]:
@@ -719,6 +723,7 @@ if st.session_state.get('submission_complete', False):
         st.session_state.submission_complete = False
         st.session_state.submission_data = None
         st.session_state.additional_recipients = []  # Clear additional recipients for new quote
+        st.session_state.num_additional_recipients = 0  # Reset additional recipients counter
         st.rerun()
     
     st.stop()
@@ -741,7 +746,7 @@ with st.form("quote_form"):
     
     st.markdown("---")
     
-    st.subheader("👤 Client Details")
+    st.subheader("👤 Primary Recipient")
     
     col1, col2, col3 = st.columns([1, 2, 2])
     with col1:
@@ -762,9 +767,60 @@ with st.form("quote_form"):
         contact_number = st.text_input("Contact Number", key="phone",
                                        help="Optional - client phone number for follow-up")
     
-    # Display added additional recipients (read-only inside form)
-    if st.session_state.additional_recipients:
-        st.caption("**Additional Recipients:** " + ", ".join(st.session_state.additional_recipients))
+    # ================= ADDITIONAL RECIPIENTS (INSIDE FORM) =================
+    st.markdown("---")
+    st.subheader("👥 Additional Recipients (Optional)")
+    st.caption("Add additional contacts to be included in this quote. These will be saved to the database.")
+    
+    # Recipient type options
+    RECIPIENT_TYPES = ["Ecologist", "Consultant", "Advisor", "Joint Applicant"]
+    
+    # Generate fields for each additional recipient slot
+    additional_recipients_data = []
+    for i in range(st.session_state.num_additional_recipients):
+        st.markdown(f"**Additional Recipient {i + 1}**")
+        
+        # Recipient type radio
+        recipient_type = st.radio(
+            f"Recipient Type",
+            options=RECIPIENT_TYPES,
+            key=f"add_recipient_type_{i}",
+            horizontal=True
+        )
+        
+        # Name fields
+        add_col1, add_col2, add_col3 = st.columns([1, 2, 2])
+        with add_col1:
+            add_title = st.selectbox("Title", ["Mr", "Mrs", "Ms", "Dr", "Prof", "Other", "N/A"], key=f"add_title_{i}")
+        with add_col2:
+            add_first_name = st.text_input("First Name", key=f"add_fname_{i}")
+        with add_col3:
+            add_surname = st.text_input("Surname", key=f"add_sname_{i}")
+        
+        # Contact info inline
+        add_contact_col1, add_contact_col2 = st.columns(2)
+        with add_contact_col1:
+            add_email = st.text_input("Contact Email", key=f"add_email_{i}")
+        with add_contact_col2:
+            add_phone = st.text_input("Contact Number", key=f"add_phone_{i}")
+        
+        # Store data for this recipient
+        additional_recipients_data.append({
+            "type": recipient_type,
+            "title": add_title,
+            "first_name": add_first_name,
+            "surname": add_surname,
+            "email": add_email,
+            "phone": add_phone
+        })
+        
+        st.markdown("---")
+    
+    # Show current count message
+    if st.session_state.num_additional_recipients > 0:
+        st.info(f"📝 {st.session_state.num_additional_recipients} additional recipient(s) added. Fill in the details above.")
+    
+    # Note: The "+ New Recipient" button is outside the form (see below)
     
     st.subheader("📍 Site Location")
     st.caption("Provide address/postcode OR select LPA/NCA")
@@ -808,50 +864,18 @@ with st.form("quote_form"):
     
     submitted = st.form_submit_button("🚀 Submit Quote Request", type="primary")
 
-# ================= ADDITIONAL RECIPIENTS SECTION =================
-# This section is outside the form to allow adding recipients without full page rerun
-st.subheader("👥 Additional Recipients (Optional)")
-st.caption("Add additional contacts to be named in the client email. These are not saved to the database.")
-
-# Display existing additional recipients with remove buttons
-if st.session_state.additional_recipients:
-    for idx, recipient in enumerate(st.session_state.additional_recipients):
-        col1, col2 = st.columns([5, 1])
-        with col1:
-            st.text(f"• {recipient}")
-        with col2:
-            if st.button("✕", key=f"remove_recipient_{idx}", help="Remove this recipient"):
-                # Store index to remove and handle after loop to avoid stale index issues
-                st.session_state.additional_recipients = [
-                    r for i, r in enumerate(st.session_state.additional_recipients) if i != idx
-                ]
-                st.rerun()
-
-# Input fields for new additional recipient (outside form to avoid slow rerun)
-with st.expander("➕ Add Additional Recipient", expanded=False):
-    add_col1, add_col2, add_col3 = st.columns([1, 2, 2])
-    with add_col1:
-        add_title = st.selectbox("Title", ["Mr", "Mrs", "Ms", "Dr", "Prof", "Other", "N/A"], key="add_title")
-    with add_col2:
-        add_first_name = st.text_input("First Name", key="add_fname")
-    with add_col3:
-        add_surname = st.text_input("Surname", key="add_sname")
-    
-    if st.button("Add Recipient", key="add_recipient_btn", type="secondary"):
-        if add_first_name and add_surname:
-            # Build the recipient name
-            if add_title and add_title != "N/A":
-                new_recipient = f"{add_title} {add_first_name} {add_surname}"
-            else:
-                new_recipient = f"{add_first_name} {add_surname}"
-            st.session_state.additional_recipients.append(new_recipient)
-            # Clear the input fields using del to reset widgets on next rerun
-            del st.session_state.add_title
-            del st.session_state.add_fname
-            del st.session_state.add_sname
+# ================= ADD/REMOVE RECIPIENT BUTTONS =================
+# These are outside the form to allow dynamic updates without form submission
+col_add, col_remove = st.columns(2)
+with col_add:
+    if st.button("➕ Add Another Recipient", key="add_recipient_btn", type="secondary"):
+        st.session_state.num_additional_recipients += 1
+        st.rerun()
+with col_remove:
+    if st.session_state.num_additional_recipients > 0:
+        if st.button("➖ Remove Last Recipient", key="remove_recipient_btn", type="secondary"):
+            st.session_state.num_additional_recipients -= 1
             st.rerun()
-        else:
-            st.warning("Please enter both first name and surname")
 
 st.markdown("---")
 
@@ -889,10 +913,37 @@ if submitted:
     else:
         client_name = promoter_name  # Fallback to promoter name
     
+    # Collect additional recipients data from session state (form fields)
+    additional_recipients_list = []
+    for i in range(st.session_state.num_additional_recipients):
+        add_type = st.session_state.get(f"add_recipient_type_{i}", "Ecologist")
+        add_title = st.session_state.get(f"add_title_{i}", "N/A")
+        add_fname = st.session_state.get(f"add_fname_{i}", "")
+        add_sname = st.session_state.get(f"add_sname_{i}", "")
+        add_email = st.session_state.get(f"add_email_{i}", "")
+        add_phone = st.session_state.get(f"add_phone_{i}", "")
+        
+        # Only include if at least name is provided
+        if add_fname and add_sname:
+            # Build recipient name
+            if add_title and add_title != "N/A":
+                recipient_name = f"{add_title} {add_fname} {add_sname}"
+            else:
+                recipient_name = f"{add_fname} {add_sname}"
+            
+            additional_recipients_list.append({
+                "type": add_type,
+                "name": recipient_name,
+                "title": add_title,
+                "first_name": add_fname,
+                "surname": add_sname,
+                "email": add_email,
+                "phone": add_phone
+            })
+    
     # Build client name for email (includes additional recipients)
-    # Additional recipients are not persisted to database, only included in email
-    if st.session_state.additional_recipients:
-        additional_names = ", ".join(st.session_state.additional_recipients)
+    if additional_recipients_list:
+        additional_names = ", ".join([f"{r['name']} ({r['type']})" for r in additional_recipients_list])
         client_name_for_email = f"{client_name} & {additional_names}"
     else:
         client_name_for_email = client_name
@@ -1448,7 +1499,8 @@ if submitted:
                 promoter_discount_value=discount_value,
                 submitted_by_username=submitted_by_username,  # Track individual submitter
                 contact_email=contact_email,
-                contact_number=contact_number
+                contact_number=contact_number,
+                additional_recipients=additional_recipients_list  # Save additional recipients to DB
             )
         except Exception as e:
             pass  # Database save failed, but continue
