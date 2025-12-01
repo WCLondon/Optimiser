@@ -303,8 +303,8 @@ if st.session_state.show_my_quotes:
     st.markdown("Search and manage your submitted quotes.")
     
     # Determine if user is admin (Viktoria) - can see all quotes for their promoter
-    # Viktoria's username should be checked - she can see all Arbtech quotes
-    is_admin = submitted_by_username.lower() in ['viktoria@arbtech.co.uk', 'viktoria@arbtech.com']
+    # Viktoria's username is viktoriakossmann@arbtech.co.uk
+    is_admin = submitted_by_username.lower() == 'viktoriakossmann@arbtech.co.uk'
     
     if is_admin:
         st.info("👑 **Admin View**: You can see all quotes submitted by your organisation.")
@@ -433,12 +433,12 @@ if st.session_state.show_my_quotes:
     if results_df is not None and not results_df.empty:
         st.markdown(f"### 📄 Your Quotes ({len(results_df)} found)")
         
-        # Display columns - include submitted_by_display_name for admin view
+        # Display columns - always include submitted_by_display_name 
         display_cols = ["id", "submission_date", "client_name", "reference_number", 
                        "site_location", "target_lpa", "contract_size", "total_with_admin"]
         
-        # Add submitted_by_display_name column for admin users
-        if is_admin and "submitted_by_display_name" in results_df.columns:
+        # Add submitted_by_display_name column if available (always show, not just for admin)
+        if "submitted_by_display_name" in results_df.columns:
             display_cols.insert(2, "submitted_by_display_name")  # Insert after submission_date
         
         display_cols = [c for c in display_cols if c in results_df.columns]
