@@ -728,9 +728,6 @@ if st.session_state.get('submission_complete', False):
 st.subheader("👥 Additional Recipients (Optional)")
 st.caption("Add additional contacts to be named in the client email. These are not saved to the database.")
 
-# Default title for additional recipients
-DEFAULT_ADD_TITLE = "Mr"
-
 # Display existing additional recipients with remove buttons
 if st.session_state.additional_recipients:
     for idx, recipient in enumerate(st.session_state.additional_recipients):
@@ -749,7 +746,7 @@ if st.session_state.additional_recipients:
 with st.expander("➕ Add Additional Recipient", expanded=False):
     add_col1, add_col2, add_col3 = st.columns([1, 2, 2])
     with add_col1:
-        add_title = st.selectbox("Title", [DEFAULT_ADD_TITLE, "Mrs", "Ms", "Dr", "Prof", "Other", "N/A"], key="add_title")
+        add_title = st.selectbox("Title", ["Mr", "Mrs", "Ms", "Dr", "Prof", "Other", "N/A"], key="add_title")
     with add_col2:
         add_first_name = st.text_input("First Name", key="add_fname")
     with add_col3:
@@ -763,10 +760,10 @@ with st.expander("➕ Add Additional Recipient", expanded=False):
             else:
                 new_recipient = f"{add_first_name} {add_surname}"
             st.session_state.additional_recipients.append(new_recipient)
-            # Clear the input fields by updating session state
-            st.session_state.add_title = DEFAULT_ADD_TITLE
-            st.session_state.add_fname = ""
-            st.session_state.add_sname = ""
+            # Clear the input fields using del to reset widgets on next rerun
+            del st.session_state.add_title
+            del st.session_state.add_fname
+            del st.session_state.add_sname
             st.rerun()
         else:
             st.warning("Please enter both first name and surname")
