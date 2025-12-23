@@ -282,7 +282,15 @@ with st.sidebar:
                     if success:
                         try:
                             db = SubmissionsDB()
-                            db.update_introducer_password(promoter_info['id'], new_password)
+                            
+                            # Check if this is a new promoter system user (has company_id field)
+                            if 'company_id' in promoter_info:
+                                # Use new system password update (SHA256)
+                                db.update_promoter_individual_password(promoter_info['id'], new_password)
+                            else:
+                                # Use old system password update (SHA256 + salt)
+                                db.update_introducer_password(promoter_info['id'], new_password)
+                            
                             st.success("✓ Password updated successfully!")
                             st.session_state.show_password_change = False
                             st.rerun()

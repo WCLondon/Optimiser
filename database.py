@@ -1618,6 +1618,90 @@ class SubmissionsDB:
                 trans.rollback()
                 raise
     
+    # ================= Promoter Companies & Individuals =================
+    
+    def get_all_promoter_companies(self) -> List[Dict[str, Any]]:
+        """Get all promoter companies."""
+        engine = self._get_connection()
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT * FROM promoter_companies ORDER BY name"))
+            rows = result.fetchall()
+            return [dict(row._mapping) for row in rows]
+    
+    def get_all_promoter_individuals(self) -> List[Dict[str, Any]]:
+        """Get all promoter individuals with their company names."""
+        engine = self._get_connection()
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT pi.*, pc.name as company_name
+                FROM promoter_individuals pi
+                LEFT JOIN promoter_companies pc ON pi.company_id = pc.id
+                ORDER BY pi.name
+            """))
+            rows = result.fetchall()
+            return [dict(row._mapping) for row in rows]
+    
+    def get_promoter_individual_by_id(self, individual_id: str) -> Optional[Dict[str, Any]]:
+        """Get a promoter individual by ID."""
+        engine = self._get_connection()
+        with engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT * FROM promoter_individuals WHERE id = :id"),
+                {"id": individual_id}
+            )
+            row = result.fetchone()
+            return dict(row._mapping) if row else None
+    
+    def get_promoter_company_by_id(self, company_id: str) -> Optional[Dict[str, Any]]:
+        """Get a promoter company by ID."""
+        engine = self._get_connection()
+        with engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT * FROM promoter_companies WHERE id = :id"),
+                {"id": company_id}
+            )
+            row = result.fetchone()
+            return dict(row._mapping) if row else None
+    
+    def update_promoter_individual_password(self, individual_id: str, new_password: str) -> bool:
+        """
+        Update a promoter individual's password.
+        Uses SHA256 hashing (no salt) to match the new system.
+        
+        Args:
+            individual_id: ID of the promoter individual
+            new_password: New plain text password (will be hashed)
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        import hashlib
+        engine = self._get_connection()
+        
+        # Hash the new password with SHA256 (no salt in new system)
+        password_hash = hashlib.sha256(new_password.encode('utf-8')).hexdigest()
+        now = datetime.now()
+        
+        with engine.connect() as conn:
+            trans = conn.begin()
+            try:
+                conn.execute(text("""
+                    UPDATE promoter_individuals 
+                    SET password_hash = :password_hash,
+                        updated_date = :updated_date
+                    WHERE id = :id
+                """), {
+                    "password_hash": password_hash,
+                    "updated_date": now,
+                    "id": individual_id
+                })
+                
+                trans.commit()
+                return True
+            except Exception as e:
+                trans.rollback()
+                raise
+    
     # ================= Customers CRUD =================
     
     @retry(
