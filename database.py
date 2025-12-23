@@ -687,6 +687,90 @@ class SubmissionsDB:
                 ON introducers(parent_introducer_id)
             """))
             
+            # Promoter Companies Table
+            # Stores company/organization promoters
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS promoter_companies (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    email TEXT,
+                    phone TEXT,
+                    discount_type TEXT NOT NULL CHECK(discount_type IN ('tier_up', 'percentage', 'no_discount')),
+                    discount_value FLOAT NOT NULL DEFAULT 0,
+                    active BOOLEAN DEFAULT TRUE,
+                    type TEXT DEFAULT 'Company',
+                    requires_approval BOOLEAN DEFAULT FALSE,
+                    approval_threshold FLOAT DEFAULT 0.0,
+                    notes TEXT,
+                    created_by TEXT,
+                    updated_by TEXT,
+                    created_date TIMESTAMP NOT NULL DEFAULT NOW(),
+                    updated_date TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """))
+            
+            # Create indexes for promoter_companies
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_promoter_companies_name 
+                ON promoter_companies(name)
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_promoter_companies_email 
+                ON promoter_companies(email)
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_promoter_companies_active 
+                ON promoter_companies(active)
+            """))
+            
+            # Promoter Individuals Table
+            # Stores individual promoters/users, linked to a parent company
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS promoter_individuals (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    username TEXT UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    email TEXT,
+                    phone TEXT,
+                    company_id TEXT REFERENCES promoter_companies(id),
+                    discount_type TEXT CHECK(discount_type IN ('tier_up', 'percentage', 'no_discount')),
+                    discount_value FLOAT DEFAULT 0,
+                    active BOOLEAN DEFAULT TRUE,
+                    type TEXT DEFAULT 'User',
+                    role TEXT,
+                    team_leader_id TEXT REFERENCES promoter_individuals(id),
+                    job_title TEXT,
+                    notes TEXT,
+                    created_by TEXT,
+                    updated_by TEXT,
+                    created_date TIMESTAMP NOT NULL DEFAULT NOW(),
+                    updated_date TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """))
+            
+            # Create indexes for promoter_individuals
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_promoter_individuals_username 
+                ON promoter_individuals(username)
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_promoter_individuals_email 
+                ON promoter_individuals(email)
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_promoter_individuals_company 
+                ON promoter_individuals(company_id)
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_promoter_individuals_active 
+                ON promoter_individuals(active)
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_promoter_individuals_team_leader 
+                ON promoter_individuals(team_leader_id)
+            """))
+            
             # Customers table
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS customers (
@@ -1307,9 +1391,10 @@ class SubmissionsDB:
         """
         Authenticate an introducer by username and password.
         
-        Supports both:
-        1. New secure authentication with username + password_hash/salt
-        2. Legacy authentication with name as username + plain text password column
+        This method provides backward compatibility by checking:
+        1. New promoter_individuals/promoter_companies tables (primary)
+        2. Old introducers table with username + password_hash/salt (fallback)
+        3. Legacy introducers table with name as username + plain text password (legacy fallback)
         
         Args:
             username: The username (or name for legacy auth) to authenticate
@@ -1318,7 +1403,13 @@ class SubmissionsDB:
         Returns:
             Tuple of (success: bool, introducer_info: dict or None)
         """
-        # First try to find by username (new method)
+        # First, try the new promoter authentication system
+        success, promoter_info = self.authenticate_promoter(username, password)
+        if success:
+            return True, promoter_info
+        
+        # Fall back to old introducers table authentication
+        # Try to find by username (new method)
         introducer = self.get_introducer_by_username(username)
         
         if introducer:
@@ -1342,6 +1433,97 @@ class SubmissionsDB:
                 return True, introducer
         
         return False, None
+    
+    def authenticate_promoter(self, username: str, password: str) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        """
+        Authenticate a promoter using the new promoter_individuals and promoter_companies tables.
+        
+        This method replaces the old introducer authentication for the new table structure.
+        It checks promoter_individuals table for login credentials and retrieves
+        discount settings from the parent company if applicable.
+        
+        Args:
+            username: The username/email to authenticate
+            password: The plain text password
+        
+        Returns:
+            Tuple of (success: bool, promoter_info: dict or None)
+            
+        The promoter_info dict includes:
+            - All fields from the promoter_individuals record
+            - 'company_name': The parent company name
+            - 'effective_discount_type': Company's discount type (overrides individual's)
+            - 'effective_discount_value': Company's discount value (overrides individual's)
+        """
+        engine = self._get_connection()
+        
+        try:
+            with engine.connect() as conn:
+                # Try to find individual by username
+                result = conn.execute(text("""
+                    SELECT * FROM promoter_individuals 
+                    WHERE username = :username AND active = TRUE
+                """), {"username": username})
+                
+                row = result.fetchone()
+                
+                if not row:
+                    return False, None
+                
+                individual = dict(row._mapping)
+                
+                # Verify password (SHA256 hash - no salt in new system)
+                stored_hash = individual.get('password_hash')
+                if not stored_hash:
+                    return False, None
+                
+                # Hash the provided password with SHA256 to compare
+                import hashlib
+                computed_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
+                
+                # Use constant-time comparison
+                if not secrets.compare_digest(computed_hash, stored_hash):
+                    return False, None
+                
+                # Authentication successful - now get company info for discount settings
+                company_id = individual.get('company_id')
+                if company_id:
+                    company_result = conn.execute(text("""
+                        SELECT * FROM promoter_companies 
+                        WHERE id = :company_id AND active = TRUE
+                    """), {"company_id": company_id})
+                    
+                    company_row = company_result.fetchone()
+                    if company_row:
+                        company = dict(company_row._mapping)
+                        
+                        # Add company info to individual record
+                        individual['company_name'] = company.get('name')
+                        # Use company's discount settings (they override individual settings)
+                        individual['effective_discount_type'] = company.get('discount_type', 'no_discount')
+                        individual['effective_discount_value'] = company.get('discount_value', 0)
+                        individual['requires_approval'] = company.get('requires_approval', False)
+                        individual['approval_threshold'] = company.get('approval_threshold', 0.0)
+                    else:
+                        # Company not found or inactive
+                        individual['company_name'] = None
+                        individual['effective_discount_type'] = individual.get('discount_type', 'no_discount')
+                        individual['effective_discount_value'] = individual.get('discount_value', 0)
+                        individual['requires_approval'] = False
+                        individual['approval_threshold'] = 0.0
+                else:
+                    # No company associated
+                    individual['company_name'] = None
+                    individual['effective_discount_type'] = individual.get('discount_type', 'no_discount')
+                    individual['effective_discount_value'] = individual.get('discount_value', 0)
+                    individual['requires_approval'] = False
+                    individual['approval_threshold'] = 0.0
+                
+                return True, individual
+                
+        except Exception as e:
+            # Log the error or handle it appropriately
+            return False, None
     
     @retry(
         stop=stop_after_attempt(3),

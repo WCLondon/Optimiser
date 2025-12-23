@@ -113,43 +113,56 @@ def authenticate_promoter(username: str, password: str) -> Tuple[bool, Optional[
     """
     Authenticate promoter using the database with proper password hashing.
     
-    For child accounts (those with parent_introducer_id), also fetches parent info
-    to determine the correct promoter name and discount settings.
+    Works with both:
+    - New promoter_individuals/promoter_companies tables
+    - Legacy introducers table (for backward compatibility)
+    
+    For individuals linked to companies, uses company's discount settings.
     
     Returns:
         Tuple of (success: bool, promoter_info: dict or None)
         
     The promoter_info dict includes:
-        - All fields from the introducer record
-        - 'effective_promoter_name': The promoter name to use for submissions
+        - All fields from the promoter/introducer record
+        - 'effective_promoter_name': The company name (or individual name if no company)
         - 'submitted_by_name': The individual user's name
         - 'submitted_by_username': The individual user's username/email
     """
     try:
         db = SubmissionsDB()
         # Try to authenticate using username and password hash
-        success, introducer = db.authenticate_introducer(username, password)
+        success, promoter_data = db.authenticate_introducer(username, password)
         if success:
-            # Check if this is a child account
-            parent_id = introducer.get('parent_introducer_id')
-            if parent_id:
-                # Get parent introducer info for discount settings
-                parent = db.get_introducer_by_id(parent_id)
-                if parent:
-                    # Use parent's discount settings but keep track of who submitted
-                    introducer['effective_promoter_name'] = parent.get('name', introducer.get('name'))
-                    introducer['discount_type'] = parent.get('discount_type', 'no_discount')
-                    introducer['discount_value'] = parent.get('discount_value', 0)
-                else:
-                    introducer['effective_promoter_name'] = introducer.get('name')
+            # Check if this is the new promoter system (has company_name field)
+            if 'company_name' in promoter_data:
+                # New promoter system
+                # Use company name as the effective promoter name if available
+                promoter_data['effective_promoter_name'] = promoter_data.get('company_name') or promoter_data.get('name')
+                # Use the effective discount settings from the company (already set by authenticate_promoter)
+                promoter_data['discount_type'] = promoter_data.get('effective_discount_type', 'no_discount')
+                promoter_data['discount_value'] = promoter_data.get('effective_discount_value', 0)
             else:
-                introducer['effective_promoter_name'] = introducer.get('name')
+                # Legacy introducer system
+                # Check if this is a child account (old introducers table)
+                parent_id = promoter_data.get('parent_introducer_id')
+                if parent_id:
+                    # Get parent introducer info for discount settings
+                    parent = db.get_introducer_by_id(parent_id)
+                    if parent:
+                        # Use parent's discount settings but keep track of who submitted
+                        promoter_data['effective_promoter_name'] = parent.get('name', promoter_data.get('name'))
+                        promoter_data['discount_type'] = parent.get('discount_type', 'no_discount')
+                        promoter_data['discount_value'] = parent.get('discount_value', 0)
+                    else:
+                        promoter_data['effective_promoter_name'] = promoter_data.get('name')
+                else:
+                    promoter_data['effective_promoter_name'] = promoter_data.get('name')
             
             # Track the individual submitter
-            introducer['submitted_by_name'] = introducer.get('name')
-            introducer['submitted_by_username'] = introducer.get('username', username)
+            promoter_data['submitted_by_name'] = promoter_data.get('name')
+            promoter_data['submitted_by_username'] = promoter_data.get('username', username)
             
-            return True, introducer
+            return True, promoter_data
         
         return False, None
     except Exception as e:
