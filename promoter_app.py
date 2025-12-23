@@ -173,12 +173,16 @@ def authenticate_promoter(username: str, password: str) -> Tuple[bool, Optional[
 # ================= LOGIN SYSTEM =================
 if not st.session_state.logged_in:
     st.title("Promoter Login")
+    
+    # Display maintenance message
+    st.error("⚠️ **We are currently experiencing technical difficulties. Please submit your referrals via email/slack while we work to get this up and running again.**")
+    
     st.markdown("### Login to submit BNG quote requests")
     
     with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submit_login = st.form_submit_button("Login")
+        username = st.text_input("Username", disabled=True)
+        password = st.text_input("Password", type="password", disabled=True)
+        submit_login = st.form_submit_button("Login", disabled=True)
         
         if submit_login:
             if not username or not password:
