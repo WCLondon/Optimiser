@@ -207,31 +207,101 @@ def fetch_trading_rules() -> pd.DataFrame:
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=600)
+def fetch_gross_inventory() -> pd.DataFrame:
+    """
+    Fetch GrossInventory table from Supabase.
+    
+    This table contains the detailed inventory of each habitat parcel at each bank,
+    including both gross units (total created) and baseline units (habitat lost).
+    
+    Expected columns:
+        - unique_id: str (unique identifier for inventory row)
+        - bank_id: str
+        - bank_name: str
+        - bank_postcode: str (for geocoding and tier calculations)
+        - bgs_reference: str (Biodiversity Gain Site Reference)
+        - habitat_reference: str
+        - baseline_habitat: str (original habitat that was on site)
+        - baseline_area: float
+        - baseline_units: float
+        - new_habitat: str (habitat being created)
+        - new_area: float
+        - gross_units: float (total units created)
+        - net_units: float (gross - baseline)
+        - remaining_units: float (units available for sale)
+        - remaining_area: float
+    
+    Returns:
+        DataFrame with GrossInventory data, or empty DataFrame if table doesn't exist
+    """
+    engine = get_db_engine()
+    query = "SELECT * FROM \"GrossInventory\""
+    
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql_query(query, conn)
+        return df
+    except Exception as e:
+        logger.warning(f"GrossInventory table not found or error: {e}")
+        # Return empty DataFrame if table doesn't exist (optional table)
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=600)
+def fetch_gross_inventory_available() -> pd.DataFrame:
+    """
+    Fetch GrossInventoryAvailable view from Supabase.
+    
+    This view filters GrossInventory to only show rows with remaining_units > 0
+    and includes calculated fields like baseline_ratio and same_habitat_baseline.
+    
+    Returns:
+        DataFrame with available gross inventory, or empty DataFrame if view doesn't exist
+    """
+    engine = get_db_engine()
+    query = "SELECT * FROM \"GrossInventoryAvailable\""
+    
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql_query(query, conn)
+        return df
+    except Exception as e:
+        logger.warning(f"GrossInventoryAvailable view not found or error: {e}")
+        # Return empty DataFrame if view doesn't exist
+        return pd.DataFrame()
+
+
 def fetch_all_reference_tables() -> Dict[str, pd.DataFrame]:
     """
     Fetch all reference/config tables from Supabase.
     
     Returns:
         Dictionary with table names as keys and DataFrames as values.
-        Matches the structure previously loaded from Excel:
+        For gross-based optimization, use GrossInventory and GrossInventoryAvailable
+        instead of Stock table.
         {
             "Banks": DataFrame,
             "Pricing": DataFrame,
             "HabitatCatalog": DataFrame,
-            "Stock": DataFrame,
+            "Stock": DataFrame (legacy - use GrossInventory instead),
             "DistinctivenessLevels": DataFrame,
             "SRM": DataFrame,
-            "TradingRules": DataFrame (optional)
+            "TradingRules": DataFrame (optional),
+            "GrossInventory": DataFrame (for gross-based optimization),
+            "GrossInventoryAvailable": DataFrame (filtered view with remaining > 0)
         }
     """
     return {
         "Banks": fetch_banks(),
         "Pricing": fetch_pricing(),
         "HabitatCatalog": fetch_habitat_catalog(),
-        "Stock": fetch_stock(),
+        "Stock": fetch_stock(),  # Legacy - kept for backward compatibility
         "DistinctivenessLevels": fetch_distinctiveness_levels(),
         "SRM": fetch_srm(),
-        "TradingRules": fetch_trading_rules()
+        "TradingRules": fetch_trading_rules(),
+        "GrossInventory": fetch_gross_inventory(),
+        "GrossInventoryAvailable": fetch_gross_inventory_available()
     }
 
 
